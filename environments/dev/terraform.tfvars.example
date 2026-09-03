@@ -1,0 +1,162 @@
+# Confirm every value before deployment. CIDRs below are proposed placeholders only.
+
+tenant_id       = "9a6302b1-6a51-4f41-ad6b-ad23218c074d"
+subscription_id = "e3a6598e-28b1-4d6a-8698-6683cd1d6995"
+
+# Obtain both values from the existing Baytex Databricks account console.
+databricks_account_id = "<DATABRICKS-ACCOUNT-ID>"
+existing_metastore_id  = "<EXISTING-REGIONAL-METASTORE-ID>"
+
+location     = "canadacentral"
+organization = "bte"
+workload     = "dbx"
+environment  = "dev"
+region_short = "cnc"
+instance     = "001"
+
+owner               = "Baytex Infrastructure"
+cost_centre         = "<BAYTEX-COST-CENTRE>"
+data_classification = "Internal"
+
+# ==========================================================================
+# ADDRESS SPACE -- MUST BE CONFIRMED BY BAYTEX IPAM BEFORE APPLY
+# ==========================================================================
+# These values were CORRECTED. A previous revision proposed 10.40.80.0/20,
+# which the current-state network diagram allocates to *OT Production*
+# (vnet-bte-ot-prod-cnc-01). The overlap was exact and would have collided
+# with live OT subnets:
+#     10.40.80.0/24 = subnet-bte-ot-prod-cnc_mgmt
+#     10.40.81.0/24 = subnet-bte-ot-prod-cnc_apps
+#     10.40.82.0/24 = subnet-bte-ot-prod-cnc_pep
+#
+# This platform belongs in the Data Non-Prod landing zone, 10.40.64.0/20,
+# whose currently free ranges are 10.40.67.0-10.40.76.255 and
+# 10.40.78.0-10.40.79.255 (in use: .64/24 bi, .65/24 apps, .66/24 pep,
+# .77.0/25 + .77.128/25 existing Databricks).
+#
+# 10.40.68.0/22 sits entirely within that free space and holds all four
+# subnets. It remains a PROPOSAL -- see docs/pre-deployment-checklist.md,
+# "DEV CIDRs approved by IPAM/networking", and ARCHITECTURE.md section 1.3.
+vnet_cidr                        = "10.40.68.0/22"
+databricks_host_subnet_cidr      = "10.40.68.0/24"
+databricks_container_subnet_cidr = "10.40.69.0/24"
+private_endpoint_subnet_cidr     = "10.40.70.0/26"
+proxy_subnet_cidr                = "10.40.70.64/26"
+
+# Reference values from current Non-Production. Confirm the target list.
+dns_servers = [
+  "172.19.65.39",
+  "172.19.65.2",
+  "172.19.65.33",
+  "172.19.96.124"
+]
+
+hub_subscription_id      = "557d1301-8d98-483e-ac69-4f23bf2cb2eb"
+hub_resource_group_name  = "rg-network-bte-hub-cnc-02"
+hub_vnet_name            = "vnet-bte-hub-cnc-02"
+hub_vnet_id              = "/subscriptions/557d1301-8d98-483e-ac69-4f23bf2cb2eb/resourceGroups/rg-network-bte-hub-cnc-02/providers/Microsoft.Network/virtualNetworks/vnet-bte-hub-cnc-02"
+cisco_firewall_private_ip = "10.40.240.36"
+
+# Set false if Baytex wants to create both peering directions through its network change process.
+create_spoke_to_hub_peering = true
+
+# Replace these examples with the approved network ranges containing the target systems.
+on_prem_routes = {
+  primary_datacentre = {
+    address_prefix = "<ON-PREMISES-CIDR>"
+  }
+}
+
+# Use the approved Bastion/jump-host CIDR. Leave empty to deny SSH at the NSG.
+admin_ssh_source_cidrs = [
+  "<APPROVED-ADMIN-CIDR>"
+]
+
+ssh_public_key = "ssh-ed25519 <PUBLIC-KEY> baytex-terraform"
+
+# All addresses below sit inside proxy_subnet_cidr (10.40.70.64/26).
+# Azure reserves .64-.67 and .127, so usable range is .68-.126.
+proxy_vm_size = "Standard_D4s_v3"
+proxy_vm_private_ips = [
+  "10.40.70.70",
+  "10.40.70.71"
+]
+
+# Initial core destinations. SQL6, Trimble/TMW, and SQL03YYC are intentionally excluded.
+on_prem_endpoints = {
+  sqlbidb01yyc = {
+    frontend_ip = "10.40.70.75"
+    pls_nat_ip  = "10.40.70.85"
+    listen_port = 1433
+    target_fqdn = "sqlbidb01yyc.baytexenergy.com"
+    target_port = 1433
+    domain_name = "sqlbidb01yyc.baytexenergy.com"
+  }
+  sqlbidb01yyc_t = {
+    frontend_ip = "10.40.70.76"
+    pls_nat_ip  = "10.40.70.86"
+    listen_port = 1433
+    target_fqdn = "sqlbidb01yyc-t.baytexenergy.com"
+    target_port = 1433
+    domain_name = "sqlbidb01yyc-t.baytexenergy.com"
+  }
+  sql14yyc = {
+    frontend_ip = "10.40.70.77"
+    pls_nat_ip  = "10.40.70.87"
+    listen_port = 1433
+    target_fqdn = "sql14yyc.baytexenergy.com"
+    target_port = 1433
+    domain_name = "sql14yyc.baytexenergy.com"
+  }
+  ora33yyc = {
+    frontend_ip = "10.40.70.78"
+    pls_nat_ip  = "10.40.70.88"
+    listen_port = 1521
+    target_fqdn = "ora33yyc.baytexenergy.com"
+    target_port = 1521
+    domain_name = "ora33yyc.baytexenergy.com"
+  }
+  ora33yyc_t = {
+    frontend_ip = "10.40.70.79"
+    pls_nat_ip  = "10.40.70.89"
+    listen_port = 1521
+    target_fqdn = "ora33yyc-t.baytexenergy.com"
+    target_port = 1521
+    domain_name = "ora33yyc-t.baytexenergy.com"
+  }
+}
+
+# Secure default: a plan will fail until one of these two paths is explicitly selected.
+# Preferred: populate the Microsoft/Databricks-managed consumer subscription IDs.
+allow_all_subscriptions_pls_visibility = false
+pls_visibility_subscription_ids = [
+  # "<DATABRICKS-MANAGED-CONSUMER-SUBSCRIPTION-ID>"
+]
+# Initial deployments should normally use manual approval.
+pls_auto_approval_subscription_ids = []
+
+# Must be globally unique and confirmed before deployment.
+data_storage_account_name           = "stbtedbxdevcnc001"
+workspace_root_storage_account_name = "stbtedbxdevroot001"
+
+data_containers = ["managed", "external", "landing", "checkpoints"]
+
+# Provide existing central Private DNS zone IDs where available. Leaving these empty creates
+# the private endpoints without zone groups and requires a Baytex DNS handoff.
+blob_private_dns_zone_ids = []
+dfs_private_dns_zone_ids  = []
+
+# Initial user/API front-end remains public for compatibility; classic compute has no public IPs.
+workspace_public_network_access_enabled     = true
+workspace_default_storage_firewall_enabled  = true
+workspace_infrastructure_encryption_enabled = true
+
+# Optional creation-time default catalog name. Baytex BI owns all subsequent UC objects.
+default_catalog_initial_name = null
+
+enable_diagnostics           = true
+log_analytics_retention_days = 90
+
+alert_email_receivers = {
+  # cloud_operations = "cloud-operations@baytexenergy.com"
+}

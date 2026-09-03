@@ -1,0 +1,66 @@
+#cloud-config
+# Simulated on-premises database host. Stands in for Baytex's SQL/Oracle
+# servers so the HAProxy -> ILB -> PLS -> NCC chain has a real TCP target.
+# Deliberately uses only python3 + systemd (both present in the Ubuntu image)
+# so the VM needs no package downloads to become useful.
+package_update: false
+package_upgrade: false
+
+write_files:
+  - path: /usr/local/sbin/sim-onprem.py
+    permissions: '0755'
+    owner: root:root
+    content: |
+      #!/usr/bin/env python3
+      """Minimal TCP responders standing in for on-prem SQL Server / Oracle."""
+      import socket
+      import threading
+
+      def handle(conn, banner):
+          try:
+              conn.sendall(banner)
+          except OSError:
+              pass
+          finally:
+              conn.close()
+
+      def serve(port, banner):
+          srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+          srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          srv.bind(("0.0.0.0", port))
+          srv.listen(64)
+          while True:
+              conn, _ = srv.accept()
+              threading.Thread(target=handle, args=(conn, banner), daemon=True).start()
+
+      LISTENERS = (
+          (1433, b"SIMULATED-SQL-OK\n"),
+          (1521, b"SIMULATED-ORACLE-OK\n"),
+      )
+
+      for port, banner in LISTENERS:
+          threading.Thread(target=serve, args=(port, banner), daemon=True).start()
+
+      threading.Event().wait()
+
+  - path: /etc/systemd/system/sim-onprem.service
+    permissions: '0644'
+    owner: root:root
+    content: |
+      [Unit]
+      Description=Simulated on-premises SQL/Oracle TCP listeners
+      Wants=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/bin/python3 /usr/local/sbin/sim-onprem.py
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, sim-onprem.service]

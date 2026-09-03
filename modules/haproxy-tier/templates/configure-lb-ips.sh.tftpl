@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! ip link show dummy0 >/dev/null 2>&1; then
+  ip link add dummy0 type dummy
+fi
+ip link set dummy0 up
+%{ for ip in frontend_ips ~}
+ip address replace ${ip}/32 dev dummy0
+%{ endfor ~}

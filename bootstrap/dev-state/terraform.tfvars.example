@@ -1,0 +1,13 @@
+tenant_id       = "9a6302b1-6a51-4f41-ad6b-ad23218c074d"
+subscription_id = "e3a6598e-28b1-4d6a-8698-6683cd1d6995"
+location        = "canadacentral"
+
+resource_group_name = "rg-bte-dbx-dev-tfstate-cnc-001"
+storage_account_name = "stbtedbxdevtfcnc001"
+container_name        = "tfstate"
+
+
+# Object IDs, not client/application IDs. Include the GitHub OIDC service principal and any approved operators.
+state_blob_data_contributor_principal_ids = [
+  "<GITHUB-OIDC-SERVICE-PRINCIPAL-OBJECT-ID>"
+]

@@ -1,0 +1,55 @@
+#cloud-config
+# Simulated Cisco Firepower NVA. Stands in for Baytex's hub firewall so the
+# spoke route table's "on-prem traffic via VirtualAppliance next hop" design
+# is genuinely exercised rather than assumed.
+#
+# MASQUERADE is used so the simulated on-prem host does not need return routes
+# back to the spoke -- it sees traffic sourced from the NVA. That mirrors the
+# fact that on-prem return routes are a Baytex-owned handoff in the real build.
+package_update: false
+package_upgrade: false
+
+write_files:
+  - path: /etc/sysctl.d/99-sim-nva.conf
+    permissions: '0644'
+    owner: root:root
+    content: |
+      net.ipv4.ip_forward = 1
+
+  - path: /usr/local/sbin/sim-nva.sh
+    permissions: '0755'
+    owner: root:root
+    content: |
+      #!/bin/bash
+      # Idempotent: safe to re-run on every boot.
+      set -euo pipefail
+      sysctl -w net.ipv4.ip_forward=1
+      NIC="$(ip -o -4 route show to default | awk '{print $5}' | head -n1)"
+      if ! iptables -t nat -C POSTROUTING -o "$NIC" -j MASQUERADE 2>/dev/null; then
+        iptables -t nat -A POSTROUTING -o "$NIC" -j MASQUERADE
+      fi
+      if ! iptables -C FORWARD -j ACCEPT 2>/dev/null; then
+        iptables -I FORWARD 1 -j ACCEPT
+      fi
+
+  - path: /etc/systemd/system/sim-nva.service
+    permissions: '0644'
+    owner: root:root
+    content: |
+      [Unit]
+      Description=Simulated hub firewall IP forwarding and NAT
+      Wants=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/local/sbin/sim-nva.sh
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - [sysctl, --system]
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, sim-nva.service]
