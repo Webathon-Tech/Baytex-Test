@@ -1,0 +1,95 @@
+name: Terraform Deploy
+
+# Manual deployment with an enforced promotion order: dev -> test -> prod.
+#
+# Choosing "all" runs the full chain and STOPS at the first failure, so test can
+# only be reached once dev has actually applied, and prod only once test has.
+# Choosing a single environment runs just that one, for iterating on dev or for
+# re-running a single stage.
+#
+# Gating: each apply job targets the "<env>-apply" GitHub Environment. Attach
+# required reviewers to test-apply and prod-apply and the run pauses there for
+# sign-off. (Protection rules need GitHub Pro/Team/Enterprise on a private repo;
+# until then the gate is that a human chooses to run this workflow.)
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: Which environment(s) to deploy
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - test
+          - prod
+          - all
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-deploy
+  cancel-in-progress: false
+
+jobs:
+  # ----------------------------------------------------------------- dev
+  dev-plan:
+    if: contains(fromJSON('["dev","all"]'), inputs.deploy_target)
+    uses: ./.github/workflows/_terraform-plan.yml
+    with:
+      environment: dev
+    secrets: inherit
+
+  dev-apply:
+    needs: dev-plan
+    uses: ./.github/workflows/_terraform-apply.yml
+    with:
+      environment: dev
+    secrets: inherit
+
+  # ---------------------------------------------------------------- test
+  # always() is required because on a single-environment run the dev jobs are
+  # SKIPPED, and a skipped dependency would otherwise skip everything downstream.
+  test-plan:
+    needs: dev-apply
+    if: >-
+      always() && (
+        inputs.deploy_target == 'test' ||
+        (inputs.deploy_target == 'all' && needs.dev-apply.result == 'success')
+      )
+    uses: ./.github/workflows/_terraform-plan.yml
+    with:
+      environment: test
+    secrets: inherit
+
+  test-apply:
+    needs: test-plan
+    if: always() && needs.test-plan.result == 'success'
+    uses: ./.github/workflows/_terraform-apply.yml
+    with:
+      environment: test
+    secrets: inherit
+
+  # ---------------------------------------------------------------- prod
+  prod-plan:
+    needs: test-apply
+    if: >-
+      always() && (
+        inputs.deploy_target == 'prod' ||
+        (inputs.deploy_target == 'all' && needs.test-apply.result == 'success')
+      )
+    uses: ./.github/workflows/_terraform-plan.yml
+    with:
+      environment: prod
+    secrets: inherit
+
+  prod-apply:
+    needs: prod-plan
+    if: always() && needs.prod-plan.result == 'success'
+    uses: ./.github/workflows/_terraform-apply.yml
+    with:
+      environment: prod
+    secrets: inherit

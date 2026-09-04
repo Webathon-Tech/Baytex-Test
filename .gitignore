@@ -1,7 +1,31 @@
-@"
+# Terraform working directories and state
 .terraform/
+.terraform.tfstate.lock.info
 *.tfstate
 *.tfstate.*
-*.tfvars
 crash.log
-"@ | Out-File -Encoding utf8 .gitignore
+crash.*.log
+
+# Environment-specific inputs and backend config.
+# The .example templates are what ship; the real files never are.
+*.tfvars
+*.tfvars.json
+backend.hcl
+
+# Saved plans and rendered plan output
+*.tfplan
+tfplan
+dev-plan.txt
+
+# Generated handoff / validation artefacts
+handoff/
+dev-outputs.json
+connectivity-test-results.json
+
+# Rehearsal scaffolding: used locally to build the mock on-prem hub,
+# never part of the client deliverable. Kept on disk, not in git.
+sandbox/
+
+# Client network diagram (binary) and a stale release manifest.
+*.vsdx
+SHA256SUMS.txt

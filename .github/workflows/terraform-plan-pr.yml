@@ -1,0 +1,33 @@
+name: Terraform Plan (PR)
+
+# Plan-only validation on pull requests. Never applies.
+#
+# Only dev is planned automatically: a PR plan needs to read state, and running
+# every environment on every PR triples the blast radius of a compromised PR for
+# no extra signal -- the Terraform is identical across environments, only the
+# inputs differ. Test and prod are planned through terraform-deploy.yml.
+
+on:
+  pull_request:
+    paths:
+      - "environments/**"
+      - "modules/**"
+      - ".github/workflows/terraform-*.yml"
+      - ".github/workflows/_terraform-*.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-plan-pr-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan-dev:
+    uses: ./.github/workflows/_terraform-plan.yml
+    with:
+      environment: dev
+      upload_plan: false
+    secrets: inherit

@@ -5,7 +5,7 @@ subscription_id = "e3a6598e-28b1-4d6a-8698-6683cd1d6995"
 
 # Obtain both values from the existing Baytex Databricks account console.
 databricks_account_id = "<DATABRICKS-ACCOUNT-ID>"
-existing_metastore_id  = "<EXISTING-REGIONAL-METASTORE-ID>"
+existing_metastore_id = "<EXISTING-REGIONAL-METASTORE-ID>"
 
 location     = "canadacentral"
 organization = "bte"
@@ -51,10 +51,10 @@ dns_servers = [
   "172.19.96.124"
 ]
 
-hub_subscription_id      = "557d1301-8d98-483e-ac69-4f23bf2cb2eb"
-hub_resource_group_name  = "rg-network-bte-hub-cnc-02"
-hub_vnet_name            = "vnet-bte-hub-cnc-02"
-hub_vnet_id              = "/subscriptions/557d1301-8d98-483e-ac69-4f23bf2cb2eb/resourceGroups/rg-network-bte-hub-cnc-02/providers/Microsoft.Network/virtualNetworks/vnet-bte-hub-cnc-02"
+hub_subscription_id       = "557d1301-8d98-483e-ac69-4f23bf2cb2eb"
+hub_resource_group_name   = "rg-network-bte-hub-cnc-02"
+hub_vnet_name             = "vnet-bte-hub-cnc-02"
+hub_vnet_id               = "/subscriptions/557d1301-8d98-483e-ac69-4f23bf2cb2eb/resourceGroups/rg-network-bte-hub-cnc-02/providers/Microsoft.Network/virtualNetworks/vnet-bte-hub-cnc-02"
 cisco_firewall_private_ip = "10.40.240.36"
 
 # Set false if Baytex wants to create both peering directions through its network change process.

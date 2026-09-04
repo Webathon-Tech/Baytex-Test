@@ -1,0 +1,13 @@
+# Normalise text to LF in the repository. Without this, a Windows checkout with
+# core.autocrlf=true commits CRLF, which breaks anything consumed by Linux:
+# a cloud-init shebang becomes "#!/usr/bin/env bash\r" and the script never runs.
+* text=auto eol=lf
+
+# Files that MUST be LF because a Linux guest executes them verbatim.
+*.tftpl  text eol=lf
+*.sh     text eol=lf
+*.yaml   text eol=lf
+*.yml    text eol=lf
+
+# Binary
+*.vsdx binary
