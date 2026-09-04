@@ -9,13 +9,15 @@ This repository is a **DEV-first Terraform implementation** for the Baytex Terra
 > | **[DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md)** | Step-by-step runbook: from-scratch deployment, two-phase NCC apply, handoffs, validation, DEV/TEST/PROD |
 > | **[ARCHITECTURE.md](ARCHITECTURE.md)** | Why each component exists, detailed traffic flows, design rationale and rejected alternatives |
 > | **[TERRAFORM-EXPLAINED.md](TERRAFORM-EXPLAINED.md)** | How the code works: modules, state, dependency graph, outputs, CI/CD |
+> | **[PIPELINE-SETUP.md](PIPELINE-SETUP.md)** | What must be done and by whom: Global Admin, Databricks account admin, repo admin, running the pipelines |
+> | **[LOCAL-DEVELOPMENT.md](LOCAL-DEVELOPMENT.md)** | What to run from a laptop (the mock on-prem build) and what never to |
 >
 > The summary below is orientation only.
 >
-> ⚠️ **Before choosing CIDRs**, read
-> [ARCHITECTURE.md §1.3](ARCHITECTURE.md#13-️-the-shipped-example-cidrs-collide-with-ot-production) —
-> the CIDRs in `terraform.tfvars.example` overlap live OT Production subnets and
-> must not be used as-is.
+> ⚠️ **CIDRs must be confirmed by Baytex IPAM before any apply.** The values in
+> `terraform.tfvars.example` are a proposal drawn from the Data Non-Prod block
+> (`10.40.64.0/20`); see [ARCHITECTURE.md §1.3](ARCHITECTURE.md) for how that
+> block was chosen and which ranges are already in use.
 
 ## Latest confirmed direction
 
@@ -73,10 +75,18 @@ The existing hub/firewall/VPN are not imported into this Terraform state. This p
 │   ├── haproxy-tier/
 │   └── ncc/
 ├── baytex-bi-owned-unity-catalog-example/   # Separate Baytex BI reference/state
-├── scripts/
+├── scripts/                                 # Operational PowerShell
 ├── docs/
 └── .github/workflows/
+    ├── terraform-bootstrap-state.yml        # Creates + migrates the state backend
+    ├── terraform-deploy.yml                 # Manual deploy; dev -> test -> prod
+    ├── terraform-plan-pr.yml                # Plan-only check on pull requests
+    ├── _terraform-plan.yml                  # Reusable plan
+    └── _terraform-apply.yml                 # Reusable apply of the exact plan
 ```
+
+`sandbox/` is not tracked: it is rehearsal scaffolding that never ships to a
+client. See [LOCAL-DEVELOPMENT.md](LOCAL-DEVELOPMENT.md).
 
 ## Inputs that must be approved before plan/apply
 
