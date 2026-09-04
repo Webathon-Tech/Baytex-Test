@@ -30,8 +30,12 @@ permissions:
   contents: read
   id-token: write
 
+# Shared with terraform-destroy.yml so a deploy and a destroy can never run at
+# the same time and fight over the state lock. A deploy can span all three
+# environments, so this cannot be scoped per environment -- and serialising
+# mutating runs is the safe trade. Plans are cheap to redo; applies are not.
 concurrency:
-  group: terraform-deploy
+  group: terraform-mutate
   cancel-in-progress: false
 
 jobs:

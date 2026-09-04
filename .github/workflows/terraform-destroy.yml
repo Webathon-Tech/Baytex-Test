@@ -33,8 +33,10 @@ permissions:
   contents: read
   id-token: write
 
+# Shared with terraform-deploy.yml -- see the note there. A destroy must never
+# overlap a deploy of the same environment.
 concurrency:
-  group: terraform-${{ inputs.environment }}
+  group: terraform-mutate
   cancel-in-progress: false
 
 jobs:

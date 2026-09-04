@@ -10,6 +10,7 @@ This repository is a **DEV-first Terraform implementation** for the Baytex Terra
 > | **[ARCHITECTURE.md](ARCHITECTURE.md)** | Why each component exists, detailed traffic flows, design rationale and rejected alternatives |
 > | **[TERRAFORM-EXPLAINED.md](TERRAFORM-EXPLAINED.md)** | How the code works: modules, state, dependency graph, outputs, CI/CD |
 > | **[PIPELINE-SETUP.md](PIPELINE-SETUP.md)** | What must be done and by whom: Global Admin, Databricks account admin, repo admin, running the pipelines |
+> | **[PIPELINES-EXPLAINED.md](PIPELINES-EXPLAINED.md)** | How each workflow works and why it is built that way |
 > | **[LOCAL-DEVELOPMENT.md](LOCAL-DEVELOPMENT.md)** | What to run from a laptop (the mock on-prem build) and what never to |
 > | **[REHEARSAL-RESULTS.md](REHEARSAL-RESULTS.md)** | Evidence from the full three-environment sandbox rehearsal, and the nine defects it found |
 >
