@@ -150,8 +150,31 @@ jobs:
           terraform show -no-color destroy.tfplan > destroy-plan.txt
           grep -E '^Plan:' destroy-plan.txt || true
 
+      # Destroying this stack needs more than one pass. Deleting the NCC binding
+      # and deleting the NCC itself are separate Databricks API calls, and the
+      # unbind is not immediately visible -- the NCC delete then fails with
+      # "unable to be deleted because it is attached to one or more workspaces".
+      # By the next attempt the unbind has landed and it succeeds.
+      #
+      # Each attempt re-plans, because a partially completed destroy makes the
+      # saved plan stale.
       - name: Apply destroy
-        run: terraform apply -lock-timeout=10m -auto-approve destroy.tfplan
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3; do
+            echo "=== destroy attempt $attempt ==="
+            if terraform apply -lock-timeout=10m -auto-approve destroy.tfplan; then
+              echo "destroy completed on attempt $attempt"
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::destroy did not complete after $attempt attempts"
+              exit 1
+            fi
+            echo "attempt $attempt failed; waiting for Databricks/Azure state to settle"
+            sleep 45
+            terraform plan -destroy -lock-timeout=10m -out=destroy.tfplan
+          done
 
       # A destroy that leaves resources behind is a silent problem: the next
       # apply collides on names that still exist. -detailed-exitcode returns 0
