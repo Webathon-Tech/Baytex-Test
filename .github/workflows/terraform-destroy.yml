@@ -56,7 +56,13 @@ jobs:
     steps:
       # Checked before anything else touches Azure. A typo in the choice box is
       # cheap; a typo that destroys prod is not.
+      # working-directory must be overridden here: the job default points at
+      # environments/<env>, which does not exist until Checkout runs. Without
+      # this the step dies on a missing directory before evaluating the
+      # confirmation at all -- failing for the right-looking reason but the
+      # wrong cause, which would hide a broken guard.
       - name: Confirm intent
+        working-directory: .
         run: |
           if [ "${{ inputs.confirm }}" != "${{ inputs.environment }}" ]; then
             echo "::error::Confirmation '${{ inputs.confirm }}' does not match environment '${{ inputs.environment }}'. Nothing was destroyed."
