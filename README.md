@@ -11,6 +11,7 @@ This repository is a **DEV-first Terraform implementation** for the Baytex Terra
 > | **[TERRAFORM-EXPLAINED.md](TERRAFORM-EXPLAINED.md)** | How the code works: modules, state, dependency graph, outputs, CI/CD |
 > | **[PIPELINE-SETUP.md](PIPELINE-SETUP.md)** | What must be done and by whom: Global Admin, Databricks account admin, repo admin, running the pipelines |
 > | **[LOCAL-DEVELOPMENT.md](LOCAL-DEVELOPMENT.md)** | What to run from a laptop (the mock on-prem build) and what never to |
+> | **[REHEARSAL-RESULTS.md](REHEARSAL-RESULTS.md)** | Evidence from the full three-environment sandbox rehearsal, and the nine defects it found |
 >
 > The summary below is orientation only.
 >
@@ -80,6 +81,7 @@ The existing hub/firewall/VPN are not imported into this Terraform state. This p
 └── .github/workflows/
     ├── terraform-bootstrap-state.yml        # Creates + migrates the state backend
     ├── terraform-deploy.yml                 # Manual deploy; dev -> test -> prod
+    ├── terraform-destroy.yml                # Manual destroy, one environment
     ├── terraform-plan-pr.yml                # Plan-only check on pull requests
     ├── _terraform-plan.yml                  # Reusable plan
     └── _terraform-apply.yml                 # Reusable apply of the exact plan

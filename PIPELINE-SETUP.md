@@ -184,6 +184,31 @@ one environment on its own.
 
 Pull requests automatically run a plan-only check (`Terraform Plan (PR)`).
 
+### Destroying an environment
+
+```
+Actions → "Terraform Destroy" → Run workflow → environment: dev, confirm: dev
+```
+
+The confirmation must match the chosen environment or the run stops before it
+authenticates to Azure. Scope is the platform root only — the state backend
+survives, so the environment can be rebuilt without re-bootstrapping.
+
+Two things make this stack awkward to destroy, both handled by the workflow:
+
+- Azure will not delete a **Private Link Service that still has private endpoint
+  connections**, and the Databricks-managed endpoints outlive the NCC that created
+  them. The workflow clears them before planning.
+- Deleting the **NCC binding and the NCC** are separate Databricks calls and the
+  unbind is not immediately visible, so the first attempt can fail with *"attached
+  to one or more workspaces"*. The workflow retries, re-planning between attempts.
+
+Afterwards, remove the **hub-side peering** yourself — Terraform never owned it:
+
+```bash
+az network vnet peering delete --subscription <hub-sub>   --resource-group <hub-rg> --vnet-name <hub-vnet> --name peer-hub-to-<spoke>
+```
+
 ### Post-apply steps (not automated)
 
 1. **Hub-side peering.** Terraform creates only the spoke side by design; the hub
