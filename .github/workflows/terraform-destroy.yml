@@ -1,0 +1,172 @@
+name: Terraform Destroy
+
+# Destroys ONE environment's platform. Deliberately separate from
+# terraform-deploy.yml: destruction should never be a parameter on the workflow
+# people run every day.
+#
+# Scope: the platform root only (environments/<env>). It does NOT touch
+# bootstrap/dev-state, so the remote state backend survives and the environment
+# can be rebuilt with terraform-deploy.yml without re-bootstrapping. The state
+# account also holds the state file this job is writing to -- destroying it from
+# here would be self-defeating.
+#
+# NOT destroyed (not managed by this Terraform, by design):
+#   - the hub VNet, firewall/NVA and on-premises systems
+#   - the HUB SIDE of the VNet peering, which is customer-owned
+# The hub-side peering is left pointing at a deleted VNet and must be removed
+# separately. The final step reports the exact command.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to destroy
+        required: true
+        type: choice
+        options: [dev, test, prod]
+      confirm:
+        description: Type the environment name again to confirm
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  destroy:
+    name: Destroy ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}-apply
+    defaults:
+      run:
+        shell: bash
+        working-directory: environments/${{ inputs.environment }}
+
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      ARM_USE_AZUREAD: "true"
+      DATABRICKS_TF_ENABLED_PF_RESOURCES: databricks_mws_ncc_private_endpoint_rule
+
+    steps:
+      # Checked before anything else touches Azure. A typo in the choice box is
+      # cheap; a typo that destroys prod is not.
+      - name: Confirm intent
+        run: |
+          if [ "${{ inputs.confirm }}" != "${{ inputs.environment }}" ]; then
+            echo "::error::Confirmation '${{ inputs.confirm }}' does not match environment '${{ inputs.environment }}'. Nothing was destroyed."
+            exit 1
+          fi
+          echo "Confirmed: destroying ${{ inputs.environment }}"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.1"
+          terraform_wrapper: false
+
+      - name: Write environment variables file
+        env:
+          TFVARS: ${{ secrets.TFVARS }}
+        run: |
+          test -n "$TFVARS" || { echo "::error::TFVARS secret is empty"; exit 1; }
+          printf '%s\n' "$TFVARS" > terraform.tfvars
+
+      - name: Terraform init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ vars.TF_STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ vars.TF_STATE_CONTAINER }}" \
+            -backend-config="key=${{ vars.TF_STATE_KEY }}" \
+            -backend-config="use_azuread_auth=true"
+
+      - name: Record what exists before destroying
+        run: |
+          terraform state list > before.txt || true
+          echo "Resources currently tracked: $(wc -l < before.txt)"
+          {
+            echo "### ${{ inputs.environment }} — resources before destroy"
+            echo ""
+            echo '```'
+            cat before.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Plan destroy
+        run: |
+          terraform plan -destroy -lock-timeout=10m -out=destroy.tfplan
+          terraform show -no-color destroy.tfplan > destroy-plan.txt
+          grep -E '^Plan:' destroy-plan.txt || true
+
+      - name: Apply destroy
+        run: terraform apply -lock-timeout=10m -auto-approve destroy.tfplan
+
+      # A destroy that leaves resources behind is a silent problem: the next
+      # apply collides on names that still exist. -detailed-exitcode returns 0
+      # only when nothing is left to change.
+      - name: Verify the environment is fully destroyed
+        run: |
+          set -euo pipefail
+          REMAINING=$(terraform state list | wc -l)
+          echo "Resources still tracked in state: $REMAINING"
+          if [ "$REMAINING" -ne 0 ]; then
+            terraform state list
+            echo "::error::$REMAINING resource(s) survived the destroy"
+            exit 1
+          fi
+
+          set +e
+          terraform plan -destroy -detailed-exitcode -lock-timeout=10m > /dev/null 2>&1
+          CODE=$?
+          set -e
+          [ "$CODE" -eq 0 ] || { echo "::error::destroy plan still reports changes (exit $CODE)"; exit 1; }
+          echo "Verified: state is empty and no further destroy actions pending."
+
+      - name: Report the manual cleanup this cannot do
+        if: success()
+        run: |
+          {
+            echo ""
+            echo "### Destroyed ${{ inputs.environment }}"
+            echo ""
+            echo "The state backend was intentionally kept, so \`Terraform Deploy\` can"
+            echo "rebuild this environment without re-running the bootstrap."
+            echo ""
+            echo "**Still present — remove separately if the spoke is gone for good:**"
+            echo "the hub-side VNet peering, which this Terraform never owned."
+            echo ""
+            echo '```bash'
+            echo "az network vnet peering delete \\"
+            echo "  --subscription <hub-subscription> \\"
+            echo "  --resource-group <hub-resource-group> \\"
+            echo "  --vnet-name <hub-vnet> \\"
+            echo "  --name peer-hub-to-<spoke-vnet-name>"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload destroy evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: destroy-evidence-${{ inputs.environment }}-${{ github.run_id }}
+          path: |
+            environments/${{ inputs.environment }}/before.txt
+            environments/${{ inputs.environment }}/destroy-plan.txt
+          retention-days: 30
+          if-no-files-found: warn
