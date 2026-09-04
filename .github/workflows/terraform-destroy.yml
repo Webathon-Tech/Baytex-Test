@@ -114,6 +114,36 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Azure refuses to delete a Private Link Service that still has private
+      # endpoint connections, and the Databricks-managed endpoints created by the
+      # NCC rules outlive the NCC itself -- they remain "Approved" against the PLS
+      # after the NCC is gone. Terraform then fails with
+      # PrivateLinkServiceWithPrivateEndpointConnectionsCannotBeDeleted and leaves
+      # the network and connectivity groups behind.
+      #
+      # Clearing them first makes destroy work in one pass instead of needing a
+      # manual cleanup and a re-run. Safe when there is nothing to clear.
+      - name: Clear private endpoint connections from Private Link Services
+        working-directory: .
+        env:
+          SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          RG="rg-sbx-dbx-${{ inputs.environment }}-connectivity-cnc-001"
+          if ! az group exists --name "$RG" --subscription "$SUBSCRIPTION_ID" | grep -qi true; then
+            echo "Connectivity group $RG not present; nothing to clear."
+            exit 0
+          fi
+          for PLS in $(az network private-link-service list -g "$RG" --subscription "$SUBSCRIPTION_ID" --query "[].id" -o tsv); do
+            echo "Private Link Service: $(basename "$PLS")"
+            for CONN in $(az network private-endpoint-connection list --id "$PLS" --subscription "$SUBSCRIPTION_ID" --query "[].id" -o tsv); do
+              echo "  removing connection $(basename "$CONN")"
+              az network private-endpoint-connection delete --id "$CONN" --subscription "$SUBSCRIPTION_ID" --yes --only-show-errors -o none
+            done
+          done
+          # Azure needs a moment before the PLS reports zero connections.
+          sleep 20
+
       - name: Plan destroy
         run: |
           terraform plan -destroy -lock-timeout=10m -out=destroy.tfplan
