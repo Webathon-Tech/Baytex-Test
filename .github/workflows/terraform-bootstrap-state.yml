@@ -140,9 +140,18 @@ jobs:
             -backend-config="use_azuread_auth=true"
 
       # ------------------------------------------------- create (first ever run)
+      # backend.tf must be moved ASIDE, not just left uninitialised. "-backend=false"
+      # skips backend initialisation but the azurerm backend block is still declared,
+      # so plan/apply refuse with "Backend initialization required". With the file
+      # absent Terraform falls back to local state, which is what the first run needs.
+      # It is restored before the migrate step below.
+      - name: Disable backend block for local-state phase
+        if: steps.probe.outputs.mode != 'remote'
+        run: mv backend.tf ../backend.tf.disabled
+
       - name: Init with local state
         if: steps.probe.outputs.mode != 'remote'
-        run: terraform init -backend=false
+        run: terraform init
 
       - name: Apply to create the backend
         if: steps.probe.outputs.mode == 'create'
@@ -173,6 +182,10 @@ jobs:
           terraform apply -auto-approve bootstrap.tfplan
 
       # --------------------------------------------------------------- migrate
+      - name: Restore backend block
+        if: steps.probe.outputs.mode != 'remote'
+        run: mv ../backend.tf.disabled backend.tf
+
       - name: Migrate local state into the backend
         if: steps.probe.outputs.mode != 'remote'
         run: |

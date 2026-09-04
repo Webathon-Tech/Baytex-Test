@@ -186,12 +186,45 @@ $currentCreds = Invoke-AzJson @('ad', 'app', 'federated-credential', 'list', '--
 $currentSubjects = @()
 if ($currentCreds) { $currentSubjects = @($currentCreds | ForEach-Object { $_.subject }) }
 
+# GitHub emits one of TWO subject formats depending on how the organisation has
+# configured its OIDC subject claim:
+#
+#   classic    repo:<org>/<repo>:environment:<env>
+#   immutable  repo:<org>@<orgId>/<repo>@<repoId>:environment:<env>
+#
+# The second embeds the numeric organisation and repository IDs -- this is what
+# the Azure portal's "Organization ID" and "Repository ID" fields are for. Which
+# one an org emits is not discoverable ahead of time, and presenting the wrong
+# one fails with AADSTS700213 "No matching federated identity record found".
+#
+# Registering both costs nothing (an unmatched credential is inert, and Entra
+# allows up to 20 per app) and means this script works against Baytex's tenant
+# without first knowing how their org is configured.
+$subjectForms = @()
 foreach ($envName in $GitHubEnvNames) {
-    $subject = "repo:$GitHubOrg/$($GitHubRepo):environment:$envName"
-    $credName = "github-$GitHubOrg-$GitHubRepo-env-$envName"
+    $subjectForms += [pscustomobject]@{
+        Subject = "repo:$GitHubOrg/$($GitHubRepo):environment:$envName"
+        Name    = "github-$GitHubOrg-$GitHubRepo-env-$envName"
+        Env     = $envName
+        Form    = 'classic'
+    }
+    if ($GitHubOrgId -notmatch 'unresolved' -and $GitHubRepoId -notmatch 'unresolved') {
+        $subjectForms += [pscustomobject]@{
+            Subject = "repo:$GitHubOrg@$GitHubOrgId/$GitHubRepo@$($GitHubRepoId):environment:$envName"
+            Name    = "github-$GitHubOrg-$GitHubRepo-env-$envName-ids"
+            Env     = $envName
+            Form    = 'immutable'
+        }
+    }
+}
+
+foreach ($form in $subjectForms) {
+    $subject = $form.Subject
+    $credName = $form.Name
+    $envName = $form.Env
 
     if ($currentSubjects -contains $subject) {
-        Write-Host "  [skip]   $subject" -ForegroundColor DarkYellow
+        Write-Host "  [skip]   ($($form.Form)) $subject" -ForegroundColor DarkYellow
         continue
     }
 
@@ -199,18 +232,18 @@ foreach ($envName in $GitHubEnvNames) {
         name        = $credName
         issuer      = $Issuer
         subject     = $subject
-        description = "GitHub Actions OIDC for $GitHubOrg/$GitHubRepo environment '$envName' (org id $GitHubOrgId, repo id $GitHubRepoId)"
+        description = "GitHub Actions OIDC ($($form.Form) subject) for $GitHubOrg/$GitHubRepo environment '$envName' (org id $GitHubOrgId, repo id $GitHubRepoId)"
         audiences   = @($Audience)
     }
 
     # az on Windows mangles inline JSON, so hand it a file instead.
-    $tmp = Join-Path ([IO.Path]::GetTempPath()) "fedcred-$envName-$([guid]::NewGuid().ToString('N')).json"
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) "fedcred-$credName-$([guid]::NewGuid().ToString('N')).json"
     ($body | ConvertTo-Json -Depth 5) | Set-Content -Path $tmp -Encoding utf8
 
     try {
         Invoke-Az @('ad', 'app', 'federated-credential', 'create', '--id', $AppId,
-            '--parameters', "@$tmp", '--output', 'none') "create federated credential $envName" | Out-Null
-        Write-Host "  [create] $subject" -ForegroundColor Green
+            '--parameters', "@$tmp", '--output', 'none') "create federated credential $credName" | Out-Null
+        Write-Host "  [create] ($($form.Form)) $subject" -ForegroundColor Green
     }
     finally {
         Remove-Item $tmp -Force -ErrorAction SilentlyContinue
