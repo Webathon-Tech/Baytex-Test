@@ -13,7 +13,7 @@ this way) and [DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md) (how to run it).
 
 ```text
 .
-├── bootstrap/dev-state/                   # Root #1 — creates the state backend
+├── bootstrap/state/                   # Root #1 — creates the state backend
 ├── environments/dev/                      # Root #2 — the platform (the main one)
 ├── modules/
 │   ├── spoke-network/                     # VNet, subnets, NSGs, NAT, routes, peering
@@ -31,7 +31,7 @@ They are separate because they have **different owners, lifecycles and state**:
 
 | Root | Owner | Lifecycle | State |
 | --- | --- | --- | --- |
-| `bootstrap/dev-state` | Platform admin | Once, ever | Local |
+| `bootstrap/state` | Platform admin | Once, ever | Local |
 | `environments/dev` | AMTRA | Every platform change | Azure Blob |
 | `baytex-bi-owned-unity-catalog-example` | Baytex BI | Data governance cadence | Separate backend |
 

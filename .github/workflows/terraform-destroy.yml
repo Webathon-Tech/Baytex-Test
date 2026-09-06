@@ -5,7 +5,7 @@ name: Terraform Destroy
 # people run every day.
 #
 # Scope: the platform root only (environments/<env>). It does NOT touch
-# bootstrap/dev-state, so the remote state backend survives and the environment
+# bootstrap/state, so the remote state backend survives and the environment
 # can be rebuilt with terraform-deploy.yml without re-bootstrapping. The state
 # account also holds the state file this job is writing to -- destroying it from
 # here would be self-defeating.

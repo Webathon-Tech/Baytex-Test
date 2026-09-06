@@ -127,7 +127,7 @@ and reported no changes.*
 
 ### Why it does not create its own storage role assignment
 
-`bootstrap/dev-state` can grant `Storage Blob Data Contributor` on the state
+`bootstrap/state` can grant `Storage Blob Data Contributor` on the state
 account, but the pipeline passes an empty list. The migrate step runs seconds
 after apply, and a freshly created data-plane role assignment has not reliably
 propagated by then. The deployment principals get that role at subscription scope
@@ -300,7 +300,7 @@ the next apply.
 
 ### What it deliberately does not destroy
 
-- **`bootstrap/dev-state`.** The state backend survives, so an environment can be
+- **`bootstrap/state`.** The state backend survives, so an environment can be
   rebuilt without re-bootstrapping. It also holds the state file this job is
   writing to; destroying it from here would be self-defeating.
 - **The hub-side VNet peering.** Terraform only ever creates the spoke side,

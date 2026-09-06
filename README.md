@@ -69,7 +69,7 @@ The existing hub/firewall/VPN are not imported into this Terraform state. This p
 
 ```text
 .
-├── bootstrap/dev-state/                    # One-time Azure Blob backend creation
+├── bootstrap/state/                    # One-time Azure Blob backend creation
 ├── environments/dev/                       # DEV platform root module
 ├── modules/
 │   ├── spoke-network/
@@ -114,7 +114,7 @@ At minimum:
 ### 1. Create the remote state backend
 
 ```powershell
-cd bootstrap/dev-state
+cd bootstrap/state
 Copy-Item terraform.tfvars.example terraform.tfvars
 terraform init
 terraform plan -out bootstrap.tfplan

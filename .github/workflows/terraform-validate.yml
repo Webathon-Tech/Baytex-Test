@@ -68,7 +68,7 @@ jobs:
         run: |
           set -uo pipefail
           FAILED=0
-          for dir in environments/dev environments/test environments/prod bootstrap/dev-state baytex-bi-owned-unity-catalog-example; do
+          for dir in environments/dev environments/test environments/prod bootstrap/state baytex-bi-owned-unity-catalog-example; do
             [ -d "$dir" ] || continue
             echo "::group::validate $dir"
             if terraform -chdir="$dir" init -backend=false -input=false >/dev/null 2>&1 \
