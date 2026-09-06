@@ -1,0 +1,97 @@
+name: Terraform Validate
+
+# Fast feedback for developers on feature branches.
+#
+# Runs on every push EXCEPT main, because main is already covered by the
+# plan workflow. Deliberately needs NO Azure credentials and NO state access:
+# "terraform init -backend=false" is enough for validate, so this is safe to run
+# on any branch including one opened by someone without deployment rights.
+#
+# Without this a developer gets no feedback at all until they open a pull
+# request -- a syntax error can sit on a branch for days.
+
+on:
+  push:
+    branches-ignore:
+      - main
+    paths:
+      - "environments/**"
+      - "modules/**"
+      - "bootstrap/**"
+      - ".github/workflows/terraform-*.yml"
+      - ".github/workflows/_terraform-*.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: fmt and validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.1"
+          terraform_wrapper: false
+
+      - name: Terraform format
+        id: fmt
+        run: |
+          if terraform fmt -check -recursive; then
+            echo "All files are correctly formatted."
+          else
+            echo "::error::Formatting issues above. Run 'terraform fmt -recursive' and commit."
+            exit 1
+          fi
+
+      # Each root is validated separately. -backend=false skips backend setup,
+      # which validate does not need -- so no credentials and no state are
+      # touched. Modules are validated through the roots that call them.
+      - name: Terraform validate
+        run: |
+          set -uo pipefail
+          FAILED=0
+          for dir in environments/dev environments/test environments/prod bootstrap/state baytex-bi-owned-unity-catalog-example; do
+            [ -d "$dir" ] || continue
+            echo "::group::validate $dir"
+            if terraform -chdir="$dir" init -backend=false -input=false >/dev/null 2>&1 \
+               && terraform -chdir="$dir" validate -no-color; then
+              echo "  OK"
+            else
+              echo "::error::terraform validate failed in $dir"
+              terraform -chdir="$dir" validate -no-color || true
+              FAILED=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $FAILED
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Terraform validate"
+            echo ""
+            if [ "${{ job.status }}" = "success" ]; then
+              echo "fmt and validate passed on \`${{ github.ref_name }}\`."
+            else
+              echo "Failures above on \`${{ github.ref_name }}\` — fix before opening a pull request."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

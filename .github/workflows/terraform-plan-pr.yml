@@ -1,0 +1,121 @@
+name: Terraform Plan (PR)
+
+# Plan-only. Never applies.
+#
+# Runs in two places:
+#   pull_request  -- so a reviewer sees the impact on ALL THREE environments
+#                    before approving, not just dev
+#   push to main  -- so after a merge there is a record of what main now implies
+#                    for each environment
+#
+# Planning all three matters because the roots are separate copies of the same
+# .tf files: a change can be valid for dev and break prod (a name collision, an
+# address that does not fit prod's /20). Planning dev alone would not show it.
+
+on:
+  pull_request:
+    paths:
+      - "environments/**"
+      - "modules/**"
+      - ".github/workflows/terraform-*.yml"
+      - ".github/workflows/_terraform-*.yml"
+  push:
+    branches: [main]
+    paths:
+      - "environments/**"
+      - "modules/**"
+      - ".github/workflows/terraform-*.yml"
+      - ".github/workflows/_terraform-*.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-plan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Reports only, never fails. The three environment roots are separate copies of
+  # the same files, so they can drift with nothing to notice. Divergence is
+  # sometimes deliberate, and a hard failure would train people to bypass the
+  # check -- making it visible on every PR is what matters.
+  parity:
+    name: Root parity (report only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compare environment roots
+        run: |
+          set -uo pipefail
+          DIFFS=0
+          {
+            echo "### Environment root parity"
+            echo ""
+            echo "\`environments/{dev,test,prod}\` should hold identical \`.tf\` files."
+            echo "Only \`terraform.tfvars\` is expected to differ, and it is not in git."
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for f in main.tf variables.tf outputs.tf locals.tf providers.tf versions.tf backend.tf; do
+            base="environments/dev/$f"
+            [ -f "$base" ] || continue
+            for env in test prod; do
+              other="environments/$env/$f"
+              if [ ! -f "$other" ]; then
+                echo "| \`$f\` | dev vs $env | **missing in $env** |" >> /tmp/rows.md
+                DIFFS=$((DIFFS+1)); continue
+              fi
+              if ! diff -q "$base" "$other" >/dev/null 2>&1; then
+                echo "| \`$f\` | dev vs $env | **differs** |" >> /tmp/rows.md
+                DIFFS=$((DIFFS+1))
+              fi
+            done
+          done
+
+          if [ "$DIFFS" -eq 0 ]; then
+            echo "All roots identical." >> "$GITHUB_STEP_SUMMARY"
+            echo "Roots are identical."
+          else
+            {
+              echo "| File | Comparison | Result |"
+              echo "| --- | --- | --- |"
+              cat /tmp/rows.md
+              echo ""
+              echo "> $DIFFS difference(s). This is a **report, not a failure** — divergence"
+              echo "> may be intentional. If it is not, copy the change to the other roots."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "$DIFFS difference(s) found:"
+            cat /tmp/rows.md
+            for env in test prod; do
+              for f in main.tf variables.tf outputs.tf locals.tf providers.tf versions.tf; do
+                [ -f "environments/dev/$f" ] && [ -f "environments/$env/$f" ] || continue
+                diff -u "environments/dev/$f" "environments/$env/$f" || true
+              done
+            done
+          fi
+          exit 0
+
+  plan-dev:
+    uses: ./.github/workflows/_terraform-plan.yml
+    with:
+      environment: dev
+      upload_plan: false
+    secrets: inherit
+
+  plan-test:
+    uses: ./.github/workflows/_terraform-plan.yml
+    with:
+      environment: test
+      upload_plan: false
+    secrets: inherit
+
+  plan-prod:
+    uses: ./.github/workflows/_terraform-plan.yml
+    with:
+      environment: prod
+      upload_plan: false
+    secrets: inherit

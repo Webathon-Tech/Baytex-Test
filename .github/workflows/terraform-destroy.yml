@@ -1,0 +1,242 @@
+name: Terraform Destroy
+
+# Destroys ONE environment's platform. Deliberately separate from
+# terraform-deploy.yml: destruction should never be a parameter on the workflow
+# people run every day.
+#
+# Scope: the platform root only (environments/<env>). It does NOT touch
+# bootstrap/state, so the remote state backend survives and the environment
+# can be rebuilt with terraform-deploy.yml without re-bootstrapping. The state
+# account also holds the state file this job is writing to -- destroying it from
+# here would be self-defeating.
+#
+# NOT destroyed (not managed by this Terraform, by design):
+#   - the hub VNet, firewall/NVA and on-premises systems
+#   - the HUB SIDE of the VNet peering, which is customer-owned
+# The hub-side peering is left pointing at a deleted VNet and must be removed
+# separately. The final step reports the exact command.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to destroy
+        required: true
+        type: choice
+        options: [dev, test, prod]
+      confirm:
+        description: Type the environment name again to confirm
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+# Shared with terraform-deploy.yml -- see the note there. A destroy must never
+# overlap a deploy of the same environment.
+concurrency:
+  group: terraform-mutate
+  cancel-in-progress: false
+
+jobs:
+  destroy:
+    name: Destroy ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}-apply
+    defaults:
+      run:
+        shell: bash
+        working-directory: environments/${{ inputs.environment }}
+
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      ARM_USE_AZUREAD: "true"
+      DATABRICKS_TF_ENABLED_PF_RESOURCES: databricks_mws_ncc_private_endpoint_rule
+
+    steps:
+      # Checked before anything else touches Azure. A typo in the choice box is
+      # cheap; a typo that destroys prod is not.
+      # working-directory must be overridden here: the job default points at
+      # environments/<env>, which does not exist until Checkout runs. Without
+      # this the step dies on a missing directory before evaluating the
+      # confirmation at all -- failing for the right-looking reason but the
+      # wrong cause, which would hide a broken guard.
+      - name: Confirm intent
+        working-directory: .
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "::error::Refusing to destroy from '${{ github.ref }}'. Destroys run from main only."
+            exit 1
+          fi
+          if [ "${{ inputs.confirm }}" != "${{ inputs.environment }}" ]; then
+            echo "::error::Confirmation '${{ inputs.confirm }}' does not match environment '${{ inputs.environment }}'. Nothing was destroyed."
+            exit 1
+          fi
+          echo "Confirmed: destroying ${{ inputs.environment }} from ${{ github.ref }}"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.1"
+          terraform_wrapper: false
+
+      - name: Write environment variables file
+        env:
+          # TESTING ONLY: TFVARS is read from a repository VARIABLE so its content is
+          # visible in the GitHub UI. GitHub masks secrets in logs automatically and does
+          # NOT mask variables, and this repository is public -- switch back to the line
+          # below before any client deployment.
+          # TFVARS: ${{ secrets.TFVARS }}
+          TFVARS: ${{ vars.TFVARS }}
+        run: |
+          test -n "$TFVARS" || { echo "::error::TFVARS is empty"; exit 1; }
+          printf '%s\n' "$TFVARS" > terraform.tfvars
+
+      - name: Terraform init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ vars.TF_STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ vars.TF_STATE_CONTAINER }}" \
+            -backend-config="key=${{ vars.TF_STATE_KEY }}" \
+            -backend-config="use_azuread_auth=true"
+
+      - name: Record what exists before destroying
+        run: |
+          terraform state list > before.txt || true
+          echo "Resources currently tracked: $(wc -l < before.txt)"
+          {
+            echo "### ${{ inputs.environment }} — resources before destroy"
+            echo ""
+            echo '```'
+            cat before.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Azure refuses to delete a Private Link Service that still has private
+      # endpoint connections, and the Databricks-managed endpoints created by the
+      # NCC rules outlive the NCC itself -- they remain "Approved" against the PLS
+      # after the NCC is gone. Terraform then fails with
+      # PrivateLinkServiceWithPrivateEndpointConnectionsCannotBeDeleted and leaves
+      # the network and connectivity groups behind.
+      #
+      # Clearing them first makes destroy work in one pass instead of needing a
+      # manual cleanup and a re-run. Safe when there is nothing to clear.
+      - name: Clear private endpoint connections from Private Link Services
+        working-directory: .
+        env:
+          SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          RG="rg-sbx-dbx-${{ inputs.environment }}-connectivity-cnc-001"
+          if ! az group exists --name "$RG" --subscription "$SUBSCRIPTION_ID" | grep -qi true; then
+            echo "Connectivity group $RG not present; nothing to clear."
+            exit 0
+          fi
+          for PLS in $(az network private-link-service list -g "$RG" --subscription "$SUBSCRIPTION_ID" --query "[].id" -o tsv); do
+            echo "Private Link Service: $(basename "$PLS")"
+            for CONN in $(az network private-endpoint-connection list --id "$PLS" --subscription "$SUBSCRIPTION_ID" --query "[].id" -o tsv); do
+              echo "  removing connection $(basename "$CONN")"
+              az network private-endpoint-connection delete --id "$CONN" --subscription "$SUBSCRIPTION_ID" --yes --only-show-errors -o none
+            done
+          done
+          # Azure needs a moment before the PLS reports zero connections.
+          sleep 20
+
+      - name: Plan destroy
+        run: |
+          terraform plan -destroy -lock-timeout=10m -out=destroy.tfplan
+          terraform show -no-color destroy.tfplan > destroy-plan.txt
+          grep -E '^Plan:' destroy-plan.txt || true
+
+      # Destroying this stack needs more than one pass. Deleting the NCC binding
+      # and deleting the NCC itself are separate Databricks API calls, and the
+      # unbind is not immediately visible -- the NCC delete then fails with
+      # "unable to be deleted because it is attached to one or more workspaces".
+      # By the next attempt the unbind has landed and it succeeds.
+      #
+      # Each attempt re-plans, because a partially completed destroy makes the
+      # saved plan stale.
+      - name: Apply destroy
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3; do
+            echo "=== destroy attempt $attempt ==="
+            if terraform apply -lock-timeout=10m -auto-approve destroy.tfplan; then
+              echo "destroy completed on attempt $attempt"
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::destroy did not complete after $attempt attempts"
+              exit 1
+            fi
+            echo "attempt $attempt failed; waiting for Databricks/Azure state to settle"
+            sleep 45
+            terraform plan -destroy -lock-timeout=10m -out=destroy.tfplan
+          done
+
+      # A destroy that leaves resources behind is a silent problem: the next
+      # apply collides on names that still exist. -detailed-exitcode returns 0
+      # only when nothing is left to change.
+      - name: Verify the environment is fully destroyed
+        run: |
+          set -euo pipefail
+          REMAINING=$(terraform state list | wc -l)
+          echo "Resources still tracked in state: $REMAINING"
+          if [ "$REMAINING" -ne 0 ]; then
+            terraform state list
+            echo "::error::$REMAINING resource(s) survived the destroy"
+            exit 1
+          fi
+
+          set +e
+          terraform plan -destroy -detailed-exitcode -lock-timeout=10m > /dev/null 2>&1
+          CODE=$?
+          set -e
+          [ "$CODE" -eq 0 ] || { echo "::error::destroy plan still reports changes (exit $CODE)"; exit 1; }
+          echo "Verified: state is empty and no further destroy actions pending."
+
+      - name: Report the manual cleanup this cannot do
+        if: success()
+        run: |
+          {
+            echo ""
+            echo "### Destroyed ${{ inputs.environment }}"
+            echo ""
+            echo "The state backend was intentionally kept, so \`Terraform Deploy\` can"
+            echo "rebuild this environment without re-running the bootstrap."
+            echo ""
+            echo "**Still present — remove separately if the spoke is gone for good:**"
+            echo "the hub-side VNet peering, which this Terraform never owned."
+            echo ""
+            echo '```bash'
+            echo "az network vnet peering delete \\"
+            echo "  --subscription <hub-subscription> \\"
+            echo "  --resource-group <hub-resource-group> \\"
+            echo "  --vnet-name <hub-vnet> \\"
+            echo "  --name peer-hub-to-<spoke-vnet-name>"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload destroy evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: destroy-evidence-${{ inputs.environment }}-${{ github.run_id }}
+          path: |
+            environments/${{ inputs.environment }}/before.txt
+            environments/${{ inputs.environment }}/destroy-plan.txt
+          retention-days: 30
+          if-no-files-found: warn
