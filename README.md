@@ -1,4 +1,5 @@
 # Baytex Azure Databricks Greenfield Platform — Development
+<!-- concurrency probe b -->
 
 This repository is a **DEV-first Terraform implementation** for the Baytex Terraform Foundations engagement. It is structured so the same modules can later be reused when Baytex creates the dedicated Test subscription and when the new Production platform is approved.
 
