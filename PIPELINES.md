@@ -242,8 +242,14 @@ environment name, so the credential that can *plan* dev differs from the one tha
 can *apply* it — and it gives a place to hang an approval that affects only
 applies.
 
+**Branch protection on `main`.** Direct pushes are refused, including for
+repository admins — every change reaches `main` through a pull request. This is
+what makes the ref guards meaningful: restricting applies to `main` and `hotfix/*`
+only helps if getting onto `main` requires review. Configured per
+[GITHUB-SETUP.md](GITHUB-SETUP.md) §4.
+
 **Approvals.** `test-apply` and `prod-apply` require a reviewer and are restricted
-to `main` and `hotfix/*`. `dev-apply` deliberately has neither, so iterating on
+to `main` and `hotfix/*`. `dev-apply` has the branch restriction but no reviewer. `dev-apply` deliberately has neither, so iterating on
 dev stays fast. Protection rules need a public repository on the Free plan, or
 Pro/Team/Enterprise on a private one.
 

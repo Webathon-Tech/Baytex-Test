@@ -103,20 +103,89 @@ the environment policy is repository settings and needs admin.
 Without it, anyone with write access can push straight to `main`, which bypasses
 every PR check *and* puts unreviewed code on the branch that applies run from.
 
-`Settings → Branches → Add branch ruleset` (or classic branch protection) on
-`main`:
+**This is configured on this repository.** Verified: a direct push as a repository
+admin is refused with `GH006: Protected branch update failed`.
 
-- **Require a pull request before merging** — at least 1 approval
-- **Require status checks to pass**, selecting:
-  - `Root parity (report only)`
-  - `plan-dev / Plan dev`
-  - (add `plan-test` / `plan-prod` once those environments are bootstrapped)
-- **Do not allow bypassing the above settings**
-- Block force pushes
+Current settings:
 
-Everything else in this document is pointless without this. The workflow ref
-guards restrict applies to `main` and `hotfix/*` — which only means anything if
-getting code onto `main` requires review.
+| Setting | Value | Why |
+| --- | --- | --- |
+| Require a pull request | **on** | The control that stops direct pushes |
+| Required approvals | **0** | See the note below |
+| Dismiss stale reviews | on | A new push invalidates earlier approval |
+| Require conversation resolution | on | Review comments must be closed before merge |
+| **Include administrators** | **on** | Without it admins bypass everything — see below |
+| Allow force pushes | off | Protects history |
+| Allow deletions | off | `main` cannot be deleted |
+
+### Include administrators is the setting that matters
+
+With it off, GitHub *records* the violation and lets the push through:
+
+```
+remote: Bypassed rule violations for refs/heads/main:
+remote: - Changes must be made through a pull request.
+```
+
+The push succeeds. That is an audit trail, not a control. With it on the same
+push is rejected outright. If you only change one thing, change this one.
+
+### Why zero required approvals
+
+Requiring one approval would be correct for a team, but **GitHub does not let you
+approve your own pull request** — so on a repository where one person does the
+work, requiring an approval blocks every merge. Zero still forces the pull-request
+flow and still runs the checks; it just does not require a second person.
+
+**Raise this to at least 1 for the client deployment**, where more than one person
+has write access:
+
+```bash
+gh api -X PATCH "repos/<ORG>/<REPO>/branches/main/protection/required_pull_request_reviews"   -F required_approving_review_count=1
+```
+
+### Why status checks are not required
+
+The plan workflow has `paths:` filters, so it does not run on a documentation-only
+pull request. A required check that never runs leaves the pull request blocked
+forever. Either leave status checks advisory — the reviewer reads them — or remove
+the path filters first, then require:
+
+```
+Root parity (report only)
+plan-dev / Plan dev
+```
+
+Everything else in this document is pointless without branch protection. The
+workflow ref guards restrict applies to `main` and `hotfix/*` — which only means
+anything if getting code onto `main` requires review.
+
+### Applying it
+
+```bash
+gh api -X PUT "repos/<ORG>/<REPO>/branches/main/protection" --input - <<'JSON'
+{
+  "required_status_checks": null,
+  "enforce_admins": true,
+  "required_pull_request_reviews": {
+    "dismiss_stale_reviews": true,
+    "require_code_owner_reviews": false,
+    "required_approving_review_count": 0,
+    "require_last_push_approval": false
+  },
+  "restrictions": null,
+  "allow_force_pushes": false,
+  "allow_deletions": false,
+  "block_creations": false,
+  "required_conversation_resolution": true,
+  "required_linear_history": false
+}
+JSON
+```
+
+> Once this is on, history rewrites stop working — force pushes are refused even
+> for admins. To rewind `main` you must delete the protection, push, and re-apply
+> it. That friction is the point.
 
 ---
 
@@ -268,7 +337,8 @@ branches.
 - [ ] Branch policy (`main`, `hotfix/*`) on all three `*-apply`
 - [ ] Required reviewers on `test-apply` and `prod-apply`
 - [ ] `*-plan` environments left unrestricted
-- [ ] **Branch protection on `main`** with required PR review and status checks
+- [ ] **Branch protection on `main`**, with **Include administrators** enabled
+- [ ] Required approvals raised to at least 1 for a team
 - [ ] Repository set to **private**
 - [ ] Actions run history reviewed or cleared if the repo was ever public
 
