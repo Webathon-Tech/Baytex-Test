@@ -38,7 +38,6 @@ locals {
       CostCentre         = var.cost_centre
       DataClassification = var.data_classification
       Project            = "Baytex Terraform Foundations"
-      DeployedVia        = "GitHubActions"
     },
     var.additional_tags
   )
