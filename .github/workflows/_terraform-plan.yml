@@ -86,8 +86,23 @@ jobs:
       - name: Terraform validate
         run: terraform validate
 
+      # Report-only plans (pull requests, push to main) run with -lock=false.
+      # They never write state, so taking the lease buys nothing and creates
+      # real contention: two PRs open at once, or a PR opened while a deploy is
+      # running, would otherwise queue on the lease and fail after the timeout.
+      # Worse, cancel-in-progress can kill a plan holding the lease and strand it.
+      #
+      # Deploy plans DO lock, because their plan feeds an apply and must see a
+      # consistent state that nothing else is mutating.
       - name: Terraform plan
-        run: terraform plan -lock-timeout=10m -out=tfplan
+        run: |
+          if [ "${{ inputs.upload_plan }}" = "true" ]; then
+            echo "Deploy plan: acquiring state lock."
+            terraform plan -lock-timeout=10m -out=tfplan
+          else
+            echo "Report-only plan: running with -lock=false so concurrent PRs do not contend."
+            terraform plan -lock=false -out=tfplan
+          fi
 
       - name: Render plan
         run: terraform show -no-color tfplan > plan.txt
