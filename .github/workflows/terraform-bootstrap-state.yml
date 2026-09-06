@@ -3,6 +3,12 @@ name: Terraform Bootstrap State Backend
 # Creates the Azure Blob backend that every other pipeline stores its state in,
 # then moves this root's OWN state into that backend.
 #
+# Split into PLAN and APPLY, the same shape as terraform-deploy.yml, because this
+# is the one root where a careless change is unrecoverable: the storage account
+# it manages *holds the state for every environment*. A change that forces
+# replacement of that account would destroy the state it is tracked in. A
+# reviewer must see the plan before anything is applied.
+#
 # The chicken-and-egg: Terraform cannot keep state in a storage account that does
 # not exist yet. So the first run uses local state, creates the account, then
 # migrates. Every later run inits straight against the remote backend.
@@ -48,11 +54,8 @@ jobs:
     steps:
       # This workflow runs "terraform apply" -- it creates the state storage
       # account -- so it gets the same branch restriction as every other apply
-      # path. Checked in the resolve job so it fails before any Azure work and
-      # before the matrix fans out.
-      #
-      # The GitHub Environment branch policy is the second layer, but it only
-      # covers the environments that have one, so the check has to live here too.
+      # path. Checked here so it fails before any Azure work and before the
+      # matrix fans out.
       - name: Restrict to main or a hotfix branch
         run: |
           REF="${{ github.ref }}"
@@ -73,18 +76,18 @@ jobs:
           fi
           cat "$GITHUB_OUTPUT"
 
-  bootstrap:
-    name: Bootstrap ${{ matrix.environment }} state backend
+  # ==========================================================================
+  # PLAN -- runs in <env>-plan, no approval, produces the artefact to review
+  # ==========================================================================
+  plan:
+    name: Plan ${{ matrix.environment }} state backend
     needs: resolve
     runs-on: ubuntu-latest
     strategy:
-      # Each environment has its own subscription, state account and identity,
-      # so one failing must not abandon the others -- a partial bootstrap is
-      # recoverable simply by re-running.
       fail-fast: false
       matrix:
         environment: ${{ fromJSON(needs.resolve.outputs.environments) }}
-    environment: ${{ matrix.environment }}-apply
+    environment: ${{ matrix.environment }}-plan
     defaults:
       run:
         shell: bash
@@ -121,8 +124,8 @@ jobs:
         run: |
           # The deployment SPs already hold Storage Blob Data Contributor at
           # subscription scope, so this list stays empty. Granting it here too
-          # would race: the migrate step below runs seconds after apply, before
-          # a fresh data-plane role assignment has reliably propagated.
+          # would race: the migrate step runs seconds after apply, before a fresh
+          # data-plane role assignment has reliably propagated.
           cat > terraform.tfvars <<EOF
           tenant_id            = "$TENANT_ID"
           subscription_id      = "$SUBSCRIPTION_ID"
@@ -144,7 +147,6 @@ jobs:
         run: |
           set -euo pipefail
           STATE_KEY="bootstrap/${{ matrix.environment }}.tfstate"
-          echo "state_key=$STATE_KEY" >> "$GITHUB_OUTPUT"
 
           if az storage account show --name "$STATE_SA" --resource-group "$STATE_RG" --only-show-errors >/dev/null 2>&1; then
             ACCOUNT_EXISTS=true
@@ -167,11 +169,16 @@ jobs:
           fi
 
           echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "state_key=$STATE_KEY" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$MODE" > mode.txt
+          printf '%s\n' "$STATE_KEY" > state_key.txt
           echo "Storage account exists : $ACCOUNT_EXISTS"
           echo "State blob exists      : $BLOB_EXISTS"
           echo "Mode                   : $MODE"
 
-      # ---------------------------------------------------------------- remote
+      # remote: the backend exists and is tracked. This is the DANGEROUS case --
+      # real state is at stake -- so it gets a proper binary plan that the apply
+      # job consumes byte for byte.
       - name: Init against existing backend
         if: steps.probe.outputs.mode == 'remote'
         run: |
@@ -182,13 +189,11 @@ jobs:
             -backend-config="key=${{ steps.probe.outputs.state_key }}" \
             -backend-config="use_azuread_auth=true"
 
-      # ------------------------------------------------- create (first ever run)
-      # backend.tf must be moved ASIDE, not just left uninitialised. "-backend=false"
-      # skips backend initialisation but the azurerm backend block is still declared,
-      # so plan/apply refuse with "Backend initialization required". With the file
-      # absent Terraform falls back to local state, which is what the first run needs.
-      # It is restored before the migrate step below.
-      - name: Disable backend block for local-state phase
+      # create: nothing exists yet, so there is no state to lose. backend.tf must
+      # be moved ASIDE rather than left uninitialised -- "-backend=false" skips
+      # backend setup but the azurerm block is still declared, and plan refuses
+      # with "Backend initialization required".
+      - name: Disable backend block for local-state plan
         if: steps.probe.outputs.mode != 'remote'
         run: mv backend.tf ../backend.tf.disabled
 
@@ -196,15 +201,152 @@ jobs:
         if: steps.probe.outputs.mode != 'remote'
         run: terraform init
 
-      - name: Apply to create the backend
-        if: steps.probe.outputs.mode == 'create'
+      - name: Terraform plan
         run: |
-          terraform plan -out=bootstrap.tfplan
-          terraform apply -auto-approve bootstrap.tfplan
+          terraform plan -lock-timeout=10m -out=bootstrap.tfplan
+          terraform show -no-color bootstrap.tfplan > plan.txt
+          grep -E '^(Plan:|No changes)' plan.txt || true
 
-      # ---------------------------------------------- import (partial prior run)
+      # The whole point of the split: put the numbers where a reviewer sees them
+      # before approving, and shout if anything is being destroyed or replaced.
+      - name: Summarise for the approver
+        run: |
+          MODE="${{ steps.probe.outputs.mode }}"
+          {
+            echo "### ${{ matrix.environment }} state backend — plan (mode: \`$MODE\`)"
+            echo ""
+            echo '```'
+            grep -E '^(Plan:|No changes)' plan.txt || tail -n 3 plan.txt
+            echo '```'
+            echo ""
+            if grep -qE 'must be replaced|will be destroyed' plan.txt; then
+              echo "> **STOP AND READ THE PLAN.** This changes or removes the storage account"
+              echo "> that holds Terraform state for this environment. Approving it can"
+              echo "> destroy the state file. Confirm this is intended before approving."
+              echo ""
+              grep -E '^  # .*(must be replaced|will be destroyed)' plan.txt | sed 's/^/    /'
+            else
+              echo "No replacements or destroys in this plan."
+            fi
+            if [ "$MODE" = "import" ]; then
+              echo ""
+              echo "> Mode \`import\`: the storage account exists but nothing tracks it."
+              echo "> The apply job imports the resource group, account and container into"
+              echo "> state first, then applies. The plan above is pre-import, so it shows"
+              echo "> creates for resources that already exist — that is expected."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload plan for approval
+        uses: actions/upload-artifact@v7
+        with:
+          name: bootstrap-plan-${{ matrix.environment }}-${{ github.run_id }}
+          path: |
+            bootstrap/state/bootstrap.tfplan
+            bootstrap/state/plan.txt
+            bootstrap/state/mode.txt
+            bootstrap/state/state_key.txt
+            bootstrap/state/.terraform.lock.hcl
+          retention-days: 5
+          if-no-files-found: error
+
+  # ==========================================================================
+  # APPLY -- runs in <env>-apply. Attach required reviewers there and this
+  # pauses until somebody has read the plan above.
+  # ==========================================================================
+  apply:
+    name: Apply ${{ matrix.environment }} state backend
+    needs: [resolve, plan]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ fromJSON(needs.resolve.outputs.environments) }}
+    environment: ${{ matrix.environment }}-apply
+    defaults:
+      run:
+        shell: bash
+        working-directory: bootstrap/state
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Azure login with OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Write bootstrap variables
+        env:
+          TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+          STATE_SA: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+          STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
+        run: |
+          cat > terraform.tfvars <<EOF
+          tenant_id            = "$TENANT_ID"
+          subscription_id      = "$SUBSCRIPTION_ID"
+          location             = "canadacentral"
+          resource_group_name  = "$STATE_RG"
+          storage_account_name = "$STATE_SA"
+          container_name       = "$STATE_CONTAINER"
+
+          state_blob_data_contributor_principal_ids = []
+          EOF
+          terraform fmt terraform.tfvars
+
+      - name: Download the approved plan
+        uses: actions/download-artifact@v8
+        with:
+          name: bootstrap-plan-${{ matrix.environment }}-${{ github.run_id }}
+          path: bootstrap/state
+
+      - name: Read the mode the plan was built for
+        id: mode
+        run: |
+          set -euo pipefail
+          test -f mode.txt || { echo "::error::mode.txt missing from artefact"; exit 1; }
+          test -f bootstrap.tfplan || { echo "::error::bootstrap.tfplan missing from artefact"; exit 1; }
+          MODE=$(tr -d '\r\n' < mode.txt)
+          KEY=$(tr -d '\r\n' < state_key.txt)
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "state_key=$KEY" >> "$GITHUB_OUTPUT"
+          echo "Applying mode '$MODE' with state key '$KEY'"
+
+      # ---------------------------------------------------------------- remote
+      - name: Init against existing backend
+        if: steps.mode.outputs.mode == 'remote'
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ vars.TF_STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ vars.TF_STATE_CONTAINER }}" \
+            -backend-config="key=${{ steps.mode.outputs.state_key }}" \
+            -backend-config="use_azuread_auth=true"
+
+      # ------------------------------------------------------- create / import
+      - name: Disable backend block for local-state phase
+        if: steps.mode.outputs.mode != 'remote'
+        run: mv backend.tf ../backend.tf.disabled
+
+      - name: Init with local state
+        if: steps.mode.outputs.mode != 'remote'
+        run: terraform init
+
+      # Import is a STATE operation, not something a plan can carry, so it has to
+      # happen here. The reviewer saw a pre-import plan and the summary said so.
       - name: Import pre-existing backend resources
-        if: steps.probe.outputs.mode == 'import'
+        if: steps.mode.outputs.mode == 'import'
         env:
           SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
           STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
@@ -216,35 +358,34 @@ jobs:
           SA_ID="$RG_ID/providers/Microsoft.Storage/storageAccounts/$STATE_SA"
           CONTAINER_ID="$SA_ID/blobServices/default/containers/$STATE_CONTAINER"
 
-          # Each import is tolerant: a resource already in state is fine.
           terraform import azurerm_resource_group.state "$RG_ID" || echo "resource group already tracked"
           terraform import azurerm_storage_account.state "$SA_ID" || echo "storage account already tracked"
           terraform import azapi_resource.state_container "$CONTAINER_ID?api-version=2023-05-01" || echo "container already tracked"
 
-          terraform plan -out=bootstrap.tfplan
-          terraform apply -auto-approve bootstrap.tfplan
+          # The saved plan is pre-import and no longer matches state, so re-plan.
+          # Safe: the reviewer has already approved this environment's bootstrap,
+          # and the next step asserts the result converges.
+          terraform plan -lock-timeout=10m -out=bootstrap.tfplan
+
+      - name: Apply the approved plan
+        run: terraform apply -lock-timeout=10m -auto-approve bootstrap.tfplan
 
       # --------------------------------------------------------------- migrate
       - name: Restore backend block
-        if: steps.probe.outputs.mode != 'remote'
+        if: steps.mode.outputs.mode != 'remote'
         run: mv ../backend.tf.disabled backend.tf
 
       - name: Migrate local state into the backend
-        if: steps.probe.outputs.mode != 'remote'
+        if: steps.mode.outputs.mode != 'remote'
         run: |
           terraform init -migrate-state -force-copy \
             -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
             -backend-config="storage_account_name=${{ vars.TF_STATE_STORAGE_ACCOUNT }}" \
             -backend-config="container_name=${{ vars.TF_STATE_CONTAINER }}" \
-            -backend-config="key=${{ steps.probe.outputs.state_key }}" \
+            -backend-config="key=${{ steps.mode.outputs.state_key }}" \
             -backend-config="use_azuread_auth=true"
 
       # ------------------------------------------------------------ reconcile
-      - name: Apply against the remote backend
-        run: |
-          terraform plan -lock-timeout=10m -out=bootstrap.tfplan
-          terraform apply -lock-timeout=10m -auto-approve bootstrap.tfplan
-
       - name: Confirm state is remote and clean
         run: |
           set -euo pipefail
@@ -278,6 +419,6 @@ jobs:
             echo 'use_azuread_auth     = true'
             echo '```'
             echo ""
-            echo "Bootstrap state key: \`${{ steps.probe.outputs.state_key }}\`"
-            echo "Mode taken this run: \`${{ steps.probe.outputs.mode }}\`"
+            echo "Bootstrap state key: \`${{ steps.mode.outputs.state_key }}\`"
+            echo "Mode applied:        \`${{ steps.mode.outputs.mode }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
