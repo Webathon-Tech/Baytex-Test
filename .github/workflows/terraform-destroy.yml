@@ -92,7 +92,41 @@ jobs:
           terraform_version: "1.16.1"
           terraform_wrapper: false
 
+      # Destroying an environment that was never bootstrapped has no backend to
+      # init against, and terraform would fail with a raw Azure error. The
+      # desired end state -- "this environment does not exist" -- is already
+      # true, so report it and succeed rather than failing on a no-op.
+      - name: Check the state backend exists
+        id: backend
+        working-directory: .
+        env:
+          STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+          STATE_SA: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+          STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
+        run: |
+          set -uo pipefail
+          EXISTS=false
+          if az storage account show --name "$STATE_SA" --resource-group "$STATE_RG" --only-show-errors >/dev/null 2>&1; then
+            if az storage container exists --account-name "$STATE_SA" --name "$STATE_CONTAINER"                  --auth-mode login --only-show-errors --query exists -o tsv 2>/dev/null | grep -qi true; then
+              EXISTS=true
+            fi
+          fi
+          if [ "$EXISTS" = "true" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "State backend present; proceeding with destroy."
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::No state backend for ${{ inputs.environment }} - nothing to destroy."
+            {
+              echo "### ${{ inputs.environment }} - nothing to destroy"
+              echo ""
+              echo "No state backend found, so this environment was never deployed."
+              echo "Treated as already destroyed."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Write environment variables file
+        if: steps.backend.outputs.skip != 'true'
         env:
           # TESTING ONLY: TFVARS is read from a repository VARIABLE so its content is
           # visible in the GitHub UI. GitHub masks secrets in logs automatically and does
@@ -105,6 +139,7 @@ jobs:
           printf '%s\n' "$TFVARS" > terraform.tfvars
 
       - name: Terraform init
+        if: steps.backend.outputs.skip != 'true'
         run: |
           terraform init \
             -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
@@ -114,6 +149,7 @@ jobs:
             -backend-config="use_azuread_auth=true"
 
       - name: Record what exists before destroying
+        if: steps.backend.outputs.skip != 'true'
         run: |
           terraform state list > before.txt || true
           echo "Resources currently tracked: $(wc -l < before.txt)"
@@ -135,6 +171,7 @@ jobs:
       # Clearing them first makes destroy work in one pass instead of needing a
       # manual cleanup and a re-run. Safe when there is nothing to clear.
       - name: Clear private endpoint connections from Private Link Services
+        if: steps.backend.outputs.skip != 'true'
         working-directory: .
         env:
           SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
@@ -156,6 +193,7 @@ jobs:
           sleep 20
 
       - name: Plan destroy
+        if: steps.backend.outputs.skip != 'true'
         run: |
           terraform plan -destroy -lock-timeout=10m -out=destroy.tfplan
           terraform show -no-color destroy.tfplan > destroy-plan.txt
@@ -170,6 +208,7 @@ jobs:
       # Each attempt re-plans, because a partially completed destroy makes the
       # saved plan stale.
       - name: Apply destroy
+        if: steps.backend.outputs.skip != 'true'
         run: |
           set -uo pipefail
           for attempt in 1 2 3; do
@@ -191,6 +230,7 @@ jobs:
       # apply collides on names that still exist. -detailed-exitcode returns 0
       # only when nothing is left to change.
       - name: Verify the environment is fully destroyed
+        if: steps.backend.outputs.skip != 'true'
         run: |
           set -euo pipefail
           REMAINING=$(terraform state list | wc -l)
@@ -209,7 +249,7 @@ jobs:
           echo "Verified: state is empty and no further destroy actions pending."
 
       - name: Report the manual cleanup this cannot do
-        if: success()
+        if: success() && steps.backend.outputs.skip != 'true'
         run: |
           {
             echo ""
