@@ -21,7 +21,7 @@ on:
         description: Environment whose state backend to create
         required: true
         type: choice
-        options: [dev, test, prod]
+        options: [dev, test, prod, all]
 
 permissions:
   contents: read
@@ -38,10 +38,35 @@ env:
   ARM_USE_AZUREAD: "true"
 
 jobs:
-  bootstrap:
-    name: Bootstrap ${{ inputs.environment }} state backend
+  # Turns the single choice into a list, so "all" fans out to three matrix legs
+  # instead of needing a separate workflow or three copies of the job.
+  resolve:
+    name: Resolve environments
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}-apply
+    outputs:
+      environments: ${{ steps.set.outputs.environments }}
+    steps:
+      - id: set
+        run: |
+          if [ "${{ inputs.environment }}" = "all" ]; then
+            echo 'environments=["dev","test","prod"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'environments=["${{ inputs.environment }}"]' >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+
+  bootstrap:
+    name: Bootstrap ${{ matrix.environment }} state backend
+    needs: resolve
+    runs-on: ubuntu-latest
+    strategy:
+      # Each environment has its own subscription, state account and identity,
+      # so one failing must not abandon the others -- a partial bootstrap is
+      # recoverable simply by re-running.
+      fail-fast: false
+      matrix:
+        environment: ${{ fromJSON(needs.resolve.outputs.environments) }}
+    environment: ${{ matrix.environment }}-apply
     defaults:
       run:
         shell: bash
@@ -100,7 +125,7 @@ jobs:
           STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
         run: |
           set -euo pipefail
-          STATE_KEY="bootstrap/${{ inputs.environment }}.tfstate"
+          STATE_KEY="bootstrap/${{ matrix.environment }}.tfstate"
           echo "state_key=$STATE_KEY" >> "$GITHUB_OUTPUT"
 
           if az storage account show --name "$STATE_SA" --resource-group "$STATE_RG" --only-show-errors >/dev/null 2>&1; then
@@ -225,7 +250,7 @@ jobs:
       - name: Backend configuration for the platform pipelines
         run: |
           {
-            echo "### ${{ inputs.environment }} state backend ready"
+            echo "### ${{ matrix.environment }} state backend ready"
             echo ""
             echo '```hcl'
             echo 'resource_group_name  = "${{ vars.TF_STATE_RESOURCE_GROUP }}"'

@@ -94,9 +94,14 @@ jobs:
 
       - name: Write environment variables file
         env:
-          TFVARS: ${{ secrets.TFVARS }}
+          # TESTING ONLY: TFVARS is read from a repository VARIABLE so its content is
+          # visible in the GitHub UI. GitHub masks secrets in logs automatically and does
+          # NOT mask variables, and this repository is public -- switch back to the line
+          # below before any client deployment.
+          # TFVARS: ${{ secrets.TFVARS }}
+          TFVARS: ${{ vars.TFVARS }}
         run: |
-          test -n "$TFVARS" || { echo "::error::TFVARS secret is empty"; exit 1; }
+          test -n "$TFVARS" || { echo "::error::TFVARS is empty"; exit 1; }
           printf '%s\n' "$TFVARS" > terraform.tfvars
 
       - name: Terraform init
