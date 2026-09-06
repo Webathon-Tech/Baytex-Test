@@ -52,15 +52,17 @@ Rules that prevent the worst-case mistake:
 | --- | --- | --- | --- |
 | `hashicorp/azurerm` | `~> 4.81.0` | 4.81.0 (5.3.0 exists) | **Do not move to 5.x.** The AVM module `Azure/avm-res-databricks-workspace/azurerm` v0.5.0 declares `azurerm >= 4.12, < 5.0.0`. Bumping the root to 5.x makes `terraform init` unsolvable. 4.81.0 is the newest 4.x, so this repo is already as current as the module allows. |
 | `Azure/azapi` | `~> 2.4` | 2.12.0 | Resolves to latest automatically. |
-| `databricks/databricks` | `~> 1.128.0` | 1.130.0 | See note below. |
+| `databricks/databricks` | `~> 1.130.0` | 1.130.0 | Current. |
 | AVM Databricks module | `0.5.0` | 0.5.0 | Current. |
 
-**Databricks provider note:** 1.130.0 is available and the constraint can be
-widened when convenient. It was left at 1.128.0 because on an F12-managed
-Windows endpoint the freshly-downloaded 1.130.0 binary is blocked from executing
-by endpoint security (`fork/exec ... Access is denied`) — a low-prevalence
-executable rule, not a code fault. Linux CI runners are unaffected. Raise it once
-the binary is allowlisted or has aged into prevalence.
+**Databricks provider note:** this was previously pinned to `1.128.0` because a
+freshly-downloaded `1.130.0` binary was blocked from executing by endpoint
+security on an F12-managed Windows workstation (`fork/exec ... Access is
+denied`) — a low-prevalence executable rule, not a code fault.
+
+That no longer applies. `1.130.0` now downloads and executes normally, verified by
+`terraform init` followed by `terraform validate`, which has to launch the
+provider plugin to succeed. All five `versions.tf` files are on `~> 1.130.0`.
 
 ### 0.4 Required Azure resource providers
 
