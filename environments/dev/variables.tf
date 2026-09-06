@@ -18,10 +18,10 @@ variable "existing_metastore_id" {
   description = "Existing regional Unity Catalog metastore ID. Baytex BI owns the assignment and Unity Catalog objects."
 }
 
-variable "location" {
-  type    = string
-  default = "canadacentral"
-}
+# variable "location" {
+#   type    = string
+#   default = "canadacentral"
+# }
 
 variable "organization" {
   type    = string
