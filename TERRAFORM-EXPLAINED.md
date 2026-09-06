@@ -120,7 +120,7 @@ Three points worth understanding:
 required_version = ">= 1.10.0, < 2.0.0"
 azurerm  = "~> 4.81.0"     # newest 4.x
 azapi    = "~> 2.4"
-databricks = "~> 1.128.0"
+databricks = "~> 1.130.0"
 ```
 
 **azurerm cannot move to 5.x.** The AVM Databricks module v0.5.0 declares
