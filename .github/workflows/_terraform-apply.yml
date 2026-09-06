@@ -43,7 +43,13 @@ jobs:
       # hotfix/* is the deliberate escape hatch: branch from the last known-good
       # commit, cherry-pick the single fix, and apply that rather than whatever
       # else has since landed on main. See PIPELINES-EXPLAINED.md, Hotfixes.
+      #
+      # working-directory: . is required. The job default is environments/<env>,
+      # which does not exist until Checkout runs, so without it this step dies on
+      # a missing directory before evaluating the ref at all -- failing for the
+      # right-looking reason but the wrong cause.
       - name: Restrict applies to main or a hotfix branch
+        working-directory: .
         run: |
           REF="${{ github.ref }}"
           case "$REF" in
