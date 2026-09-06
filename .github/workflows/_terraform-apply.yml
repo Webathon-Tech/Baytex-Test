@@ -35,6 +35,25 @@ jobs:
       DATABRICKS_TF_ENABLED_PF_RESOURCES: databricks_mws_ncc_private_endpoint_rule
 
     steps:
+      # Applies are restricted to reviewed code. workflow_dispatch lets the
+      # operator pick any branch, and on a Free-plan private repo the GitHub
+      # Environment "deployment branches" rule is unavailable, so without this
+      # anyone with write access could apply an unreviewed branch to prod.
+      #
+      # hotfix/* is the deliberate escape hatch: branch from the last known-good
+      # commit, cherry-pick the single fix, and apply that rather than whatever
+      # else has since landed on main. See PIPELINES-EXPLAINED.md, Hotfixes.
+      - name: Restrict applies to main or a hotfix branch
+        run: |
+          REF="${{ github.ref }}"
+          case "$REF" in
+            refs/heads/main|refs/heads/hotfix/*)
+              echo "Applying from $REF" ;;
+            *)
+              echo "::error::Refusing to apply from '$REF'. Applies run from main, or from a hotfix/* branch for emergency fixes."
+              exit 1 ;;
+          esac
+
       - name: Checkout
         uses: actions/checkout@v4
 

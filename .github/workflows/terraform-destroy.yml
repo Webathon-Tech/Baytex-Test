@@ -66,11 +66,15 @@ jobs:
       - name: Confirm intent
         working-directory: .
         run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "::error::Refusing to destroy from '${{ github.ref }}'. Destroys run from main only."
+            exit 1
+          fi
           if [ "${{ inputs.confirm }}" != "${{ inputs.environment }}" ]; then
             echo "::error::Confirmation '${{ inputs.confirm }}' does not match environment '${{ inputs.environment }}'. Nothing was destroyed."
             exit 1
           fi
-          echo "Confirmed: destroying ${{ inputs.environment }}"
+          echo "Confirmed: destroying ${{ inputs.environment }} from ${{ github.ref }}"
 
       - name: Checkout
         uses: actions/checkout@v4

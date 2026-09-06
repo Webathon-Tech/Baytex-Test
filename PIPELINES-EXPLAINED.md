@@ -392,7 +392,168 @@ retention.
 
 ---
 
-## 9. What the pipelines deliberately do not do
+## 9. When each pipeline runs
+
+Nothing deploys automatically. There is no trigger on merge to `main`. Every
+change to an environment is a deliberate human action.
+
+| Workflow | Trigger | Runs for | Automatic? |
+| --- | --- | --- | --- |
+| Terraform Plan (PR) | `pull_request` touching `environments/**`, `modules/**` or the workflows | **dev only** | yes |
+| Terraform Deploy | manual, `deploy_target` | dev / test / prod / all | no |
+| Terraform Destroy | manual, environment + typed confirmation | one environment | no |
+| Bootstrap State Backend | manual, environment | one environment | no |
+
+### Why no deploy-on-merge
+
+Merging is a statement about code review. Applying is a statement about a
+specific environment being ready to change — often gated on a firewall ticket, a
+change window, or a Baytex-side handoff that has nothing to do with the
+repository. Coupling the two would mean a merge silently mutates prod.
+
+The cost is that `main` can be ahead of what is deployed. That is a real trade
+and it is why the plan output is treated as the source of truth about what a run
+will do, rather than the commit log.
+
+### What `deploy_target` actually does
+
+| Value | Jobs that run |
+| --- | --- |
+| `dev` | dev-plan → dev-apply |
+| `test` | test-plan → test-apply (dev jobs skipped) |
+| `prod` | prod-plan → prod-apply (dev and test skipped) |
+| `all` | dev → test → prod, stopping at the first failure |
+
+`all` is the promotion path. The single values exist for iterating on dev, and
+for re-running one stage after fixing something — a chain that fails at test
+should not force dev to re-apply.
+
+### Which branch a run uses
+
+`workflow_dispatch` runs the workflow from whichever branch is selected, default
+`main`. Plans may run from any branch — that is useful. **Applies and destroys
+may not.** `_terraform-apply.yml` refuses any ref that is not `main` or
+`hotfix/*`, and destroy accepts `main` only.
+
+This guard is in the workflow rather than a GitHub Environment "deployment
+branches" rule because protection rules need a paid plan on a private repository.
+Without it, anyone with write access could dispatch an unreviewed feature branch
+straight at prod.
+
+---
+
+## 10. Hotfixes
+
+The three environments share **identical `.tf` files** and differ only in their
+`TFVARS` secret. That shapes everything about hotfixing, because it means there
+are two very different kinds of urgent change.
+
+### Case A — configuration only (most common)
+
+Adding an on-premises route, a new database endpoint, a DNS server, changing an
+alert receiver. These live entirely in `TFVARS` and touch no code.
+
+```
+1. Update the TFVARS secret for that environment only
+2. Actions → Terraform Deploy → deploy_target: <env>
+3. Review the plan in the job summary before the apply job proceeds
+```
+
+No PR, no branch, no effect on any other environment. This is the fast path and
+it is genuinely safe, because a config change to prod cannot alter dev or test.
+
+> The trade: a secret has no diff and no review history. If you want an audit
+> trail of *why* a value changed, record it in the change ticket — GitHub will
+> only tell you that a secret was updated and by whom.
+
+### Case B — a code fix
+
+A module bug, a wrong NSG rule, a missing argument. Because the roots are
+identical copies, this change belongs to **all three** environments the moment it
+lands on `main`.
+
+**Normal path** — use it unless prod is actually broken:
+
+```
+PR → review → merge to main
+Deploy dev  → validate
+Deploy test → validate
+Deploy prod
+```
+
+**Emergency path** — prod is broken and you cannot wait for the chain:
+
+```bash
+# Branch from the commit prod is actually running, not from main
+git checkout -b hotfix/ncc-rule-fix <last-known-good-sha>
+git cherry-pick <fix-sha>
+git push -u origin hotfix/ncc-rule-fix
+```
+
+Then Actions → Terraform Deploy → select branch `hotfix/ncc-rule-fix` →
+`deploy_target: prod`.
+
+The point of branching from the deployed commit rather than `main` is isolation.
+`main` may have accumulated other merged-but-undeployed changes; deploying `main`
+to prod applies *all* of them. A hotfix branch applies exactly one.
+
+**Afterwards, merge the hotfix back to `main`.** If you do not, the next ordinary
+deploy silently reverts it, because the platform's desired state comes from
+whatever branch is applied.
+
+### Choosing between them
+
+| Situation | Path |
+| --- | --- |
+| New endpoint, route, DNS server, alert address | Case A — update TFVARS, deploy that env |
+| Bug that affects one environment because of its inputs | Case A if fixable in tfvars, else Case B |
+| Module or root bug | Case B, normal path |
+| Prod broken, fix is small and understood | Case B, hotfix branch |
+| Prod broken, cause not understood | Do not deploy. Diagnose first — see below. |
+
+### Rollback
+
+Terraform has no rollback. "Rolling back" means applying an earlier desired
+state, which is a forward operation:
+
+```bash
+git revert <bad-sha>          # then deploy that environment
+```
+
+Two things do not roll back cleanly and are worth knowing before you need them:
+
+- **Create-time-only settings.** `infrastructure_encryption_enabled` and the
+  workspace's `default_catalog` cannot be changed after creation. Reverting the
+  code produces a plan that **replaces** the resource.
+- **Anything already destroyed.** Reverting a change that deleted a storage
+  account gives you a new, empty storage account.
+
+Always read the plan before applying a revert. A revert that shows
+`destroy` / `replace` on a stateful resource is not a rollback, it is a rebuild.
+
+### When the pipeline itself is the problem
+
+If Actions is down or the workflow is broken and prod is genuinely impaired,
+there is a break-glass path: run Terraform locally against the same backend.
+
+This is deliberately not the documented normal route — it produces a change with
+no plan artefact, no approval and no audit record. If you use it:
+
+1. Say so in the incident channel before you start.
+2. Save `terraform plan` output somewhere durable.
+3. Get the fix back into `main` the same day, so the repository matches reality.
+
+### Drift
+
+Nothing currently detects drift on a schedule. If someone changes a resource in
+the portal, you find out at the next plan. For a platform where prod matters,
+a nightly `terraform plan -detailed-exitcode` per environment that alerts on
+exit 2 would close that gap — it is a small addition to the existing reusable
+plan workflow and is worth doing before Baytex go-live.
+
+---
+
+## 11. What the pipelines deliberately do not do
 
 | Not automated | Why |
 | --- | --- |
