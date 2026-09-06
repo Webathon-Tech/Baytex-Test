@@ -1,0 +1,13 @@
+[Unit]
+Description=Configure Azure Internal Load Balancer frontend IPs on loopback
+Before=haproxy.service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/configure-baytex-lb-ips.sh
+
+[Install]
+WantedBy=multi-user.target

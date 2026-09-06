@@ -1,0 +1,14 @@
+output "vnet_id" { value = azurerm_virtual_network.this.id }
+output "vnet_name" { value = azurerm_virtual_network.this.name }
+output "databricks_host_subnet_id" { value = azurerm_subnet.databricks_host.id }
+output "databricks_host_subnet_name" { value = azurerm_subnet.databricks_host.name }
+output "databricks_container_subnet_id" { value = azurerm_subnet.databricks_container.id }
+output "databricks_container_subnet_name" { value = azurerm_subnet.databricks_container.name }
+output "private_endpoint_subnet_id" { value = azurerm_subnet.private_endpoints.id }
+output "proxy_subnet_id" { value = azurerm_subnet.proxy.id }
+output "host_nsg_association_id" { value = azurerm_subnet_network_security_group_association.databricks_host.id }
+output "container_nsg_association_id" { value = azurerm_subnet_network_security_group_association.databricks_container.id }
+output "nat_gateway_id" { value = azurerm_nat_gateway.this.id }
+output "nat_public_ip" { value = azurerm_public_ip.nat.ip_address }
+output "route_table_id" { value = azurerm_route_table.this.id }
+output "spoke_to_hub_peering_id" { value = try(azurerm_virtual_network_peering.spoke_to_hub[0].id, null) }

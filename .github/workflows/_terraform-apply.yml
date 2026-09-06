@@ -1,0 +1,141 @@
+name: Reusable — Terraform Apply
+
+# Applies the EXACT binary plan produced by _terraform-plan.yml in the same run.
+# Never re-plans: a re-plan after approval could differ from what was approved.
+#
+# The job targets the "<env>-apply" GitHub Environment. Attach required reviewers
+# to that environment to gate the apply -- the run pauses here until approved.
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: Environment name (dev / test / prod)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  apply:
+    name: Apply ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}-apply
+    defaults:
+      run:
+        shell: bash
+        working-directory: environments/${{ inputs.environment }}
+
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      ARM_USE_AZUREAD: "true"
+      DATABRICKS_TF_ENABLED_PF_RESOURCES: databricks_mws_ncc_private_endpoint_rule
+
+    steps:
+      # Applies are restricted to reviewed code. workflow_dispatch lets the
+      # operator pick any branch, and on a Free-plan private repo the GitHub
+      # Environment "deployment branches" rule is unavailable, so without this
+      # anyone with write access could apply an unreviewed branch to prod.
+      #
+      # hotfix/* is the deliberate escape hatch: branch from the last known-good
+      # commit, cherry-pick the single fix, and apply that rather than whatever
+      # else has since landed on main. See PIPELINES-EXPLAINED.md, Hotfixes.
+      #
+      # working-directory: . is required. The job default is environments/<env>,
+      # which does not exist until Checkout runs, so without it this step dies on
+      # a missing directory before evaluating the ref at all -- failing for the
+      # right-looking reason but the wrong cause.
+      - name: Restrict applies to main or a hotfix branch
+        working-directory: .
+        run: |
+          REF="${{ github.ref }}"
+          case "$REF" in
+            refs/heads/main|refs/heads/hotfix/*)
+              echo "Applying from $REF" ;;
+            *)
+              echo "::error::Refusing to apply from '$REF'. Applies run from main, or from a hotfix/* branch for emergency fixes."
+              exit 1 ;;
+          esac
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.1"
+          terraform_wrapper: false
+
+      - name: Write environment variables file
+        env:
+          # TESTING ONLY: TFVARS is read from a repository VARIABLE so its content is
+          # visible in the GitHub UI. GitHub masks secrets in logs automatically and does
+          # NOT mask variables, and this repository is public -- switch back to the line
+          # below before any client deployment.
+          # TFVARS: ${{ secrets.TFVARS }}
+          TFVARS: ${{ vars.TFVARS }}
+        run: |
+          test -n "$TFVARS" || { echo "::error::TFVARS is empty for ${{ inputs.environment }}-apply"; exit 1; }
+          printf '%s\n' "$TFVARS" > terraform.tfvars
+
+      # Downloaded BEFORE init so the reviewed lock file governs which provider
+      # versions init selects.
+      - name: Download the approved plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}-${{ github.run_id }}
+          path: environments/${{ inputs.environment }}
+
+      - name: Terraform init using the reviewed lock file
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ vars.TF_STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ vars.TF_STATE_CONTAINER }}" \
+            -backend-config="key=${{ vars.TF_STATE_KEY }}" \
+            -backend-config="use_azuread_auth=true"
+
+      - name: Verify the plan artefact is present
+        run: |
+          test -f tfplan || { echo "::error::tfplan missing from artefact"; exit 1; }
+          test -f .terraform.lock.hcl || { echo "::error::lock file missing from artefact"; exit 1; }
+
+      - name: Apply the approved plan
+        run: terraform apply -lock-timeout=10m -auto-approve tfplan
+
+      - name: Export outputs
+        run: terraform output -json > outputs.json
+
+      - name: Summarise
+        run: |
+          {
+            echo "### ${{ inputs.environment }} applied"
+            echo ""
+            echo "| Output | Value |"
+            echo "| --- | --- |"
+            for k in databricks_workspace_url data_storage_account_name nat_public_ip spoke_to_hub_peering_id; do
+              v=$(terraform output -raw "$k" 2>/dev/null || echo "-")
+              echo "| \`$k\` | \`$v\` |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload apply evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apply-evidence-${{ inputs.environment }}-${{ github.run_id }}
+          path: |
+            environments/${{ inputs.environment }}/outputs.json
+            environments/${{ inputs.environment }}/plan.txt
+          retention-days: 30
+          if-no-files-found: warn
