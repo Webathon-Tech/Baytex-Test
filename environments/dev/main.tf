@@ -261,5 +261,3 @@ resource "azurerm_monitor_diagnostic_setting" "nat_gateway" {
     category = "AllMetrics"
   }
 }
-
-# Test
