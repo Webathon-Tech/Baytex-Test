@@ -170,14 +170,25 @@ jobs:
       #
       # Clearing them first makes destroy work in one pass instead of needing a
       # manual cleanup and a re-run. Safe when there is nothing to clear.
+      # No working-directory override here: this step reads terraform.tfvars,
+      # which the job writes into environments/<env>, so it needs the job default.
       - name: Clear private endpoint connections from Private Link Services
         if: steps.backend.outputs.skip != 'true'
-        working-directory: .
         env:
           SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         run: |
           set -euo pipefail
-          RG="rg-sbx-dbx-${{ inputs.environment }}-connectivity-cnc-001"
+          # Derive the connectivity group from the SAME naming components the
+          # Terraform uses (locals.tf: rg-<organization>-<workload>-<environment>
+          # -connectivity-<region_short>-<instance>) rather than hardcoding the
+          # sandbox's own names. Hardcoding "rg-sbx-...-cnc-001" silently made
+          # this step a no-op for any other client prefix or region, so the PLS
+          # connections were never cleared and the destroy failed.
+          val () { grep -E "^[[:space:]]*$1[[:space:]]*=" terraform.tfvars | head -1 | sed 's/.*=[[:space:]]*//; s/^"//; s/"[[:space:]]*$//'; }
+          ORG=$(val organization); WL=$(val workload); ENVN=$(val environment)
+          REG=$(val region_short); INST=$(val instance)
+          RG="rg-${ORG}-${WL}-${ENVN}-connectivity-${REG}-${INST}"
+          echo "Connectivity resource group derived from tfvars: $RG"
           if ! az group exists --name "$RG" --subscription "$SUBSCRIPTION_ID" | grep -qi true; then
             echo "Connectivity group $RG not present; nothing to clear."
             exit 0

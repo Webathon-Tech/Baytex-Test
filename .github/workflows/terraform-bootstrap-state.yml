@@ -116,27 +116,51 @@ jobs:
 
       - name: Write bootstrap variables
         env:
-          TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
-          SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          # Same pattern as the platform workflows: the whole tfvars file lives in
+          # a per-environment GitHub variable. Nothing about the environment --
+          # not the region, not the account name -- is hardcoded in this YAML.
+          #
+          # TESTING ONLY: read from a VARIABLE so the content is visible in the
+          # GitHub UI. Variables are not masked in logs; switch to the secret
+          # line before any client deployment.
+          # BOOTSTRAP_TFVARS: ${{ secrets.BOOTSTRAP_TFVARS }}
+          BOOTSTRAP_TFVARS: ${{ vars.BOOTSTRAP_TFVARS }}
+        run: |
+          test -n "$BOOTSTRAP_TFVARS" || {
+            echo "::error::BOOTSTRAP_TFVARS is empty for ${{ matrix.environment }}. Set it on that GitHub Environment - see GITHUB-SETUP.md."
+            exit 1
+          }
+          printf '%s\n' "$BOOTSTRAP_TFVARS" > terraform.tfvars
+          terraform fmt terraform.tfvars
+
+      # The resources come from BOOTSTRAP_TFVARS; the backend-config below comes
+      # from TF_STATE_*. Two sources for the same three facts, so they can drift
+      # -- and if they do, this pipeline creates one storage account and then
+      # tries to store its state in a different one. Cross-check rather than
+      # trusting whoever set the variables.
+      - name: Check tfvars agrees with the backend variables
+        env:
           STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
           STATE_SA: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
           STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
         run: |
-          # The deployment SPs already hold Storage Blob Data Contributor at
-          # subscription scope, so this list stays empty. Granting it here too
-          # would race: the migrate step runs seconds after apply, before a fresh
-          # data-plane role assignment has reliably propagated.
-          cat > terraform.tfvars <<EOF
-          tenant_id            = "$TENANT_ID"
-          subscription_id      = "$SUBSCRIPTION_ID"
-          location             = "canadacentral"
-          resource_group_name  = "$STATE_RG"
-          storage_account_name = "$STATE_SA"
-          container_name       = "$STATE_CONTAINER"
-
-          state_blob_data_contributor_principal_ids = []
-          EOF
-          terraform fmt terraform.tfvars
+          set -euo pipefail
+          val () { grep -E "^[[:space:]]*$1[[:space:]]*=" terraform.tfvars | head -1 | sed 's/.*=[[:space:]]*//; s/^"//; s/"[[:space:]]*$//'; }
+          RG=$(val resource_group_name); SA=$(val storage_account_name); CN=$(val container_name)
+          FAIL=0
+          check () {
+            if [ "$2" != "$3" ]; then
+              echo "::error::$1 mismatch — BOOTSTRAP_TFVARS says '$2', TF_STATE_* says '$3'"
+              FAIL=1
+            else
+              printf '  %-22s %s\n' "$1" "$2"
+            fi
+          }
+          check resource_group_name  "$RG" "$STATE_RG"
+          check storage_account_name "$SA" "$STATE_SA"
+          check container_name       "$CN" "$STATE_CONTAINER"
+          [ "$FAIL" -eq 0 ] || { echo "::error::Fix the variables on this environment before bootstrapping."; exit 1; }
+          echo "tfvars and backend variables agree."
 
       - name: Determine current backend state
         id: probe
@@ -287,23 +311,51 @@ jobs:
 
       - name: Write bootstrap variables
         env:
-          TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
-          SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          # Same pattern as the platform workflows: the whole tfvars file lives in
+          # a per-environment GitHub variable. Nothing about the environment --
+          # not the region, not the account name -- is hardcoded in this YAML.
+          #
+          # TESTING ONLY: read from a VARIABLE so the content is visible in the
+          # GitHub UI. Variables are not masked in logs; switch to the secret
+          # line before any client deployment.
+          # BOOTSTRAP_TFVARS: ${{ secrets.BOOTSTRAP_TFVARS }}
+          BOOTSTRAP_TFVARS: ${{ vars.BOOTSTRAP_TFVARS }}
+        run: |
+          test -n "$BOOTSTRAP_TFVARS" || {
+            echo "::error::BOOTSTRAP_TFVARS is empty for ${{ matrix.environment }}. Set it on that GitHub Environment - see GITHUB-SETUP.md."
+            exit 1
+          }
+          printf '%s\n' "$BOOTSTRAP_TFVARS" > terraform.tfvars
+          terraform fmt terraform.tfvars
+
+      # The resources come from BOOTSTRAP_TFVARS; the backend-config below comes
+      # from TF_STATE_*. Two sources for the same three facts, so they can drift
+      # -- and if they do, this pipeline creates one storage account and then
+      # tries to store its state in a different one. Cross-check rather than
+      # trusting whoever set the variables.
+      - name: Check tfvars agrees with the backend variables
+        env:
           STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
           STATE_SA: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
           STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
         run: |
-          cat > terraform.tfvars <<EOF
-          tenant_id            = "$TENANT_ID"
-          subscription_id      = "$SUBSCRIPTION_ID"
-          location             = "canadacentral"
-          resource_group_name  = "$STATE_RG"
-          storage_account_name = "$STATE_SA"
-          container_name       = "$STATE_CONTAINER"
-
-          state_blob_data_contributor_principal_ids = []
-          EOF
-          terraform fmt terraform.tfvars
+          set -euo pipefail
+          val () { grep -E "^[[:space:]]*$1[[:space:]]*=" terraform.tfvars | head -1 | sed 's/.*=[[:space:]]*//; s/^"//; s/"[[:space:]]*$//'; }
+          RG=$(val resource_group_name); SA=$(val storage_account_name); CN=$(val container_name)
+          FAIL=0
+          check () {
+            if [ "$2" != "$3" ]; then
+              echo "::error::$1 mismatch — BOOTSTRAP_TFVARS says '$2', TF_STATE_* says '$3'"
+              FAIL=1
+            else
+              printf '  %-22s %s\n' "$1" "$2"
+            fi
+          }
+          check resource_group_name  "$RG" "$STATE_RG"
+          check storage_account_name "$SA" "$STATE_SA"
+          check container_name       "$CN" "$STATE_CONTAINER"
+          [ "$FAIL" -eq 0 ] || { echo "::error::Fix the variables on this environment before bootstrapping."; exit 1; }
+          echo "tfvars and backend variables agree."
 
       - name: Download the approved plan
         uses: actions/download-artifact@v8
