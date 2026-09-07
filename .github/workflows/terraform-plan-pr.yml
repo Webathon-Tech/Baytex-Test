@@ -2,25 +2,19 @@ name: Terraform Plan (PR)
 
 # Plan-only. Never applies.
 #
-# Runs in two places:
-#   pull_request  -- so a reviewer sees the impact on ALL THREE environments
-#                    before approving, not just dev
-#   push to main  -- so after a merge there is a record of what main now implies
-#                    for each environment
+# Runs on pull_request ONLY. It previously also ran on push to main, so that a
+# merge left a record of what main implied for each environment -- but that meant
+# every merge re-ran all five checks on code a reviewer had just approved on the
+# pull request itself. Same commit, same result, twice. The pull-request run is
+# the one anybody acts on, so the duplicate was dropped.
 #
-# Planning all three matters because the roots are separate copies of the same
-# .tf files: a change can be valid for dev and break prod (a name collision, an
-# address that does not fit prod's /20). Planning dev alone would not show it.
+# Planning all three environments matters because the roots are separate copies
+# of the same .tf files: a change can be valid for dev and break prod (a name
+# collision, an address that does not fit prod's /20). Planning dev alone would
+# not show it.
 
 on:
   pull_request:
-    paths:
-      - "environments/**"
-      - "modules/**"
-      - ".github/workflows/terraform-*.yml"
-      - ".github/workflows/_terraform-*.yml"
-  push:
-    branches: [main]
     paths:
       - "environments/**"
       - "modules/**"

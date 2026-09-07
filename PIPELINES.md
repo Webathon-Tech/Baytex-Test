@@ -17,8 +17,8 @@ reason is unrecorded is a rule somebody removes later.
 
 ```text
 .github/workflows/
-├── terraform-validate.yml           push (not main)    fmt + validate, no credentials
-├── terraform-plan-pr.yml            PR + push to main  parity report + plan all 3 envs
+├── terraform-validate.yml           pull request       fmt + validate, no credentials
+├── terraform-plan-pr.yml            pull request       parity report + plan all 3 envs
 ├── terraform-bootstrap-state.yml    manual             creates state backends
 ├── terraform-deploy.yml             manual             deploys; dev -> test -> prod
 ├── terraform-destroy.yml            manual             destroys one environment
@@ -34,8 +34,8 @@ those two have no **Run workflow** button, which is the visible confirmation.
 
 | Workflow | Fires when | Scope | Needs Azure? |
 | --- | --- | --- | --- |
-| Terraform Validate | push to any branch except `main` | fmt + validate | **no** |
-| Terraform Plan (PR) | PR opened/updated, and push to `main` | plans dev + test + prod | yes (read) |
+| Terraform Validate | pull request | fmt + validate | **no** |
+| Terraform Plan (PR) | pull request opened/updated | plans dev + test + prod | yes (read) |
 | Bootstrap State Backend | manual | one env, or `all` | yes |
 | Terraform Deploy | manual | `dev` / `test` / `prod` / `all` | yes |
 | Terraform Destroy | manual + typed confirmation | one env | yes |
@@ -56,7 +56,7 @@ So the plan workflows detect a missing backend and behave differently by purpose
 
 | Situation | Behaviour |
 | --- | --- |
-| Report-only plan (PR, push to main), no backend | **Skipped**, with a note naming the workflow that provisions it. Run stays green. |
+| Report-only plan (pull request), no backend | **Skipped**, with a note naming the workflow that provisions it. Run stays green. |
 | Deploy plan, no backend | **Fails**, naming the bootstrap workflow. You asked to deploy it; it cannot work. |
 | Destroy, no backend | **Succeeds as a no-op.** The desired end state is already true. |
 
@@ -73,22 +73,40 @@ has been bootstrapped but never deployed.
 
 ```
 git push (feature branch)
-  └─ Terraform Validate ......... fmt + validate, seconds, no credentials
+  └─ nothing runs
 
 open pull request
+  ├─ Terraform Validate ......... fmt + validate, seconds, no credentials
   ├─ Root parity ................ reports if the three env roots have drifted
   ├─ Plan dev ................... impact on dev
   ├─ Plan test .................. impact on test
   └─ Plan prod .................. impact on prod
 
 merge to main
-  └─ Terraform Plan (PR) ........ all three planned again, as a record
+  └─ nothing runs
 
 Actions -> Terraform Deploy
   ├─ dev ........................ applies immediately
   ├─ test ....................... PAUSES for approval
   └─ prod ....................... PAUSES for approval
 ```
+
+### Why nothing runs on push or on merge
+
+Both were tried and removed as noise. A push-triggered validate fired on every
+commit, for a result that only matters once somebody is reviewing. And a
+merge-triggered plan re-ran all five checks against the same commit a reviewer
+had just approved on the pull request — identical inputs, identical result.
+
+Everything now happens in one place: the pull request. That is where a human is
+already looking.
+
+### Why validate exists alongside the plan jobs
+
+The plan jobs run `terraform validate` too, so this looks redundant. It is not:
+in `_terraform-plan.yml` that step is guarded by the state-backend check, so for
+any environment not yet bootstrapped the plan job **skips** it. With no backends
+at all, `terraform-validate.yml` is the only thing validating the code.
 
 ### Why validate needs no credentials
 
