@@ -17,11 +17,11 @@ reason is unrecorded is a rule somebody removes later.
 
 ```text
 .github/workflows/
-├── terraform-validate.yml           pull request       fmt + validate, no credentials
-├── terraform-plan-pr.yml            pull request       parity report + plan all 3 envs
+├── terraform-plan-pr.yml            pull request       validate + parity + plan all 3 envs
 ├── terraform-bootstrap-state.yml    manual             creates state backends
 ├── terraform-deploy.yml             manual             deploys; dev -> test -> prod
 ├── terraform-destroy.yml            manual             destroys one environment
+├── _terraform-validate.yml          called             reusable fmt + validate
 ├── _terraform-plan.yml              called             reusable plan
 └── _terraform-apply.yml             called             reusable apply
 ```
@@ -34,8 +34,7 @@ those two have no **Run workflow** button, which is the visible confirmation.
 
 | Workflow | Fires when | Scope | Needs Azure? |
 | --- | --- | --- | --- |
-| Terraform Validate | pull request | fmt + validate | **no** |
-| Terraform Plan (PR) | pull request opened/updated | plans dev + test + prod | yes (read) |
+| Terraform Plan (PR) | pull request opened/updated | validate, parity, then plans dev + test + prod | yes (read) |
 | Bootstrap State Backend | manual | one env, or `all` | yes |
 | Terraform Deploy | manual | `dev` / `test` / `prod` / `all` | yes |
 | Terraform Destroy | manual + typed confirmation | one env | yes |
@@ -75,12 +74,13 @@ has been bootstrapped but never deployed.
 git push (feature branch)
   └─ nothing runs
 
-open pull request
-  ├─ Terraform Validate ......... fmt + validate, seconds, no credentials
-  ├─ Root parity ................ reports if the three env roots have drifted
-  ├─ Plan dev ................... impact on dev
-  ├─ Plan test .................. impact on test
-  └─ Plan prod .................. impact on prod
+open pull request          ← ONE run, five jobs
+  ├─ validate ................... fmt + validate, seconds, no credentials
+  ├─ parity ..................... reports if the three env roots have drifted
+  └─ once validate passes:
+       ├─ plan dev .............. impact on dev
+       ├─ plan test ............. impact on test
+       └─ plan prod ............. impact on prod
 
 merge to main
   └─ nothing runs
@@ -95,18 +95,26 @@ Actions -> Terraform Deploy
 
 Both were tried and removed as noise. A push-triggered validate fired on every
 commit, for a result that only matters once somebody is reviewing. And a
-merge-triggered plan re-ran all five checks against the same commit a reviewer
-had just approved on the pull request — identical inputs, identical result.
+merge-triggered plan re-ran every check against the same commit a reviewer had
+just approved on the pull request — identical inputs, identical result.
 
 Everything now happens in one place: the pull request. That is where a human is
 already looking.
 
-### Why validate exists alongside the plan jobs
+### Why validate is a job the plan jobs depend on
 
-The plan jobs run `terraform validate` too, so this looks redundant. It is not:
-in `_terraform-plan.yml` that step is guarded by the state-backend check, so for
-any environment not yet bootstrapped the plan job **skips** it. With no backends
-at all, `terraform-validate.yml` is the only thing validating the code.
+The plan jobs run `terraform validate` too, so it looks redundant. It is not: in
+`_terraform-plan.yml` that step is guarded by the state-backend check, so for any
+environment not yet bootstrapped the plan job **skips** it. With no backends at
+all, `_terraform-validate.yml` is the only thing validating the code.
+
+That is also why the plan jobs `needs: validate` rather than running beside it —
+on an unbootstrapped environment a syntax error would otherwise sail through as a
+green skip. Validate costs seconds and needs no credentials, so gating the
+expensive jobs behind it is close to free.
+
+It is a **called** workflow rather than one triggered on its own, so a pull
+request produces a single run containing every check instead of two runs to read.
 
 ### Why validate needs no credentials
 

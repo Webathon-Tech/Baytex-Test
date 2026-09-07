@@ -1,37 +1,25 @@
-name: Terraform Validate
+name: Reusable — Terraform Validate
 
-# fmt and validate, as a pull-request check.
-#
-# Runs on pull_request rather than on every push: a push-triggered run fired on
-# every commit, which is a lot of workflow noise for a check whose result only
-# matters when somebody is about to review the change.
+# Reusable fmt + validate. Called by terraform-plan-pr.yml as its first job, so a
+# pull request produces ONE run containing every check rather than two separate
+# runs to read.
 #
 # It is NOT redundant with the plan jobs, even though those also run validate.
 # In _terraform-plan.yml the validate step is guarded by the state-backend check,
-# so for any environment that has not been bootstrapped the plan job SKIPS it. If
-# no backend exists yet, this workflow is the only thing validating the code at
-# all.
+# so for any environment that has not been bootstrapped the plan job SKIPS it.
+# With no backends provisioned, this is the only thing validating the code at all
+# -- which is exactly why the plan jobs depend on it rather than running beside
+# it: a syntax error should stop them, not let them report a green skip.
 #
 # Deliberately needs NO Azure credentials and NO state access:
 # "terraform init -backend=false" is enough for validate, so it is safe on a
 # branch opened by someone without deployment rights, and it finishes in seconds.
 
 on:
-  pull_request:
-    paths:
-      - "environments/**"
-      - "modules/**"
-      - "bootstrap/**"
-      - ".github/workflows/terraform-*.yml"
-      - ".github/workflows/_terraform-*.yml"
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
-
-concurrency:
-  group: terraform-validate-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   validate:
@@ -87,15 +75,20 @@ jobs:
           done
           exit $FAILED
 
+      # head_ref, not ref_name: on a pull_request event ref_name is "<number>/merge",
+      # which tells a reviewer nothing. head_ref is the source branch.
       - name: Summary
         if: always()
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
           {
-            echo "### Terraform validate"
+            echo "### Terraform fmt and validate"
             echo ""
             if [ "${{ job.status }}" = "success" ]; then
-              echo "fmt and validate passed on \`${{ github.ref_name }}\`."
+              echo "Passed on \`$BRANCH\`."
             else
-              echo "Failures above on \`${{ github.ref_name }}\` — fix before opening a pull request."
+              echo "Failures above on \`$BRANCH\`. Run \`terraform fmt -recursive\` for formatting,"
+              echo "and fix any validate errors, then push again — the plan jobs wait on this."
             fi
           } >> "$GITHUB_STEP_SUMMARY"

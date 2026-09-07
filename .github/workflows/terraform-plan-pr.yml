@@ -12,12 +12,17 @@ name: Terraform Plan (PR)
 # of the same .tf files: a change can be valid for dev and break prod (a name
 # collision, an address that does not fit prod's /20). Planning dev alone would
 # not show it.
+#
+# The plan jobs need validate first. _terraform-plan.yml skips its own validate
+# step when an environment has no state backend, so on an unbootstrapped
+# environment a syntax error would otherwise sail through as a green skip.
 
 on:
   pull_request:
     paths:
       - "environments/**"
       - "modules/**"
+      - "bootstrap/**"
       - ".github/workflows/terraform-*.yml"
       - ".github/workflows/_terraform-*.yml"
   workflow_dispatch:
@@ -31,6 +36,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # fmt + validate. No Azure credentials, no state, a few seconds -- so it runs
+  # first and everything that costs real time waits on it.
+  validate:
+    uses: ./.github/workflows/_terraform-validate.yml
+
   # Reports only, never fails. The three environment roots are separate copies of
   # the same files, so they can drift with nothing to notice. Divergence is
   # sometimes deliberate, and a hard failure would train people to bypass the
@@ -94,6 +104,7 @@ jobs:
           exit 0
 
   plan-dev:
+    needs: validate
     uses: ./.github/workflows/_terraform-plan.yml
     with:
       environment: dev
@@ -101,6 +112,7 @@ jobs:
     secrets: inherit
 
   plan-test:
+    needs: validate
     uses: ./.github/workflows/_terraform-plan.yml
     with:
       environment: test
@@ -108,6 +120,7 @@ jobs:
     secrets: inherit
 
   plan-prod:
+    needs: validate
     uses: ./.github/workflows/_terraform-plan.yml
     with:
       environment: prod
