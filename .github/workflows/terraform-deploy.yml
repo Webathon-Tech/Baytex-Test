@@ -2,10 +2,14 @@ name: Terraform Deploy
 
 # Manual deployment with an enforced promotion order: dev -> test -> prod.
 #
-# Choosing "all" runs the full chain and STOPS at the first failure, so test can
-# only be reached once dev has actually applied, and prod only once test has.
-# Choosing a single environment runs just that one, for iterating on dev or for
-# re-running a single stage.
+# Environments are CHECKBOXES, so any combination can be run -- dev alone, test
+# and prod together, all three. Order is still enforced for whatever is ticked:
+# if dev and prod are both selected, prod waits for dev to apply successfully.
+# An environment that is NOT ticked simply drops out of the chain rather than
+# blocking the ones after it, which is what "!inputs.dev ||" expresses below.
+#
+# Ticking everything runs the full chain and STOPS at the first failure, so test
+# is only reached once dev has actually applied, and prod only once test has.
 #
 # Gating: each apply job targets the "<env>-apply" GitHub Environment. Attach
 # required reviewers to test-apply and prod-apply and the run pauses there for
@@ -15,16 +19,18 @@ name: Terraform Deploy
 on:
   workflow_dispatch:
     inputs:
-      deploy_target:
-        description: Which environment(s) to deploy
-        required: true
-        default: dev
-        type: choice
-        options:
-          - dev
-          - test
-          - prod
-          - all
+      dev:
+        description: dev
+        type: boolean
+        default: true
+      test:
+        description: test
+        type: boolean
+        default: false
+      prod:
+        description: prod
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -41,7 +47,7 @@ concurrency:
 jobs:
   # ----------------------------------------------------------------- dev
   dev-plan:
-    if: contains(fromJSON('["dev","all"]'), inputs.deploy_target)
+    if: inputs.dev
     uses: ./.github/workflows/_terraform-plan.yml
     with:
       environment: dev
@@ -60,9 +66,8 @@ jobs:
   test-plan:
     needs: dev-apply
     if: >-
-      always() && (
-        inputs.deploy_target == 'test' ||
-        (inputs.deploy_target == 'all' && needs.dev-apply.result == 'success')
+      always() && inputs.test && (
+        !inputs.dev || needs.dev-apply.result == 'success'
       )
     uses: ./.github/workflows/_terraform-plan.yml
     with:
@@ -78,13 +83,16 @@ jobs:
     secrets: inherit
 
   # ---------------------------------------------------------------- prod
+  # prod needs BOTH earlier stages in its needs list, not just test. With only
+  # dev and prod ticked, test drops out -- and if prod were gated on test alone,
+  # "!inputs.test" would be true and prod would deploy even after dev had FAILED.
+  # Each stage is therefore gated on every earlier stage that was actually ticked.
   prod-plan:
-    needs: test-apply
+    needs: [dev-apply, test-apply]
     if: >-
-      always() && (
-        inputs.deploy_target == 'prod' ||
-        (inputs.deploy_target == 'all' && needs.test-apply.result == 'success')
-      )
+      always() && inputs.prod
+      && (!inputs.dev || needs.dev-apply.result == 'success')
+      && (!inputs.test || needs.test-apply.result == 'success')
     uses: ./.github/workflows/_terraform-plan.yml
     with:
       environment: prod
