@@ -204,13 +204,35 @@ Nothing to run — it starts itself when a pull request is opened or updated.
 | --- | --- |
 | `Validate Terraform code` | Formatting and syntax. Must be green. |
 | `Check environment root parity` | **Reports only, never fails.** Flags where `environments/dev`, `test` and `prod` have drifted. Divergence is sometimes deliberate — read it and decide. |
+| `Check whether the state backend changed` | Decides whether the three state backend plans below run. |
 | `Plan dev / test / prod (review only)` | What this change would do to each environment. |
+| `Plan dev / test / prod state backend (review only)` | What this change would do to the **state backend**. Only when bootstrap files changed. |
 
 Planning all three matters: the environment roots are separate copies of the same
 files, so a change can be valid for dev and break prod.
 
 An environment that has not been bootstrapped shows a **skipped** plan with a note
 saying so, rather than a failure.
+
+### The state backend plans
+
+These run **only when the pull request changes** `bootstrap/**`,
+`.github/workflows/_bootstrap-*.yml` or `.github/workflows/terraform-bootstrap.yml`.
+On any other pull request they are skipped and the
+`Check whether the state backend changed` job says so — planning an unchanged root
+three more times would add minutes to every pull request and could only report
+"No changes".
+
+This is the most important review on that root. The storage account it manages
+holds the Terraform state for **every** environment, so a change that forces
+replacement would destroy the state it is tracked in. Before this check existed
+that was only visible once somebody ran the bootstrap workflow by hand.
+
+> If a state backend plan says `must be replaced` or `will be destroyed`, stop and
+> investigate before merging — not just before approving the bootstrap run.
+
+They are review-only: no binary plan is uploaded, so nothing a pull request
+produces can be applied.
 
 ---
 
@@ -277,6 +299,7 @@ a failed apply is exactly the run somebody needs to reconstruct later.
 | --- | --- | --- | --- |
 | Validate | `evidence-validate-<run>` | Validation output | 14 days |
 | PR plan | `evidence-plan-<env>-<run>` | The plan text | 14 days |
+| PR state backend plan | `evidence-bootstrap-plan-<env>-<run>` | The plan text and detected mode | 14 days |
 | Deploy plan | `tfplan-deploy-<env>-<run>` | Binary plan, plan text, provider lock | 5 days |
 | Deploy apply | `evidence-deploy-<env>-<run>` | Plan, apply log, outputs, final state list | **30 days** |
 | Destroy plan | `tfplan-destroy-<env>-<run>` | Binary plan, plan text, state before | 5 days |

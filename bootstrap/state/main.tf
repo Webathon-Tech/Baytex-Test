@@ -13,12 +13,16 @@ resource "azurerm_storage_account" "state" {
   account_kind                  = "StorageV2"
   min_tls_version               = "TLS1_2"
   public_network_access_enabled = true
-  # Entra-only authentication. Every pipeline reaches this account with
-  # use_azuread_auth=true (the Terraform backend) or --auth-mode login (the az
-  # CLI probes), so no shared account key is ever fetched or used. Leaving keys
-  # enabled would leave a credential that bypasses the service principals'
-  # Storage Blob Data Contributor role. The data storage account in
-  # modules/data-foundation is configured the same way.
+  # Entra-only. No shared account key exists to be leaked or rotated, and every
+  # path to this account authenticates as the service principal through its
+  # Storage Blob Data Contributor role: the Terraform backend with
+  # use_azuread_auth=true, the az CLI probes with --auth-mode login, and the
+  # provider itself with storage_use_azuread (set in versions.tf).
+  #
+  # storage_use_azuread in versions.tf is what makes this possible. Without it
+  # the provider calls ListKeys to build its data-plane client and fails with
+  # "403 Key based authentication is not permitted on this storage account".
+  # Do not remove one without the other.
   shared_access_key_enabled        = false
   default_to_oauth_authentication  = true
   allow_nested_items_to_be_public  = false
