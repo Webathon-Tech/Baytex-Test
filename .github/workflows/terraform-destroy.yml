@@ -1,31 +1,45 @@
-name: Terraform Destroy
+name: Terraform Destroy Platform
 
-# Destroys ONE environment's platform. Deliberately separate from
-# terraform-deploy.yml: destruction should never be a parameter on the workflow
-# people run every day.
+# Tears down the platform in one or more environments.
 #
-# Scope: the platform root only (environments/<env>). It does NOT touch
-# bootstrap/state, so the remote state backend survives and the environment
-# can be rebuilt with terraform-deploy.yml without re-bootstrapping. The state
-# account also holds the state file this job is writing to -- destroying it from
-# here would be self-defeating.
+# Scope: the platform roots only (environments/<env>). The state backend is NOT
+# destroyed, so an environment can be rebuilt with Terraform Deploy Platform
+# without bootstrapping again - and the state account holds the very state file
+# this run writes to, so destroying it from here would be self-defeating.
 #
-# NOT destroyed (not managed by this Terraform, by design):
-#   - the hub VNet, firewall/NVA and on-premises systems
+# Not destroyed, because this Terraform never owned them:
+#   - the hub VNet, firewall and on-premises systems
 #   - the HUB SIDE of the VNet peering, which is customer-owned
-# The hub-side peering is left pointing at a deleted VNet and must be removed
-# separately. The final step reports the exact command.
+# The apply job reports the exact command for the hub-side peering.
+#
+# Two guards before anything is touched:
+#   1. main only. Deploys may run from a hotfix branch; a teardown may not.
+#      Removing an environment is never the urgent action a hotfix exists for,
+#      so it must come from reviewed, merged code.
+#   2. The ticked environments have to be retyped exactly.
+#
+# The structure matches Terraform Deploy Platform - plan in <env>-plan, apply in
+# <env>-apply - so required reviewers attached to <env>-apply gate a destroy the
+# same way they gate a deployment, with the full destroy plan already published
+# for them to read.
 
 on:
   workflow_dispatch:
     inputs:
-      environment:
-        description: Environment to destroy
-        required: true
-        type: choice
-        options: [dev, test, prod]
+      dev:
+        description: dev
+        type: boolean
+        default: false
+      test:
+        description: test
+        type: boolean
+        default: false
+      prod:
+        description: prod
+        type: boolean
+        default: false
       confirm:
-        description: Type the environment name again to confirm
+        description: "Retype the ticked environments exactly, comma-separated, e.g. dev,prod"
         required: true
         type: string
 
@@ -33,261 +47,112 @@ permissions:
   contents: read
   id-token: write
 
-# Shared with terraform-deploy.yml -- see the note there. A destroy must never
-# overlap a deploy of the same environment.
+# Shared with Terraform Deploy Platform - see the note there. A destroy must
+# never overlap a deploy.
 concurrency:
   group: terraform-mutate
   cancel-in-progress: false
 
 jobs:
-  destroy:
-    name: Destroy ${{ inputs.environment }}
+  preflight:
+    name: Check the run is allowed
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}-apply
     defaults:
       run:
         shell: bash
-        working-directory: environments/${{ inputs.environment }}
-
-    env:
-      TF_IN_AUTOMATION: "true"
-      TF_INPUT: "false"
-      ARM_USE_AZUREAD: "true"
-      DATABRICKS_TF_ENABLED_PF_RESOURCES: databricks_mws_ncc_private_endpoint_rule
-
+    outputs:
+      environments: ${{ steps.resolve.outputs.environments }}
+      selected: ${{ steps.resolve.outputs.selected }}
     steps:
-      # Checked before anything else touches Azure. A typo in the choice box is
-      # cheap; a typo that destroys prod is not.
-      # working-directory must be overridden here: the job default points at
-      # environments/<env>, which does not exist until Checkout runs. Without
-      # this the step dies on a missing directory before evaluating the
-      # confirmation at all -- failing for the right-looking reason but the
-      # wrong cause, which would hide a broken guard.
-      - name: Confirm intent
-        working-directory: .
+      - name: Check the branch is allowed to destroy
         run: |
           if [ "${{ github.ref }}" != "refs/heads/main" ]; then
             echo "::error::Refusing to destroy from '${{ github.ref }}'. Destroys run from main only."
             exit 1
           fi
-          if [ "${{ inputs.confirm }}" != "${{ inputs.environment }}" ]; then
-            echo "::error::Confirmation '${{ inputs.confirm }}' does not match environment '${{ inputs.environment }}'. Nothing was destroyed."
+          echo "Destroying from ${{ github.ref }}"
+
+      # The order is fixed dev,test,prod regardless of which boxes were ticked,
+      # so the string an operator has to retype is unambiguous. Comparing against
+      # the resolved list rather than a fixed word means they have to have read
+      # what they actually selected.
+      - name: Resolve and confirm the selected environments
+        id: resolve
+        run: |
+          set -euo pipefail
+          SELECTED=""
+          add () { if [ -z "$SELECTED" ]; then SELECTED="$1"; else SELECTED="$SELECTED,$1"; fi; }
+          [ "${{ inputs.dev }}"  = "true" ] && add dev
+          [ "${{ inputs.test }}" = "true" ] && add test
+          [ "${{ inputs.prod }}" = "true" ] && add prod
+
+          if [ -z "$SELECTED" ]; then
+            echo "::error::No environment selected. Tick at least one of dev, test or prod."
             exit 1
           fi
-          echo "Confirmed: destroying ${{ inputs.environment }} from ${{ github.ref }}"
 
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Azure login with OIDC
-        uses: azure/login@v3
-        with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_version: "1.16.1"
-          terraform_wrapper: false
-
-      # Destroying an environment that was never bootstrapped has no backend to
-      # init against, and terraform would fail with a raw Azure error. The
-      # desired end state -- "this environment does not exist" -- is already
-      # true, so report it and succeed rather than failing on a no-op.
-      - name: Check the state backend exists
-        id: backend
-        working-directory: .
-        env:
-          STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
-          STATE_SA: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
-          STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
-        run: |
-          set -uo pipefail
-          EXISTS=false
-          if az storage account show --name "$STATE_SA" --resource-group "$STATE_RG" --only-show-errors >/dev/null 2>&1; then
-            if az storage container exists --account-name "$STATE_SA" --name "$STATE_CONTAINER"                  --auth-mode login --only-show-errors --query exists -o tsv 2>/dev/null | grep -qi true; then
-              EXISTS=true
-            fi
-          fi
-          if [ "$EXISTS" = "true" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "State backend present; proceeding with destroy."
-          else
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::No state backend for ${{ inputs.environment }} - nothing to destroy."
+          if [ "${{ inputs.confirm }}" != "$SELECTED" ]; then
+            echo "::error::Confirmation '${{ inputs.confirm }}' does not match the selected environments '$SELECTED'. Nothing was destroyed."
             {
-              echo "### ${{ inputs.environment }} - nothing to destroy"
+              echo "### Run refused"
               echo ""
-              echo "No state backend found, so this environment was never deployed."
-              echo "Treated as already destroyed."
+              echo "| | |"
+              echo "| --- | --- |"
+              echo "| Ticked | \`$SELECTED\` |"
+              echo "| Typed | \`${{ inputs.confirm }}\` |"
+              echo ""
+              echo "Type the ticked environments exactly, in the order \`dev,test,prod\`, with no spaces."
             } >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Write environment variables file
-        if: steps.backend.outputs.skip != 'true'
-        env:
-          # TESTING ONLY: TFVARS is read from a repository VARIABLE so its content is
-          # visible in the GitHub UI. GitHub masks secrets in logs automatically and does
-          # NOT mask variables, and this repository is public -- switch back to the line
-          # below before any client deployment.
-          # TFVARS: ${{ secrets.TFVARS }}
-          TFVARS: ${{ vars.TFVARS }}
-        run: |
-          test -n "$TFVARS" || { echo "::error::TFVARS is empty"; exit 1; }
-          printf '%s\n' "$TFVARS" > terraform.tfvars
-
-      - name: Terraform init
-        if: steps.backend.outputs.skip != 'true'
-        run: |
-          terraform init \
-            -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
-            -backend-config="storage_account_name=${{ vars.TF_STATE_STORAGE_ACCOUNT }}" \
-            -backend-config="container_name=${{ vars.TF_STATE_CONTAINER }}" \
-            -backend-config="key=${{ vars.TF_STATE_KEY }}" \
-            -backend-config="use_azuread_auth=true"
-
-      - name: Record what exists before destroying
-        if: steps.backend.outputs.skip != 'true'
-        run: |
-          terraform state list > before.txt || true
-          echo "Resources currently tracked: $(wc -l < before.txt)"
-          {
-            echo "### ${{ inputs.environment }} — resources before destroy"
-            echo ""
-            echo '```'
-            cat before.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      # Azure refuses to delete a Private Link Service that still has private
-      # endpoint connections, and the Databricks-managed endpoints created by the
-      # NCC rules outlive the NCC itself -- they remain "Approved" against the PLS
-      # after the NCC is gone. Terraform then fails with
-      # PrivateLinkServiceWithPrivateEndpointConnectionsCannotBeDeleted and leaves
-      # the network and connectivity groups behind.
-      #
-      # Clearing them first makes destroy work in one pass instead of needing a
-      # manual cleanup and a re-run. Safe when there is nothing to clear.
-      # No working-directory override here: this step reads terraform.tfvars,
-      # which the job writes into environments/<env>, so it needs the job default.
-      - name: Clear private endpoint connections from Private Link Services
-        if: steps.backend.outputs.skip != 'true'
-        env:
-          SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-        run: |
-          set -euo pipefail
-          # Derive the connectivity group from the SAME naming components the
-          # Terraform uses (locals.tf: rg-<organization>-<workload>-<environment>
-          # -connectivity-<region_short>-<instance>) rather than hardcoding the
-          # sandbox's own names. Hardcoding "rg-sbx-...-cnc-001" silently made
-          # this step a no-op for any other client prefix or region, so the PLS
-          # connections were never cleared and the destroy failed.
-          val () { grep -E "^[[:space:]]*$1[[:space:]]*=" terraform.tfvars | head -1 | sed 's/.*=[[:space:]]*//; s/^"//; s/"[[:space:]]*$//'; }
-          ORG=$(val organization); WL=$(val workload); ENVN=$(val environment)
-          REG=$(val region_short); INST=$(val instance)
-          RG="rg-${ORG}-${WL}-${ENVN}-connectivity-${REG}-${INST}"
-          echo "Connectivity resource group derived from tfvars: $RG"
-          if ! az group exists --name "$RG" --subscription "$SUBSCRIPTION_ID" | grep -qi true; then
-            echo "Connectivity group $RG not present; nothing to clear."
-            exit 0
-          fi
-          for PLS in $(az network private-link-service list -g "$RG" --subscription "$SUBSCRIPTION_ID" --query "[].id" -o tsv); do
-            echo "Private Link Service: $(basename "$PLS")"
-            for CONN in $(az network private-endpoint-connection list --id "$PLS" --subscription "$SUBSCRIPTION_ID" --query "[].id" -o tsv); do
-              echo "  removing connection $(basename "$CONN")"
-              az network private-endpoint-connection delete --id "$CONN" --subscription "$SUBSCRIPTION_ID" --yes --only-show-errors -o none
-            done
-          done
-          # Azure needs a moment before the PLS reports zero connections.
-          sleep 20
-
-      - name: Plan destroy
-        if: steps.backend.outputs.skip != 'true'
-        run: |
-          terraform plan -destroy -lock-timeout=10m -out=destroy.tfplan
-          terraform show -no-color destroy.tfplan > destroy-plan.txt
-          grep -E '^Plan:' destroy-plan.txt || true
-
-      # Destroying this stack needs more than one pass. Deleting the NCC binding
-      # and deleting the NCC itself are separate Databricks API calls, and the
-      # unbind is not immediately visible -- the NCC delete then fails with
-      # "unable to be deleted because it is attached to one or more workspaces".
-      # By the next attempt the unbind has landed and it succeeds.
-      #
-      # Each attempt re-plans, because a partially completed destroy makes the
-      # saved plan stale.
-      - name: Apply destroy
-        if: steps.backend.outputs.skip != 'true'
-        run: |
-          set -uo pipefail
-          for attempt in 1 2 3; do
-            echo "=== destroy attempt $attempt ==="
-            if terraform apply -lock-timeout=10m -auto-approve destroy.tfplan; then
-              echo "destroy completed on attempt $attempt"
-              exit 0
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::destroy did not complete after $attempt attempts"
-              exit 1
-            fi
-            echo "attempt $attempt failed; waiting for Databricks/Azure state to settle"
-            sleep 45
-            terraform plan -destroy -lock-timeout=10m -out=destroy.tfplan
-          done
-
-      # A destroy that leaves resources behind is a silent problem: the next
-      # apply collides on names that still exist. -detailed-exitcode returns 0
-      # only when nothing is left to change.
-      - name: Verify the environment is fully destroyed
-        if: steps.backend.outputs.skip != 'true'
-        run: |
-          set -euo pipefail
-          REMAINING=$(terraform state list | wc -l)
-          echo "Resources still tracked in state: $REMAINING"
-          if [ "$REMAINING" -ne 0 ]; then
-            terraform state list
-            echo "::error::$REMAINING resource(s) survived the destroy"
             exit 1
           fi
 
-          set +e
-          terraform plan -destroy -detailed-exitcode -lock-timeout=10m > /dev/null 2>&1
-          CODE=$?
-          set -e
-          [ "$CODE" -eq 0 ] || { echo "::error::destroy plan still reports changes (exit $CODE)"; exit 1; }
-          echo "Verified: state is empty and no further destroy actions pending."
+          JSON="[\"$(printf '%s' "$SELECTED" | sed 's/,/","/g')\"]"
+          echo "environments=$JSON" >> "$GITHUB_OUTPUT"
+          echo "selected=$SELECTED" >> "$GITHUB_OUTPUT"
+          echo "Confirmed. Destroying: $SELECTED  ->  $JSON"
 
-      - name: Report the manual cleanup this cannot do
-        if: success() && steps.backend.outputs.skip != 'true'
-        run: |
           {
+            echo "### Destroy requested"
             echo ""
-            echo "### Destroyed ${{ inputs.environment }}"
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Environments | \`$SELECTED\` |"
+            echo "| Branch | \`${{ github.ref_name }}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Requested by | @${{ github.actor }} |"
             echo ""
-            echo "The state backend was intentionally kept, so \`Terraform Deploy\` can"
-            echo "rebuild this environment without re-running the bootstrap."
-            echo ""
-            echo "**Still present — remove separately if the spoke is gone for good:**"
-            echo "the hub-side VNet peering, which this Terraform never owned."
-            echo ""
-            echo '```bash'
-            echo "az network vnet peering delete \\"
-            echo "  --subscription <hub-subscription> \\"
-            echo "  --resource-group <hub-resource-group> \\"
-            echo "  --vnet-name <hub-vnet> \\"
-            echo "  --name peer-hub-to-<spoke-vnet-name>"
-            echo '```'
+            echo "A destroy plan is produced for each environment first. Read it before approving."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload destroy evidence
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: destroy-evidence-${{ inputs.environment }}-${{ github.run_id }}
-          path: |
-            environments/${{ inputs.environment }}/before.txt
-            environments/${{ inputs.environment }}/destroy-plan.txt
-          retention-days: 30
-          if-no-files-found: warn
+  # Environments are independent, so one failing does not abandon the others.
+  plan:
+    name: Plan ${{ matrix.environment }} destroy
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ fromJSON(needs.preflight.outputs.environments) }}
+    uses: ./.github/workflows/_terraform-plan.yml
+    with:
+      environment: ${{ matrix.environment }}
+      operation: destroy
+      save_plan: true
+    secrets: inherit
+
+  # The apply legs wait for every plan leg, not just their own - GitHub does not
+  # pair matrix legs across jobs. If any environment fails to plan, nothing is
+  # destroyed: a clean stop is easier to reason about mid-teardown than a partial
+  # one, and re-running after fixing the cause costs only the plan again.
+  apply:
+    name: Apply ${{ matrix.environment }} destroy
+    needs: [preflight, plan]
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ fromJSON(needs.preflight.outputs.environments) }}
+    uses: ./.github/workflows/_terraform-apply.yml
+    with:
+      environment: ${{ matrix.environment }}
+      operation: destroy
+      allowed_refs: refs/heads/main
+    secrets: inherit

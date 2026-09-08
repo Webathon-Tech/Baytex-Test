@@ -1,19 +1,14 @@
-name: Reusable — Terraform Validate
+name: Reusable - Terraform Validate
 
-# Reusable fmt + validate. Called by terraform-plan-pr.yml as its first job, so a
-# pull request produces ONE run containing every check rather than two separate
-# runs to read.
+# Formatting and syntax checks for every Terraform root in the repository.
 #
-# It is NOT redundant with the plan jobs, even though those also run validate.
-# In _terraform-plan.yml the validate step is guarded by the state-backend check,
-# so for any environment that has not been bootstrapped the plan job SKIPS it.
-# With no backends provisioned, this is the only thing validating the code at all
-# -- which is exactly why the plan jobs depend on it rather than running beside
-# it: a syntax error should stop them, not let them report a green skip.
+# Deliberately needs no Azure credentials and no state access. "terraform init
+# -backend=false" is enough for validate, so this is safe to run on a branch
+# opened by someone with no deployment rights, and it finishes in seconds.
 #
-# Deliberately needs NO Azure credentials and NO state access:
-# "terraform init -backend=false" is enough for validate, so it is safe on a
-# branch opened by someone without deployment rights, and it finishes in seconds.
+# The plan jobs depend on this rather than running beside it. A plan against an
+# environment with no state backend reports a clean skip, so without this gate a
+# syntax error could pass unnoticed as three green skips.
 
 on:
   workflow_call:
@@ -23,7 +18,7 @@ permissions:
 
 jobs:
   validate:
-    name: fmt and validate
+    name: validate
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -32,52 +27,56 @@ jobs:
     env:
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
+      TERRAFORM_VERSION: "1.16.1"
 
     steps:
-      - name: Checkout
+      - name: Check out the repository
         uses: actions/checkout@v7
 
-      - name: Setup Terraform
+      - name: Install Terraform
         uses: hashicorp/setup-terraform@v4
         with:
-          terraform_version: "1.16.1"
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
-      - name: Terraform format
-        id: fmt
+      - name: Check Terraform formatting
         run: |
           if terraform fmt -check -recursive; then
-            echo "All files are correctly formatted."
+            echo "All Terraform files are correctly formatted."
           else
-            echo "::error::Formatting issues above. Run 'terraform fmt -recursive' and commit."
+            echo "::error::Formatting issues listed above. Run 'terraform fmt -recursive' locally and commit the result."
             exit 1
           fi
 
-      # Each root is validated separately. -backend=false skips backend setup,
-      # which validate does not need -- so no credentials and no state are
-      # touched. Modules are validated through the roots that call them.
-      - name: Terraform validate
+      # Each root is validated on its own. Modules are validated through the
+      # roots that call them, which is also how they are consumed in practice.
+      - name: Validate every Terraform root
         run: |
           set -uo pipefail
           FAILED=0
-          for dir in environments/dev environments/test environments/prod bootstrap/state baytex-bi-owned-unity-catalog-example; do
+          : > validate.txt
+
+          for dir in environments/dev environments/test environments/prod \
+                     bootstrap/state baytex-bi-owned-unity-catalog-example; do
             [ -d "$dir" ] || continue
             echo "::group::validate $dir"
             if terraform -chdir="$dir" init -backend=false -input=false >/dev/null 2>&1 \
-               && terraform -chdir="$dir" validate -no-color; then
-              echo "  OK"
+               && terraform -chdir="$dir" validate -no-color >> validate.txt 2>&1; then
+              echo "PASS $dir" | tee -a validate.txt
             else
               echo "::error::terraform validate failed in $dir"
-              terraform -chdir="$dir" validate -no-color || true
+              terraform -chdir="$dir" validate -no-color 2>&1 | tee -a validate.txt || true
+              echo "FAIL $dir" >> validate.txt
               FAILED=1
             fi
             echo "::endgroup::"
           done
+
           exit $FAILED
 
-      # head_ref, not ref_name: on a pull_request event ref_name is "<number>/merge",
-      # which tells a reviewer nothing. head_ref is the source branch.
-      - name: Summary
+      # head_ref rather than ref_name: on a pull_request event ref_name is
+      # "<number>/merge", which tells a reviewer nothing useful.
+      - name: Publish the validation summary
         if: always()
         env:
           BRANCH: ${{ github.head_ref || github.ref_name }}
@@ -88,7 +87,42 @@ jobs:
             if [ "${{ job.status }}" = "success" ]; then
               echo "Passed on \`$BRANCH\`."
             else
-              echo "Failures above on \`$BRANCH\`. Run \`terraform fmt -recursive\` for formatting,"
-              echo "and fix any validate errors, then push again — the plan jobs wait on this."
+              echo "Failed on \`$BRANCH\`. Run \`terraform fmt -recursive\` for formatting issues,"
+              echo "fix any validate errors, and push again - the plan jobs wait on this."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # Every artefact carries this header so that months later it is possible to
+      # say which commit produced it and who triggered the run.
+      - name: Record run metadata
+        if: always()
+        run: |
+          cat > run-metadata.json <<EOF
+          {
+            "operation": "validate",
+            "environment": "all",
+            "repository": "${{ github.repository }}",
+            "workflow": "${{ github.workflow }}",
+            "run_id": "${{ github.run_id }}",
+            "run_attempt": "${{ github.run_attempt }}",
+            "event": "${{ github.event_name }}",
+            "ref": "${{ github.ref }}",
+            "commit_sha": "${{ github.sha }}",
+            "triggered_by": "${{ github.actor }}",
+            "terraform_version": "${{ env.TERRAFORM_VERSION }}",
+            "recorded_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          EOF
+          cat run-metadata.json
+
+      - name: Upload the validation evidence bundle
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: evidence-validate-${{ github.run_id }}
+          path: |
+            validate.txt
+            run-metadata.json
+          retention-days: 14
+          if-no-files-found: warn

@@ -1,18 +1,38 @@
-name: Reusable — Terraform Plan
+name: Reusable - Terraform Plan
 
-# Called by terraform-deploy.yml and terraform-plan-pr.yml.
-# Produces a binary plan artefact that the apply workflow consumes verbatim, so
-# approvers review the exact plan that gets applied rather than a re-plan.
+# Produces a Terraform plan for one environment and uploads it.
+#
+# One workflow covers all three kinds of plan because the mechanics are the same
+# in each case; only the flags differ:
+#
+#   operation: deploy   terraform plan            -> what will be created/changed
+#   operation: destroy  terraform plan -destroy   -> what will be removed
+#   save_plan: false    review only, never applied (pull requests)
+#
+# A destroy plan is applied with "terraform apply" exactly like a deploy plan, so
+# splitting them into separate workflows would duplicate everything in order to
+# change two command-line flags.
+#
+# This job runs in the "<env>-plan" GitHub Environment, which holds the
+# credentials for the environment and carries no approval gate. Approval belongs
+# on the apply, once there is a plan to approve.
 
 on:
   workflow_call:
     inputs:
       environment:
-        description: Environment name (dev / test / prod)
+        description: Environment to plan against (dev / test / prod).
         required: true
         type: string
-      upload_plan:
-        description: Upload the binary plan for a later apply
+      operation:
+        description: 'What the plan is for: "deploy" or "destroy".'
+        required: false
+        default: deploy
+        type: string
+      save_plan:
+        description: >-
+          Upload the binary plan so an apply job can consume it. false produces a
+          human-readable plan for review only, and nothing can apply it.
         required: false
         default: true
         type: boolean
@@ -23,7 +43,7 @@ permissions:
 
 jobs:
   plan:
-    name: Plan ${{ inputs.environment }}
+    name: plan
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}-plan
     defaults:
@@ -35,42 +55,46 @@ jobs:
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
       ARM_USE_AZUREAD: "true"
-      # The NCC private endpoint rule resource is behind a provider feature flag.
+      TERRAFORM_VERSION: "1.16.1"
+      # The NCC private endpoint rule resource sits behind a provider feature
+      # flag. Without this the resource type is unknown and the plan fails.
       DATABRICKS_TF_ENABLED_PF_RESOURCES: databricks_mws_ncc_private_endpoint_rule
 
     steps:
-      - name: Checkout
+      - name: Check out the repository
         uses: actions/checkout@v7
 
-      - name: Azure login with OIDC
+      - name: Sign in to Azure with OIDC
         uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Setup Terraform
+      - name: Install Terraform
         uses: hashicorp/setup-terraform@v4
         with:
-          terraform_version: "1.16.1"
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
-      # Runs BEFORE the tfvars secret is written. terraform fmt checks .tfvars
-      # files too, so writing the secret first makes this gate fail on the
-      # formatting of secret content rather than on repository code.
-      - name: Terraform format
+      # Runs before terraform.tfvars is written. "terraform fmt -check
+      # -recursive" also inspects .tfvars files, so writing the variables file
+      # first would make this gate report on the content of a GitHub variable
+      # instead of on repository code.
+      - name: Check Terraform formatting
         working-directory: .
         run: terraform fmt -check -recursive
 
-      # An environment that has never been bootstrapped has no state backend, and
-      # "terraform init" against a missing storage account fails hard. That is
-      # correct for a deploy -- you asked to deploy it, so it must exist. It is
-      # wrong for a report-only plan: while only dev is provisioned, every pull
-      # request would show red for test and prod purely because they do not exist
-      # yet, and people would learn to ignore a permanently failing check.
+      # "terraform init" against a storage account that does not exist fails with
+      # a raw Azure error that reads like a permissions problem. Probing first
+      # gives an accurate message, and distinguishes two situations:
       #
-      # So: report-only plans SKIP a missing backend and say so. Deploy plans
-      # still fail, with a message naming the workflow that fixes it.
+      #   save_plan true  - a deploy or destroy was explicitly requested, so a
+      #                     missing backend is an error worth stopping for.
+      #   save_plan false - a pull-request report. While an environment has not
+      #                     been bootstrapped, failing here would put a permanent
+      #                     red check on every pull request, which teaches people
+      #                     to ignore it. Skip and say so instead.
       - name: Check the state backend exists
         id: backend
         working-directory: .
@@ -81,50 +105,57 @@ jobs:
         run: |
           set -uo pipefail
           EXISTS=false
-          if az storage account show --name "$STATE_SA" --resource-group "$STATE_RG" --only-show-errors >/dev/null 2>&1; then
-            if az storage container exists --account-name "$STATE_SA" --name "$STATE_CONTAINER"                  --auth-mode login --only-show-errors --query exists -o tsv 2>/dev/null | grep -qi true; then
+          if az storage account show --name "$STATE_SA" --resource-group "$STATE_RG" \
+               --only-show-errors >/dev/null 2>&1; then
+            if az storage container exists --account-name "$STATE_SA" --name "$STATE_CONTAINER" \
+                 --auth-mode login --only-show-errors --query exists -o tsv 2>/dev/null | grep -qi true; then
               EXISTS=true
             fi
           fi
-          echo "backend_exists=$EXISTS" >> "$GITHUB_OUTPUT"
-          echo "State backend for ${{ inputs.environment }}: exists=$EXISTS"
+          echo "State backend for ${{ inputs.environment }}: $STATE_SA/$STATE_CONTAINER in $STATE_RG -> exists=$EXISTS"
 
           if [ "$EXISTS" = "true" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if [ "${{ inputs.upload_plan }}" = "true" ]; then
+          if [ "${{ inputs.save_plan }}" = "true" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "::error::No state backend for '${{ inputs.environment }}' (looked for $STATE_SA/$STATE_CONTAINER in $STATE_RG). Run the 'Terraform Bootstrap State Backend' workflow for this environment first."
+            echo "::error::No Terraform state backend for '${{ inputs.environment }}' (looked for $STATE_SA/$STATE_CONTAINER in $STATE_RG). Run 'Terraform Bootstrap State Backend' for this environment first."
             exit 1
           fi
 
           echo "skip=true" >> "$GITHUB_OUTPUT"
-          echo "::notice::Skipping the ${{ inputs.environment }} plan - no state backend yet."
+          echo "::notice::Skipping ${{ inputs.environment }} - it has no state backend yet."
           {
-            echo "### ${{ inputs.environment }} plan skipped"
+            echo "### ${{ inputs.environment }}: skipped"
             echo ""
-            echo "No state backend found (\`$STATE_SA\` / \`$STATE_CONTAINER\`)."
-            echo "This environment has not been bootstrapped yet, so there is nothing to plan against."
+            echo "No state backend found (\`$STATE_SA\` / \`$STATE_CONTAINER\` in \`$STATE_RG\`)."
+            echo "This environment has not been bootstrapped, so there is nothing to plan against."
             echo ""
             echo "Run **Terraform Bootstrap State Backend** for \`${{ inputs.environment }}\` to enable it."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Write environment variables file
+      # The complete variables file for this environment lives in GitHub rather
+      # than in git, so one set of .tf files serves all three environments.
+      #
+      # TESTING ONLY: read from a repository VARIABLE so its content is visible
+      # in the GitHub UI while the platform is being validated. Switch to the
+      # commented line before any client deployment - GitHub masks secrets in
+      # logs and does not mask variables.
+      - name: Write terraform.tfvars
         if: steps.backend.outputs.skip != 'true'
         env:
-          # TESTING ONLY: TFVARS is read from a repository VARIABLE so its content is
-          # visible in the GitHub UI. GitHub masks secrets in logs automatically and does
-          # NOT mask variables, and this repository is public -- switch back to the line
-          # below before any client deployment.
           # TFVARS: ${{ secrets.TFVARS }}
           TFVARS: ${{ vars.TFVARS }}
         run: |
-          test -n "$TFVARS" || { echo "::error::TFVARS is empty for ${{ inputs.environment }}-plan"; exit 1; }
+          test -n "$TFVARS" || { echo "::error::TFVARS is empty for ${{ inputs.environment }}-plan. Set it on that GitHub Environment - see GITHUB-SETUP.md."; exit 1; }
           printf '%s\n' "$TFVARS" > terraform.tfvars
 
-      - name: Terraform init
+      # use_azuread_auth makes the backend authenticate as the signed-in service
+      # principal via its Storage Blob Data Contributor role. No storage account
+      # key is fetched, stored, or passed to Terraform.
+      - name: Initialise the Terraform backend
         if: steps.backend.outputs.skip != 'true'
         run: |
           terraform init \
@@ -134,60 +165,164 @@ jobs:
             -backend-config="key=${{ vars.TF_STATE_KEY }}" \
             -backend-config="use_azuread_auth=true"
 
-      - name: Terraform validate
+      - name: Validate the configuration
         if: steps.backend.outputs.skip != 'true'
         run: terraform validate
 
-      # Report-only plans (pull requests, push to main) run with -lock=false.
-      # They never write state, so taking the lease buys nothing and creates
-      # real contention: two PRs open at once, or a PR opened while a deploy is
-      # running, would otherwise queue on the lease and fail after the timeout.
-      # Worse, cancel-in-progress can kill a plan holding the lease and strand it.
-      #
-      # Deploy plans DO lock, because their plan feeds an apply and must see a
-      # consistent state that nothing else is mutating.
-      - name: Terraform plan
-        if: steps.backend.outputs.skip != 'true'
+      # Recorded before anything is torn down, so the evidence bundle shows what
+      # the environment contained at the moment the destroy was planned.
+      - name: Record the resources that exist before destroying
+        if: inputs.operation == 'destroy' && steps.backend.outputs.skip != 'true'
         run: |
-          if [ "${{ inputs.upload_plan }}" = "true" ]; then
-            echo "Deploy plan: acquiring state lock."
-            terraform plan -lock-timeout=10m -out=tfplan
-          else
-            echo "Report-only plan: running with -lock=false so concurrent PRs do not contend."
-            terraform plan -lock=false -out=tfplan
+          terraform state list > state-before.txt || true
+          echo "Resources currently tracked: $(wc -l < state-before.txt)"
+          {
+            echo "### ${{ inputs.environment }}: resources before destroy"
+            echo ""
+            echo '```'
+            cat state-before.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Azure refuses to delete a Private Link Service that still has private
+      # endpoint connections. The Databricks-managed endpoints created by the NCC
+      # rules outlive the NCC itself: they stay "Approved" against the Private
+      # Link Service after the NCC is gone, and the destroy then fails with
+      # PrivateLinkServiceWithPrivateEndpointConnectionsCannotBeDeleted, leaving
+      # the network and connectivity resource groups behind.
+      #
+      # Clearing them here makes a destroy complete in one pass. The step is a
+      # no-op when there is nothing to clear, and runs before the plan so the
+      # plan reflects the cleared state.
+      - name: Clear private endpoint connections from Private Link Services
+        if: inputs.operation == 'destroy' && steps.backend.outputs.skip != 'true'
+        env:
+          SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+
+          # The connectivity resource group name is rebuilt from the same naming
+          # components the Terraform uses (see locals.tf), rather than hardcoded,
+          # so this works for any client prefix, workload and region.
+          val () {
+            grep -E "^[[:space:]]*$1[[:space:]]*=" terraform.tfvars \
+              | head -1 | sed 's/.*=[[:space:]]*//; s/^"//; s/"[[:space:]]*$//'
+          }
+          RG="rg-$(val organization)-$(val workload)-$(val environment)-connectivity-$(val region_short)-$(val instance)"
+          echo "Connectivity resource group derived from tfvars: $RG"
+
+          if ! az group exists --name "$RG" --subscription "$SUBSCRIPTION_ID" | grep -qi true; then
+            echo "Resource group $RG is not present; nothing to clear."
+            exit 0
           fi
 
-      - name: Render plan
+          for PLS in $(az network private-link-service list -g "$RG" \
+                         --subscription "$SUBSCRIPTION_ID" --query "[].id" -o tsv); do
+            echo "Private Link Service: $(basename "$PLS")"
+            for CONN in $(az network private-endpoint-connection list --id "$PLS" \
+                            --subscription "$SUBSCRIPTION_ID" --query "[].id" -o tsv); do
+              echo "  removing connection $(basename "$CONN")"
+              az network private-endpoint-connection delete --id "$CONN" \
+                --subscription "$SUBSCRIPTION_ID" --yes --only-show-errors -o none
+            done
+          done
+
+          # Azure needs a moment before the service reports zero connections.
+          sleep 20
+
+      # Locking policy:
+      #   save_plan true  - the plan feeds an apply, so it must see a consistent
+      #                     state that nothing else is mutating. Take the lease.
+      #   save_plan false - a report that never writes state. Taking the lease
+      #                     buys nothing and creates real contention: two open
+      #                     pull requests, or a pull request opened during a
+      #                     deploy, would queue on the lease and time out.
+      - name: Create the ${{ inputs.operation }} plan
+        if: steps.backend.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+
+          DESTROY=""
+          if [ "${{ inputs.operation }}" = "destroy" ]; then
+            DESTROY="-destroy"
+          fi
+
+          if [ "${{ inputs.save_plan }}" = "true" ]; then
+            echo "Plan will be applied: acquiring the state lock."
+            terraform plan $DESTROY -lock-timeout=10m -out=tfplan
+          else
+            echo "Review-only plan: running with -lock=false so concurrent runs do not contend."
+            terraform plan $DESTROY -lock=false -out=tfplan
+          fi
+
+      - name: Render the plan for review
         if: steps.backend.outputs.skip != 'true'
         run: terraform show -no-color tfplan > plan.txt
 
-      - name: Summarise plan
+      - name: Publish the plan summary
         if: steps.backend.outputs.skip != 'true'
         run: |
           {
-            echo "### ${{ inputs.environment }} plan"
+            echo "### ${{ inputs.environment }}: ${{ inputs.operation }} plan"
             echo ""
             echo '```'
             grep -E '^(Plan:|No changes|Terraform will perform)' plan.txt || tail -n 5 plan.txt
             echo '```'
+            echo ""
+            echo "Commit \`${{ github.sha }}\` on \`${{ github.ref_name }}\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload plan
-        if: inputs.upload_plan && steps.backend.outputs.skip != 'true'
+      - name: Record run metadata
+        if: always() && steps.backend.outputs.skip != 'true'
+        run: |
+          cat > run-metadata.json <<EOF
+          {
+            "operation": "${{ inputs.operation }}",
+            "environment": "${{ inputs.environment }}",
+            "phase": "plan",
+            "repository": "${{ github.repository }}",
+            "workflow": "${{ github.workflow }}",
+            "run_id": "${{ github.run_id }}",
+            "run_attempt": "${{ github.run_attempt }}",
+            "event": "${{ github.event_name }}",
+            "ref": "${{ github.ref }}",
+            "commit_sha": "${{ github.sha }}",
+            "triggered_by": "${{ github.actor }}",
+            "terraform_version": "${{ env.TERRAFORM_VERSION }}",
+            "recorded_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          EOF
+          cat run-metadata.json
+
+      # The handover artefact. Keyed on run_id so an apply job can only ever pick
+      # up the plan produced by its own run, and short-lived because it is a
+      # working file rather than a record - the durable record is the evidence
+      # bundle the apply job uploads.
+      #
+      # if-no-files-found: error, because an apply job silently finding no plan
+      # is far worse than a plan job failing loudly.
+      - name: Upload the plan for approval
+        if: inputs.save_plan && steps.backend.outputs.skip != 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: tfplan-${{ inputs.environment }}-${{ github.run_id }}
+          name: tfplan-${{ inputs.operation }}-${{ inputs.environment }}-${{ github.run_id }}
           path: |
             environments/${{ inputs.environment }}/tfplan
             environments/${{ inputs.environment }}/plan.txt
+            environments/${{ inputs.environment }}/state-before.txt
+            environments/${{ inputs.environment }}/run-metadata.json
             environments/${{ inputs.environment }}/.terraform.lock.hcl
           retention-days: 5
           if-no-files-found: error
 
-      - name: Upload plan for review only
-        if: ${{ !inputs.upload_plan && steps.backend.outputs.skip != 'true' }}
+      - name: Upload the review evidence bundle
+        if: ${{ !inputs.save_plan && steps.backend.outputs.skip != 'true' }}
         uses: actions/upload-artifact@v7
         with:
-          name: plan-review-${{ inputs.environment }}-${{ github.run_id }}
-          path: environments/${{ inputs.environment }}/plan.txt
+          name: evidence-plan-${{ inputs.environment }}-${{ github.run_id }}
+          path: |
+            environments/${{ inputs.environment }}/plan.txt
+            environments/${{ inputs.environment }}/run-metadata.json
           retention-days: 14
+          if-no-files-found: warn

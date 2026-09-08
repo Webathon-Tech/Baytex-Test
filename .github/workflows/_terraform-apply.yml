@@ -1,17 +1,37 @@
-name: Reusable — Terraform Apply
+name: Reusable - Terraform Apply
 
-# Applies the EXACT binary plan produced by _terraform-plan.yml in the same run.
-# Never re-plans: a re-plan after approval could differ from what was approved.
+# Applies the exact binary plan that _terraform-plan.yml produced earlier in the
+# same run. It never re-plans, because a plan taken after approval could differ
+# from the one that was approved.
 #
-# The job targets the "<env>-apply" GitHub Environment. Attach required reviewers
-# to that environment to gate the apply -- the run pauses here until approved.
+# One workflow covers both directions. A destroy plan is a plan like any other,
+# so "terraform apply tfplan" performs the teardown; only the verification that
+# follows differs (outputs for a deploy, an assertion that state is empty for a
+# destroy).
+#
+# This job runs in the "<env>-apply" GitHub Environment. That is the single place
+# an approval gate belongs: attach required reviewers to <env>-apply and every
+# workflow that mutates that environment - deploy, destroy and bootstrap - pauses
+# here with a reviewable plan already published.
 
 on:
   workflow_call:
     inputs:
       environment:
-        description: Environment name (dev / test / prod)
+        description: Environment to apply to (dev / test / prod).
         required: true
+        type: string
+      operation:
+        description: 'Which plan to consume: "deploy" or "destroy".'
+        required: false
+        default: deploy
+        type: string
+      allowed_refs:
+        description: >-
+          Space-separated ref patterns permitted to apply. Deploys allow the
+          hotfix branches; destroys are restricted to main by the caller.
+        required: false
+        default: refs/heads/main refs/heads/hotfix/*
         type: string
 
 permissions:
@@ -20,7 +40,7 @@ permissions:
 
 jobs:
   apply:
-    name: Apply ${{ inputs.environment }}
+    name: apply
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}-apply
     defaults:
@@ -32,71 +52,78 @@ jobs:
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
       ARM_USE_AZUREAD: "true"
+      TERRAFORM_VERSION: "1.16.1"
       DATABRICKS_TF_ENABLED_PF_RESOURCES: databricks_mws_ncc_private_endpoint_rule
 
     steps:
-      # Applies are restricted to reviewed code. workflow_dispatch lets the
-      # operator pick any branch, and on a Free-plan private repo the GitHub
-      # Environment "deployment branches" rule is unavailable, so without this
-      # anyone with write access could apply an unreviewed branch to prod.
+      # workflow_dispatch lets whoever starts a run pick any branch. Without this
+      # check, anyone with write access could apply unreviewed code to production
+      # by choosing their own branch from the dropdown.
       #
-      # hotfix/* is the deliberate escape hatch: branch from the last known-good
-      # commit, cherry-pick the single fix, and apply that rather than whatever
-      # else has since landed on main. See PIPELINES-EXPLAINED.md, Hotfixes.
+      # The calling workflow enforces the same rule in its preflight job; this
+      # copy protects the reusable workflow from any future caller that forgets.
       #
       # working-directory: . is required. The job default is environments/<env>,
-      # which does not exist until Checkout runs, so without it this step dies on
-      # a missing directory before evaluating the ref at all -- failing for the
-      # right-looking reason but the wrong cause.
-      - name: Restrict applies to main or a hotfix branch
+      # which does not exist until Checkout runs, so without it this step would
+      # die on a missing directory before evaluating the ref at all.
+      - name: Check the branch is allowed to apply
         working-directory: .
+        env:
+          ALLOWED_REFS: ${{ inputs.allowed_refs }}
         run: |
-          REF="${{ github.ref }}"
-          case "$REF" in
-            refs/heads/main|refs/heads/hotfix/*)
-              echo "Applying from $REF" ;;
-            *)
-              echo "::error::Refusing to apply from '$REF'. Applies run from main, or from a hotfix/* branch for emergency fixes."
-              exit 1 ;;
-          esac
+          set -uo pipefail
+          MATCHED=false
+          for pattern in $ALLOWED_REFS; do
+            # $pattern is deliberately unquoted: inside "case" an unquoted value
+            # is treated as a glob, which is what makes refs/heads/hotfix/* work.
+            case "${{ github.ref }}" in
+              $pattern) MATCHED=true; break ;;
+            esac
+          done
 
-      - name: Checkout
+          if [ "$MATCHED" != "true" ]; then
+            echo "::error::Refusing to ${{ inputs.operation }} ${{ inputs.environment }} from '${{ github.ref }}'. Allowed: $ALLOWED_REFS"
+            exit 1
+          fi
+          echo "Ref '${{ github.ref }}' is allowed to ${{ inputs.operation }}."
+
+      - name: Check out the repository
         uses: actions/checkout@v7
 
-      - name: Azure login with OIDC
+      - name: Sign in to Azure with OIDC
         uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Setup Terraform
+      - name: Install Terraform
         uses: hashicorp/setup-terraform@v4
         with:
-          terraform_version: "1.16.1"
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
-      - name: Write environment variables file
+      # TESTING ONLY: read from a repository VARIABLE so its content is visible
+      # in the GitHub UI while the platform is being validated. Switch to the
+      # commented line before any client deployment.
+      - name: Write terraform.tfvars
         env:
-          # TESTING ONLY: TFVARS is read from a repository VARIABLE so its content is
-          # visible in the GitHub UI. GitHub masks secrets in logs automatically and does
-          # NOT mask variables, and this repository is public -- switch back to the line
-          # below before any client deployment.
           # TFVARS: ${{ secrets.TFVARS }}
           TFVARS: ${{ vars.TFVARS }}
         run: |
-          test -n "$TFVARS" || { echo "::error::TFVARS is empty for ${{ inputs.environment }}-apply"; exit 1; }
+          test -n "$TFVARS" || { echo "::error::TFVARS is empty for ${{ inputs.environment }}-apply. Set it on that GitHub Environment - see GITHUB-SETUP.md."; exit 1; }
           printf '%s\n' "$TFVARS" > terraform.tfvars
 
-      # Downloaded BEFORE init so the reviewed lock file governs which provider
-      # versions init selects.
-      - name: Download the approved plan
+      # Downloaded before init on purpose: the artefact carries the
+      # .terraform.lock.hcl the reviewer saw, so init selects those exact
+      # provider versions rather than resolving fresh ones.
+      - name: Download the approved ${{ inputs.operation }} plan
         uses: actions/download-artifact@v8
         with:
-          name: tfplan-${{ inputs.environment }}-${{ github.run_id }}
+          name: tfplan-${{ inputs.operation }}-${{ inputs.environment }}-${{ github.run_id }}
           path: environments/${{ inputs.environment }}
 
-      - name: Terraform init using the reviewed lock file
+      - name: Initialise the Terraform backend using the reviewed lock file
         run: |
           terraform init \
             -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
@@ -105,21 +132,102 @@ jobs:
             -backend-config="key=${{ vars.TF_STATE_KEY }}" \
             -backend-config="use_azuread_auth=true"
 
-      - name: Verify the plan artefact is present
+      # Proves the plan about to be applied is the one this run produced and had
+      # approved, and records its checksum for the evidence bundle.
+      - name: Verify the approved plan artefact
         run: |
-          test -f tfplan || { echo "::error::tfplan missing from artefact"; exit 1; }
-          test -f .terraform.lock.hcl || { echo "::error::lock file missing from artefact"; exit 1; }
+          set -euo pipefail
 
-      - name: Apply the approved plan
-        run: terraform apply -lock-timeout=10m -auto-approve tfplan
+          for f in tfplan plan.txt run-metadata.json .terraform.lock.hcl; do
+            test -f "$f" || { echo "::error::$f is missing from the approved plan artefact"; exit 1; }
+          done
 
-      - name: Export outputs
+          PLAN_SHA=$(jq -r .commit_sha run-metadata.json)
+          PLAN_RUN=$(jq -r .run_id run-metadata.json)
+          if [ "$PLAN_SHA" != "${{ github.sha }}" ]; then
+            echo "::error::The plan was built from commit $PLAN_SHA but this job is running ${{ github.sha }}."
+            exit 1
+          fi
+          if [ "$PLAN_RUN" != "${{ github.run_id }}" ]; then
+            echo "::error::The plan came from run $PLAN_RUN, not this run (${{ github.run_id }})."
+            exit 1
+          fi
+
+          sha256sum tfplan | tee plan-checksum.txt
+          echo "Plan verified: commit $PLAN_SHA, run $PLAN_RUN."
+
+      # A deploy applies the approved plan once. Anything else would mean the
+      # infrastructure did not match what was approved, which is worth failing on.
+      - name: Apply the approved deployment plan
+        if: inputs.operation == 'deploy'
+        run: |
+          set -o pipefail
+          terraform apply -lock-timeout=10m -auto-approve tfplan 2>&1 | tee apply.log
+
+      # A destroy needs more than one pass. Removing the NCC binding and removing
+      # the NCC itself are separate Databricks API calls, and the unbind is not
+      # immediately visible - the delete then fails with "unable to be deleted
+      # because it is attached to one or more workspaces". By the next attempt the
+      # unbind has landed.
+      #
+      # Each retry re-plans, because a partially completed destroy makes the saved
+      # plan stale. That is safe here in a way it would not be for a deploy: the
+      # approved end state of a destroy is unambiguous - nothing left - so a
+      # re-plan cannot drift away from what the approver agreed to.
+      - name: Apply the approved destroy plan
+        if: inputs.operation == 'destroy'
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3; do
+            echo "=== destroy attempt $attempt of 3 ==="
+            if terraform apply -lock-timeout=10m -auto-approve tfplan 2>&1 | tee -a apply.log; then
+              echo "Destroy completed on attempt $attempt."
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::Destroy did not complete after $attempt attempts."
+              exit 1
+            fi
+            echo "Attempt $attempt did not finish; waiting for Databricks and Azure state to settle."
+            sleep 45
+            terraform plan -destroy -lock-timeout=10m -out=tfplan
+          done
+
+      - name: Export Terraform outputs
+        if: inputs.operation == 'deploy'
         run: terraform output -json > outputs.json
 
-      - name: Summarise
+      - name: Record the resources now in state
+        if: always()
+        run: terraform state list > state-after.txt 2>/dev/null || true
+
+      # A destroy that leaves resources behind is a silent problem: the next
+      # deploy collides on names that still exist. -detailed-exitcode returns 0
+      # only when there is genuinely nothing left to do.
+      - name: Verify the environment is fully destroyed
+        if: inputs.operation == 'destroy'
+        run: |
+          set -euo pipefail
+          REMAINING=$(wc -l < state-after.txt)
+          echo "Resources still tracked in state: $REMAINING"
+          if [ "$REMAINING" -ne 0 ]; then
+            cat state-after.txt
+            echo "::error::$REMAINING resource(s) survived the destroy."
+            exit 1
+          fi
+
+          set +e
+          terraform plan -destroy -detailed-exitcode -lock-timeout=10m > /dev/null 2>&1
+          CODE=$?
+          set -e
+          [ "$CODE" -eq 0 ] || { echo "::error::The destroy plan still reports pending changes (exit $CODE)."; exit 1; }
+          echo "Verified: state is empty and no destroy actions remain."
+
+      - name: Publish the deployment summary
+        if: inputs.operation == 'deploy' && success()
         run: |
           {
-            echo "### ${{ inputs.environment }} applied"
+            echo "### ${{ inputs.environment }}: deployed"
             echo ""
             echo "| Output | Value |"
             echo "| --- | --- |"
@@ -127,15 +235,73 @@ jobs:
               v=$(terraform output -raw "$k" 2>/dev/null || echo "-")
               echo "| \`$k\` | \`$v\` |"
             done
+            echo ""
+            echo "Applied commit \`${{ github.sha }}\` from \`${{ github.ref_name }}\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload apply evidence
+      # The hub side of the VNet peering is customer-owned and is not managed by
+      # this Terraform, so it survives the destroy pointing at a VNet that no
+      # longer exists. Left in place it blocks the peering from being recreated
+      # on the next deploy, so the command to remove it is reported here.
+      - name: Report the manual cleanup this workflow cannot perform
+        if: inputs.operation == 'destroy' && success()
+        run: |
+          {
+            echo "### ${{ inputs.environment }}: destroyed"
+            echo ""
+            echo "The state backend was kept, so **Terraform Deploy Platform** can rebuild"
+            echo "this environment without running the bootstrap again."
+            echo ""
+            echo "**Still present, and not owned by this Terraform:** the hub-side VNet"
+            echo "peering. Remove it if the spoke is gone for good, otherwise the next"
+            echo "deploy fails with \`RemotePeeringIsDisconnected\`."
+            echo ""
+            echo '```bash'
+            echo "az network vnet peering delete \\"
+            echo "  --subscription <hub-subscription> \\"
+            echo "  --resource-group <hub-resource-group> \\"
+            echo "  --vnet-name <hub-vnet> \\"
+            echo "  --name peer-hub-to-<spoke-vnet-name>"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record run metadata
+        if: always()
+        run: |
+          cat > run-metadata.json <<EOF
+          {
+            "operation": "${{ inputs.operation }}",
+            "environment": "${{ inputs.environment }}",
+            "phase": "apply",
+            "repository": "${{ github.repository }}",
+            "workflow": "${{ github.workflow }}",
+            "run_id": "${{ github.run_id }}",
+            "run_attempt": "${{ github.run_attempt }}",
+            "event": "${{ github.event_name }}",
+            "ref": "${{ github.ref }}",
+            "commit_sha": "${{ github.sha }}",
+            "triggered_by": "${{ github.actor }}",
+            "terraform_version": "${{ env.TERRAFORM_VERSION }}",
+            "recorded_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          EOF
+          cat run-metadata.json
+
+      # The durable record: 30 days, and uploaded even when the apply failed,
+      # because a failed apply is exactly the run somebody needs to reconstruct.
+      - name: Upload the apply evidence bundle
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: apply-evidence-${{ inputs.environment }}-${{ github.run_id }}
+          name: evidence-${{ inputs.operation }}-${{ inputs.environment }}-${{ github.run_id }}
           path: |
-            environments/${{ inputs.environment }}/outputs.json
             environments/${{ inputs.environment }}/plan.txt
+            environments/${{ inputs.environment }}/apply.log
+            environments/${{ inputs.environment }}/outputs.json
+            environments/${{ inputs.environment }}/state-before.txt
+            environments/${{ inputs.environment }}/state-after.txt
+            environments/${{ inputs.environment }}/plan-checksum.txt
+            environments/${{ inputs.environment }}/run-metadata.json
           retention-days: 30
           if-no-files-found: warn

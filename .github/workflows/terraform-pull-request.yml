@@ -1,21 +1,16 @@
-name: Terraform Plan (PR)
+name: Terraform Pull Request Checks
 
-# Plan-only. Never applies.
+# Everything a reviewer needs before approving a change, in one run. Plan only -
+# this workflow can never apply anything, and holds no path to an apply job.
 #
-# Runs on pull_request ONLY. It previously also ran on push to main, so that a
-# merge left a record of what main implied for each environment -- but that meant
-# every merge re-ran all five checks on code a reviewer had just approved on the
-# pull request itself. Same commit, same result, twice. The pull-request run is
-# the one anybody acts on, so the duplicate was dropped.
+# Runs on pull requests only. A merge does not re-run it: the same commit was
+# already checked on the pull request, and repeating five checks on code that has
+# just been approved teaches people to ignore them.
 #
-# Planning all three environments matters because the roots are separate copies
-# of the same .tf files: a change can be valid for dev and break prod (a name
-# collision, an address that does not fit prod's /20). Planning dev alone would
-# not show it.
-#
-# The plan jobs need validate first. _terraform-plan.yml skips its own validate
-# step when an environment has no state backend, so on an unbootstrapped
-# environment a syntax error would otherwise sail through as a green skip.
+# All three environments are planned, not just dev. The environment roots are
+# separate copies of the same .tf files, so a change can be valid for dev and
+# break prod - a name collision, or an address range that does not fit prod's
+# allocation. Planning dev alone would not show it.
 
 on:
   pull_request:
@@ -23,39 +18,47 @@ on:
       - "environments/**"
       - "modules/**"
       - "bootstrap/**"
-      - ".github/workflows/terraform-*.yml"
-      - ".github/workflows/_terraform-*.yml"
-  workflow_dispatch:
+      - ".github/workflows/**"
 
 permissions:
   contents: read
   id-token: write
 
+# Superseded by a newer push to the same branch. Safe to cancel because nothing
+# here writes state and the plans run with -lock=false.
 concurrency:
-  group: terraform-plan-${{ github.ref }}
+  group: terraform-pull-request-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # fmt + validate. No Azure credentials, no state, a few seconds -- so it runs
-  # first and everything that costs real time waits on it.
+  # Seconds, and no credentials, so it runs first and everything expensive waits
+  # on it. The plan jobs depend on it because a plan against an environment with
+  # no state backend reports a clean skip - without this gate a syntax error
+  # could pass as three green skips.
   validate:
+    name: Validate Terraform code
     uses: ./.github/workflows/_terraform-validate.yml
 
-  # Reports only, never fails. The three environment roots are separate copies of
-  # the same files, so they can drift with nothing to notice. Divergence is
-  # sometimes deliberate, and a hard failure would train people to bypass the
-  # check -- making it visible on every PR is what matters.
+  # Reports, never fails. The three environment roots can drift with nothing to
+  # notice. Divergence is sometimes deliberate, and a hard failure would train
+  # people to work around the check; making it visible on every pull request is
+  # what matters.
   parity:
-    name: Root parity (report only)
+    name: Check environment root parity
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     steps:
-      - name: Checkout
+      - name: Check out the repository
         uses: actions/checkout@v7
 
-      - name: Compare environment roots
+      - name: Compare the dev, test and prod roots
         run: |
           set -uo pipefail
           DIFFS=0
+          : > /tmp/rows.md
+
           {
             echo "### Environment root parity"
             echo ""
@@ -71,7 +74,8 @@ jobs:
               other="environments/$env/$f"
               if [ ! -f "$other" ]; then
                 echo "| \`$f\` | dev vs $env | **missing in $env** |" >> /tmp/rows.md
-                DIFFS=$((DIFFS+1)); continue
+                DIFFS=$((DIFFS+1))
+                continue
               fi
               if ! diff -q "$base" "$other" >/dev/null 2>&1; then
                 echo "| \`$f\` | dev vs $env | **differs** |" >> /tmp/rows.md
@@ -81,7 +85,7 @@ jobs:
           done
 
           if [ "$DIFFS" -eq 0 ]; then
-            echo "All roots identical." >> "$GITHUB_STEP_SUMMARY"
+            echo "All roots are identical." >> "$GITHUB_STEP_SUMMARY"
             echo "Roots are identical."
           else
             {
@@ -89,8 +93,8 @@ jobs:
               echo "| --- | --- | --- |"
               cat /tmp/rows.md
               echo ""
-              echo "> $DIFFS difference(s). This is a **report, not a failure** — divergence"
-              echo "> may be intentional. If it is not, copy the change to the other roots."
+              echo "> $DIFFS difference(s). This is a **report, not a failure** - divergence may"
+              echo "> be intentional. If it is not, copy the change to the other roots."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "$DIFFS difference(s) found:"
             cat /tmp/rows.md
@@ -103,26 +107,34 @@ jobs:
           fi
           exit 0
 
+  # save_plan: false is what makes these review-only. No binary plan is uploaded,
+  # so nothing downstream can apply what is produced here.
   plan-dev:
+    name: Plan dev (review only)
     needs: validate
     uses: ./.github/workflows/_terraform-plan.yml
     with:
       environment: dev
-      upload_plan: false
+      operation: deploy
+      save_plan: false
     secrets: inherit
 
   plan-test:
+    name: Plan test (review only)
     needs: validate
     uses: ./.github/workflows/_terraform-plan.yml
     with:
       environment: test
-      upload_plan: false
+      operation: deploy
+      save_plan: false
     secrets: inherit
 
   plan-prod:
+    name: Plan prod (review only)
     needs: validate
     uses: ./.github/workflows/_terraform-plan.yml
     with:
       environment: prod
-      upload_plan: false
+      operation: deploy
+      save_plan: false
     secrets: inherit

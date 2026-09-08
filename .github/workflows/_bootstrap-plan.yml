@@ -1,0 +1,264 @@
+name: Reusable - Bootstrap Plan
+
+# Plans the Azure Blob state backend for one environment.
+#
+# This root is unlike the platform roots in one important way: the storage
+# account it manages HOLDS THE STATE FOR EVERY ENVIRONMENT. A change that forced
+# replacement of that account would destroy the state it is tracked in. That is
+# why the bootstrap has the same gated plan/apply split as a deployment - a
+# reviewer must see the plan before anything is applied.
+#
+# There is also a chicken-and-egg problem: Terraform cannot keep state in a
+# storage account that does not exist yet. The first run therefore works with
+# local state, creates the account, and migrates. Later runs go straight to the
+# remote backend. Which of those applies is decided here and passed to the apply
+# job in the artefact, so the apply performs exactly the sequence that was
+# reviewed.
+#
+# The decision looks at the STATE BLOB, not just the storage account. If an
+# earlier run created the account but stopped before migrating, checking only the
+# account would take the "remote" path against an empty backend, and Terraform
+# would then try to create a storage account whose name is already taken.
+# Importing recovers from that cleanly.
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: Environment whose state backend is being planned (dev / test / prod).
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}-plan
+    defaults:
+      run:
+        shell: bash
+        working-directory: bootstrap/state
+
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      ARM_USE_AZUREAD: "true"
+      TERRAFORM_VERSION: "1.16.1"
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      # Runs before terraform.tfvars is written, so the formatting gate reports
+      # on repository code rather than on the content of a GitHub variable.
+      - name: Check Terraform formatting
+        working-directory: .
+        run: terraform fmt -check -recursive
+
+      # The whole variables file for this environment's backend. Nothing about
+      # the environment - not the region, not the account name - is hardcoded in
+      # this workflow.
+      #
+      # TESTING ONLY: read from a repository VARIABLE so its content is visible
+      # in the GitHub UI while the platform is being validated. Switch to the
+      # commented line before any client deployment.
+      - name: Write terraform.tfvars
+        env:
+          # BOOTSTRAP_TFVARS: ${{ secrets.BOOTSTRAP_TFVARS }}
+          BOOTSTRAP_TFVARS: ${{ vars.BOOTSTRAP_TFVARS }}
+        run: |
+          test -n "$BOOTSTRAP_TFVARS" || { echo "::error::BOOTSTRAP_TFVARS is empty for ${{ inputs.environment }}. Set it on that GitHub Environment - see GITHUB-SETUP.md."; exit 1; }
+          printf '%s\n' "$BOOTSTRAP_TFVARS" > terraform.tfvars
+          terraform fmt terraform.tfvars
+
+      # This root is configured from two independent places: BOOTSTRAP_TFVARS
+      # describes the resources Terraform will CREATE, and TF_STATE_* describes
+      # the backend every workflow READS AND WRITES. They name the same storage
+      # account, so they can drift - and if they do, this pipeline creates one
+      # storage account and then stores its state in a different one.
+      - name: Check the variables agree with the backend configuration
+        env:
+          STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+          STATE_SA: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+          STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
+        run: |
+          set -euo pipefail
+          val () {
+            grep -E "^[[:space:]]*$1[[:space:]]*=" terraform.tfvars \
+              | head -1 | sed 's/.*=[[:space:]]*//; s/^"//; s/"[[:space:]]*$//'
+          }
+          FAIL=0
+          check () {
+            if [ "$2" != "$3" ]; then
+              echo "::error::$1 mismatch - BOOTSTRAP_TFVARS says '$2', TF_STATE_* says '$3'"
+              FAIL=1
+            else
+              printf '  %-22s %s\n' "$1" "$2"
+            fi
+          }
+          check resource_group_name  "$(val resource_group_name)"  "$STATE_RG"
+          check storage_account_name "$(val storage_account_name)" "$STATE_SA"
+          check container_name       "$(val container_name)"       "$STATE_CONTAINER"
+          [ "$FAIL" -eq 0 ] || { echo "::error::Fix the variables on this GitHub Environment before bootstrapping - see GITHUB-SETUP.md."; exit 1; }
+          echo "The variables file and the backend variables agree."
+
+      - name: Determine what already exists
+        id: probe
+        env:
+          STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+          STATE_SA: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+          STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
+        run: |
+          set -euo pipefail
+          STATE_KEY="bootstrap/${{ inputs.environment }}.tfstate"
+
+          ACCOUNT_EXISTS=false
+          if az storage account show --name "$STATE_SA" --resource-group "$STATE_RG" \
+               --only-show-errors >/dev/null 2>&1; then
+            ACCOUNT_EXISTS=true
+          fi
+
+          BLOB_EXISTS=false
+          if [ "$ACCOUNT_EXISTS" = "true" ]; then
+            if az storage blob exists --account-name "$STATE_SA" --container-name "$STATE_CONTAINER" \
+                 --name "$STATE_KEY" --auth-mode login --only-show-errors \
+                 --query exists -o tsv 2>/dev/null | grep -qi true; then
+              BLOB_EXISTS=true
+            fi
+          fi
+
+          # remote - the backend exists and this root's state is in it. The real
+          #          state is at stake, so the plan below is the one that matters.
+          # import - the account exists but nothing tracks it. The apply job
+          #          imports it into state before applying.
+          # create - nothing exists, so there is no state to lose.
+          if   [ "$BLOB_EXISTS" = "true" ];    then MODE=remote
+          elif [ "$ACCOUNT_EXISTS" = "true" ]; then MODE=import
+          else                                      MODE=create
+          fi
+
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "state_key=$STATE_KEY" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$MODE" > mode.txt
+          printf '%s\n' "$STATE_KEY" > state_key.txt
+
+          printf '  %-24s %s\n' "Storage account exists:" "$ACCOUNT_EXISTS"
+          printf '  %-24s %s\n' "State blob exists:"      "$BLOB_EXISTS"
+          printf '  %-24s %s\n' "Mode:"                   "$MODE"
+
+      - name: Initialise against the existing backend
+        if: steps.probe.outputs.mode == 'remote'
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ vars.TF_STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ vars.TF_STATE_CONTAINER }}" \
+            -backend-config="key=${{ steps.probe.outputs.state_key }}" \
+            -backend-config="use_azuread_auth=true"
+
+      # The backend block has to be moved aside rather than left uninitialised.
+      # "terraform init -backend=false" skips backend setup, but the azurerm block
+      # is still declared and plan then refuses with "Backend initialization
+      # required". Moving the file out of the root is the only way to plan with
+      # purely local state.
+      - name: Move the backend block aside for the local-state plan
+        if: steps.probe.outputs.mode != 'remote'
+        run: mv backend.tf ../backend.tf.disabled
+
+      - name: Initialise with local state
+        if: steps.probe.outputs.mode != 'remote'
+        run: terraform init
+
+      - name: Create the state backend plan
+        run: |
+          set -euo pipefail
+          terraform plan -lock-timeout=10m -out=bootstrap.tfplan
+          terraform show -no-color bootstrap.tfplan > plan.txt
+          grep -E '^(Plan:|No changes)' plan.txt || true
+
+      # The reason the split exists: put the numbers in front of the approver,
+      # and say plainly when something is being replaced or removed.
+      - name: Publish the plan summary for the approver
+        run: |
+          MODE="${{ steps.probe.outputs.mode }}"
+          {
+            echo "### ${{ inputs.environment }} state backend: plan (mode \`$MODE\`)"
+            echo ""
+            echo '```'
+            grep -E '^(Plan:|No changes)' plan.txt || tail -n 3 plan.txt
+            echo '```'
+            echo ""
+            if grep -qE 'must be replaced|will be destroyed' plan.txt; then
+              echo "> **Stop and read the plan.** This changes or removes the storage account"
+              echo "> that holds Terraform state for this environment. Approving it can destroy"
+              echo "> the state file. Confirm this is intended before approving."
+              echo ""
+              grep -E '^  # .*(must be replaced|will be destroyed)' plan.txt | sed 's/^/    /'
+            else
+              echo "No replacements or destroys in this plan."
+            fi
+            if [ "$MODE" = "import" ]; then
+              echo ""
+              echo "> Mode \`import\`: the storage account exists but nothing tracks it. The"
+              echo "> apply job imports the resource group, account and container into state"
+              echo "> first, then applies. The plan above is pre-import, so it shows creates"
+              echo "> for resources that already exist - that is expected."
+            fi
+            echo ""
+            echo "Commit \`${{ github.sha }}\` on \`${{ github.ref_name }}\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record run metadata
+        if: always()
+        run: |
+          cat > run-metadata.json <<EOF
+          {
+            "operation": "bootstrap",
+            "environment": "${{ inputs.environment }}",
+            "phase": "plan",
+            "mode": "${{ steps.probe.outputs.mode }}",
+            "repository": "${{ github.repository }}",
+            "workflow": "${{ github.workflow }}",
+            "run_id": "${{ github.run_id }}",
+            "run_attempt": "${{ github.run_attempt }}",
+            "event": "${{ github.event_name }}",
+            "ref": "${{ github.ref }}",
+            "commit_sha": "${{ github.sha }}",
+            "triggered_by": "${{ github.actor }}",
+            "terraform_version": "${{ env.TERRAFORM_VERSION }}",
+            "recorded_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          EOF
+          cat run-metadata.json
+
+      - name: Upload the plan for approval
+        uses: actions/upload-artifact@v7
+        with:
+          name: tfplan-bootstrap-${{ inputs.environment }}-${{ github.run_id }}
+          path: |
+            bootstrap/state/bootstrap.tfplan
+            bootstrap/state/plan.txt
+            bootstrap/state/mode.txt
+            bootstrap/state/state_key.txt
+            bootstrap/state/run-metadata.json
+            bootstrap/state/.terraform.lock.hcl
+          retention-days: 5
+          if-no-files-found: error

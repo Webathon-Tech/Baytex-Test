@@ -1,0 +1,133 @@
+name: Terraform Bootstrap State Backend
+
+# Creates the Azure Blob backend that every other workflow keeps its state in,
+# then moves this root's own state into it.
+#
+# This is the first workflow ever run for an environment. Until it has completed,
+# Terraform Deploy Platform has nowhere to store state and will refuse to run.
+#
+# Structured as plan then apply, like every other mutating workflow, because this
+# is the one root where a careless change is unrecoverable: the storage account
+# it manages holds the state for every environment. A reviewer must see the plan
+# before anything is applied.
+#
+# Re-running is safe. The plan job detects what already exists and records the
+# mode in the artefact, so the apply performs exactly the sequence that was
+# reviewed:
+#
+#   create   nothing exists yet
+#   import   the storage account exists but nothing tracks it
+#   remote   the backend exists and its state is already in it (a no-op re-run)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dev:
+        description: dev
+        type: boolean
+        default: true
+      test:
+        description: test
+        type: boolean
+        default: false
+      prod:
+        description: prod
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+# One group for the whole workflow. Two overlapping bootstrap runs would contend
+# for the same state, and the selection is a set of checkboxes so there is no
+# single environment name to key on.
+concurrency:
+  group: terraform-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Check the run is allowed
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      environments: ${{ steps.resolve.outputs.environments }}
+      selected: ${{ steps.resolve.outputs.selected }}
+    steps:
+      # This workflow applies Terraform, so it carries the same branch rule as a
+      # deployment.
+      - name: Check the branch is allowed to bootstrap
+        run: |
+          case "${{ github.ref }}" in
+            refs/heads/main|refs/heads/hotfix/*)
+              echo "Bootstrapping from ${{ github.ref }}" ;;
+            *)
+              echo "::error::Refusing to bootstrap from '${{ github.ref }}'. This workflow applies Terraform; it runs from main, or from a hotfix/* branch."
+              exit 1 ;;
+          esac
+
+      # The order is fixed dev,test,prod so the matrix legs always appear in a
+      # predictable order.
+      - name: Resolve the selected environments
+        id: resolve
+        run: |
+          set -euo pipefail
+          SELECTED=""
+          add () { if [ -z "$SELECTED" ]; then SELECTED="$1"; else SELECTED="$SELECTED,$1"; fi; }
+          [ "${{ inputs.dev }}"  = "true" ] && add dev
+          [ "${{ inputs.test }}" = "true" ] && add test
+          [ "${{ inputs.prod }}" = "true" ] && add prod
+
+          if [ -z "$SELECTED" ]; then
+            echo "::error::No environment selected. Tick at least one of dev, test or prod."
+            exit 1
+          fi
+
+          JSON="[\"$(printf '%s' "$SELECTED" | sed 's/,/","/g')\"]"
+          echo "environments=$JSON" >> "$GITHUB_OUTPUT"
+          echo "selected=$SELECTED" >> "$GITHUB_OUTPUT"
+          echo "Selected environments: $SELECTED  ->  $JSON"
+
+          {
+            echo "### Bootstrap requested"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Environments | \`$SELECTED\` |"
+            echo "| Branch | \`${{ github.ref_name }}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Requested by | @${{ github.actor }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Environments are independent - each gets its own resource group, storage
+  # account and state file - so one failing does not abandon the others.
+  plan:
+    name: Plan ${{ matrix.environment }} state backend
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ fromJSON(needs.preflight.outputs.environments) }}
+    uses: ./.github/workflows/_bootstrap-plan.yml
+    with:
+      environment: ${{ matrix.environment }}
+    secrets: inherit
+
+  # Apply legs wait for every plan leg; GitHub does not pair matrix legs across
+  # jobs. A bootstrap that partially failed is recoverable by re-running, so
+  # stopping cleanly costs nothing.
+  apply:
+    name: Apply ${{ matrix.environment }} state backend
+    needs: [preflight, plan]
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ fromJSON(needs.preflight.outputs.environments) }}
+    uses: ./.github/workflows/_bootstrap-apply.yml
+    with:
+      environment: ${{ matrix.environment }}
+      allowed_refs: refs/heads/main refs/heads/hotfix/*
+    secrets: inherit
