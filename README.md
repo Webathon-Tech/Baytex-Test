@@ -95,10 +95,6 @@ The three environment roots hold **identical `.tf` files**; only the variables
 differ, and those live in GitHub rather than in git. The pull-request checks
 report any drift between them.
 
-`sandbox/` is rehearsal scaffolding — a mock hub and on-premises simulator used
-to exercise the platform without the real Baytex network. It is the one thing
-built from a laptop, and it never ships to a client.
-
 ## Getting started
 
 1. Complete **[GITHUB-SETUP.md](GITHUB-SETUP.md)** — service principals,

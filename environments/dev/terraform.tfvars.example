@@ -21,22 +21,23 @@ data_classification = "Internal"
 # ==========================================================================
 # ADDRESS SPACE -- MUST BE CONFIRMED BY BAYTEX IPAM BEFORE APPLY
 # ==========================================================================
-# These values were CORRECTED. A previous revision proposed 10.40.80.0/20,
-# which the current-state network diagram allocates to *OT Production*
-# (vnet-bte-ot-prod-cnc-01). The overlap was exact and would have collided
-# with live OT subnets:
-#     10.40.80.0/24 = subnet-bte-ot-prod-cnc_mgmt
-#     10.40.81.0/24 = subnet-bte-ot-prod-cnc_apps
-#     10.40.82.0/24 = subnet-bte-ot-prod-cnc_pep
-#
-# This platform belongs in the Data Non-Prod landing zone, 10.40.64.0/20,
-# whose currently free ranges are 10.40.67.0-10.40.76.255 and
-# 10.40.78.0-10.40.79.255 (in use: .64/24 bi, .65/24 apps, .66/24 pep,
-# .77.0/25 + .77.128/25 existing Databricks).
+# This platform belongs in the Data Non-Prod landing zone, 10.40.64.0/20.
+# Within it, these ranges are already in use:
+#     10.40.64.0/24                  bi
+#     10.40.65.0/24                  apps
+#     10.40.66.0/24                  pep
+#     10.40.77.0/25, 10.40.77.128/25 existing Databricks
+# leaving 10.40.67.0-10.40.76.255 and 10.40.78.0-10.40.79.255 free.
 #
 # 10.40.68.0/22 sits entirely within that free space and holds all four
-# subnets. It remains a PROPOSAL -- see docs/pre-deployment-checklist.md,
-# "DEV CIDRs approved by IPAM/networking", and ARCHITECTURE.md section 1.3.
+# subnets below.
+#
+# Do NOT use 10.40.80.0/20: the network diagram allocates it to OT Production
+# (vnet-bte-ot-prod-cnc-01), and it would collide exactly with the live OT
+# subnets at 10.40.80.0/24, 10.40.81.0/24 and 10.40.82.0/24.
+#
+# These remain a PROPOSAL until IPAM confirms them -- see
+# docs/pre-deployment-checklist.md, "DEV CIDRs approved by IPAM/networking".
 vnet_cidr                        = "10.40.68.0/22"
 databricks_host_subnet_cidr      = "10.40.68.0/24"
 databricks_container_subnet_cidr = "10.40.69.0/24"

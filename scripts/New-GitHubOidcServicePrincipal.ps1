@@ -23,13 +23,21 @@
 .PARAMETER SubscriptionId
     Subscription this environment deploys into, and the scope for role assignments.
 
+.PARAMETER GitHubOrg
+    GitHub organisation that owns the repository. Forms part of both federated
+    credential subjects, so it must match exactly.
+
+.PARAMETER GitHubRepo
+    Repository name. Forms part of both federated credential subjects.
+
 .PARAMETER UseOwnerRole
     Assign Owner instead of Contributor + User Access Administrator. Simpler but
     broader; the default split is the least privilege that still works.
 
 .EXAMPLE
     .\New-GitHubOidcServicePrincipal.ps1 -Environment dev `
-        -SubscriptionId 6a3bb170-5159-4bff-860b-aa74fb762697
+        -SubscriptionId 00000000-0000-0000-0000-000000000000 `
+        -GitHubOrg <organisation> -GitHubRepo <repository>
 
 .NOTES
     Idempotent: re-running reuses the existing app, service principal, federated
@@ -47,9 +55,11 @@ param(
     [Parameter(Mandatory)]
     [string]$SubscriptionId,
 
-    [string]$GitHubOrg = 'Webathon-Tech',
+    [Parameter(Mandatory)]
+    [string]$GitHubOrg,
 
-    [string]$GitHubRepo = 'Baytex-Test',
+    [Parameter(Mandatory)]
+    [string]$GitHubRepo,
 
     [string]$NamePrefix = 'sp-bte-dbx',
 
