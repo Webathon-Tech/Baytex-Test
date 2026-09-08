@@ -16,12 +16,6 @@ resource "azurerm_storage_account" "this" {
   tags                              = var.tags
 
   blob_properties {
-    # Blob versioning and change feed are NOT supported on accounts with a
-    # hierarchical namespace, which ADLS Gen2 requires (is_hns_enabled above).
-    # Setting either to true makes the account impossible to create:
-    #   "`versioning_enabled` can't be true when `is_hns_enabled` is true"
-    # Soft delete for blobs and containers IS supported with HNS, so data
-    # protection comes from the two retention policies below.
     versioning_enabled  = false
     change_feed_enabled = false
 

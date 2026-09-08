@@ -64,7 +64,66 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v7
 
+      # Runs before the Azure sign-in, because that is what breaks first. An
+      # environment whose service principal does not exist yet has no
+      # AZURE_CLIENT_ID, and azure/login then fails with an authentication error
+      # that says nothing about the real cause.
+      #
+      # test and prod are normally configured later than dev - their service
+      # principals are created only once dev has been verified - so a
+      # pull-request plan for them has to report "not configured yet" rather than
+      # a red failure that people learn to ignore.
+      #
+      # A deploy or destroy still fails here: those name an environment
+      # explicitly, so missing configuration is a genuine error, not a state to
+      # skip past.
+      - name: Check the environment is configured
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+          STATE_SA: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+          STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
+          STATE_KEY: ${{ vars.TF_STATE_KEY }}
+        run: |
+          set -uo pipefail
+          MISSING=""
+          need () { [ -n "${2:-}" ] || MISSING="$MISSING $1"; }
+          need AZURE_CLIENT_ID          "${AZURE_CLIENT_ID:-}"
+          need AZURE_TENANT_ID          "${AZURE_TENANT_ID:-}"
+          need AZURE_SUBSCRIPTION_ID    "${AZURE_SUBSCRIPTION_ID:-}"
+          need TF_STATE_RESOURCE_GROUP  "${STATE_RG:-}"
+          need TF_STATE_STORAGE_ACCOUNT "${STATE_SA:-}"
+          need TF_STATE_CONTAINER       "${STATE_CONTAINER:-}"
+          need TF_STATE_KEY             "${STATE_KEY:-}"
+
+          if [ -z "$MISSING" ]; then
+            echo "Environment ${{ inputs.environment }} is configured."
+            exit 0
+          fi
+
+          if [ "${{ inputs.save_plan }}" = "true" ]; then
+            echo "::error::Environment '${{ inputs.environment }}' is not configured. Missing:$MISSING. Create its service principal and set these variables on the ${{ inputs.environment }}-plan and ${{ inputs.environment }}-apply GitHub Environments - see GITHUB-SETUP.md."
+            exit 1
+          fi
+
+          echo "SKIP=true" >> "$GITHUB_ENV"
+          echo "::notice::Skipping ${{ inputs.environment }} - not configured yet (missing:$MISSING)."
+          {
+            echo "### ${{ inputs.environment }}: not configured yet"
+            echo ""
+            echo "No plan was produced: this environment has no deployment identity."
+            echo ""
+            echo "Missing variables:"
+            for v in $MISSING; do echo "- \`$v\`"; done
+            echo ""
+            echo "Expected until the service principal for \`${{ inputs.environment }}\` is created."
+            echo "See GITHUB-SETUP.md."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Sign in to Azure with OIDC
+        if: env.SKIP != 'true'
         uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -72,6 +131,7 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Install Terraform
+        if: env.SKIP != 'true'
         uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
@@ -82,6 +142,7 @@ jobs:
       # first would make this gate report on the content of a GitHub variable
       # instead of on repository code.
       - name: Check Terraform formatting
+        if: env.SKIP != 'true'
         working-directory: .
         run: terraform fmt -check -recursive
 
@@ -96,7 +157,7 @@ jobs:
       #                     red check on every pull request, which teaches people
       #                     to ignore it. Skip and say so instead.
       - name: Check the state backend exists
-        id: backend
+        if: env.SKIP != 'true'
         working-directory: .
         env:
           STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
@@ -115,17 +176,15 @@ jobs:
           echo "State backend for ${{ inputs.environment }}: $STATE_SA/$STATE_CONTAINER in $STATE_RG -> exists=$EXISTS"
 
           if [ "$EXISTS" = "true" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           if [ "${{ inputs.save_plan }}" = "true" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "::error::No Terraform state backend for '${{ inputs.environment }}' (looked for $STATE_SA/$STATE_CONTAINER in $STATE_RG). Run 'Terraform Bootstrap State Backend' for this environment first."
             exit 1
           fi
 
-          echo "skip=true" >> "$GITHUB_OUTPUT"
+          echo "SKIP=true" >> "$GITHUB_ENV"
           echo "::notice::Skipping ${{ inputs.environment }} - it has no state backend yet."
           {
             echo "### ${{ inputs.environment }}: skipped"
@@ -144,7 +203,7 @@ jobs:
       # commented line before any client deployment - GitHub masks secrets in
       # logs and does not mask variables.
       - name: Write terraform.tfvars
-        if: steps.backend.outputs.skip != 'true'
+        if: env.SKIP != 'true'
         env:
           # TFVARS: ${{ secrets.TFVARS }}
           TFVARS: ${{ vars.TFVARS }}
@@ -156,7 +215,7 @@ jobs:
       # principal via its Storage Blob Data Contributor role. No storage account
       # key is fetched, stored, or passed to Terraform.
       - name: Initialise the Terraform backend
-        if: steps.backend.outputs.skip != 'true'
+        if: env.SKIP != 'true'
         run: |
           terraform init \
             -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
@@ -166,13 +225,13 @@ jobs:
             -backend-config="use_azuread_auth=true"
 
       - name: Validate the configuration
-        if: steps.backend.outputs.skip != 'true'
+        if: env.SKIP != 'true'
         run: terraform validate
 
       # Recorded before anything is torn down, so the evidence bundle shows what
       # the environment contained at the moment the destroy was planned.
       - name: Record the resources that exist before destroying
-        if: inputs.operation == 'destroy' && steps.backend.outputs.skip != 'true'
+        if: inputs.operation == 'destroy' && env.SKIP != 'true'
         run: |
           terraform state list > state-before.txt || true
           echo "Resources currently tracked: $(wc -l < state-before.txt)"
@@ -195,7 +254,7 @@ jobs:
       # no-op when there is nothing to clear, and runs before the plan so the
       # plan reflects the cleared state.
       - name: Clear private endpoint connections from Private Link Services
-        if: inputs.operation == 'destroy' && steps.backend.outputs.skip != 'true'
+        if: inputs.operation == 'destroy' && env.SKIP != 'true'
         env:
           SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         run: |
@@ -238,7 +297,7 @@ jobs:
       #                     pull requests, or a pull request opened during a
       #                     deploy, would queue on the lease and time out.
       - name: Create the ${{ inputs.operation }} plan
-        if: steps.backend.outputs.skip != 'true'
+        if: env.SKIP != 'true'
         run: |
           set -euo pipefail
 
@@ -256,11 +315,11 @@ jobs:
           fi
 
       - name: Render the plan for review
-        if: steps.backend.outputs.skip != 'true'
+        if: env.SKIP != 'true'
         run: terraform show -no-color tfplan > plan.txt
 
       - name: Publish the plan summary
-        if: steps.backend.outputs.skip != 'true'
+        if: env.SKIP != 'true'
         run: |
           {
             echo "### ${{ inputs.environment }}: ${{ inputs.operation }} plan"
@@ -271,7 +330,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Record run metadata
-        if: always() && steps.backend.outputs.skip != 'true'
+        if: always() && env.SKIP != 'true'
         run: |
           cat > run-metadata.json <<EOF
           {
@@ -301,7 +360,7 @@ jobs:
       # if-no-files-found: error, because an apply job silently finding no plan
       # is far worse than a plan job failing loudly.
       - name: Upload the plan for approval
-        if: inputs.save_plan && steps.backend.outputs.skip != 'true'
+        if: inputs.save_plan && env.SKIP != 'true'
         uses: actions/upload-artifact@v7
         with:
           name: tfplan-${{ inputs.operation }}-${{ inputs.environment }}-${{ github.run_id }}
@@ -315,7 +374,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload the review evidence bundle
-        if: ${{ !inputs.save_plan && steps.backend.outputs.skip != 'true' }}
+        if: ${{ !inputs.save_plan && env.SKIP != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: evidence-plan-${{ inputs.environment }}-${{ github.run_id }}
