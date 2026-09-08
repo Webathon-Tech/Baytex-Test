@@ -179,16 +179,22 @@ jobs:
         run: |
           set -uo pipefail
           for attempt in 1 2 3; do
-            echo "=== destroy attempt $attempt of 3 ==="
+            # Written into apply.log as well as the job log, so the evidence
+            # bundle shows on its own that a retry happened. Without this the
+            # artefact ends on the LAST attempt's summary - "1 destroyed" after
+            # an earlier error - which reads like a failure rather than a
+            # recovery.
+            echo "=== destroy attempt $attempt of 3 ===" | tee -a apply.log
             if terraform apply -lock-timeout=10m -auto-approve tfplan 2>&1 | tee -a apply.log; then
-              echo "Destroy completed on attempt $attempt."
+              echo "Destroy completed on attempt $attempt." | tee -a apply.log
               exit 0
             fi
             if [ "$attempt" -eq 3 ]; then
               echo "::error::Destroy did not complete after $attempt attempts."
+              echo "Destroy FAILED after $attempt attempts." | tee -a apply.log
               exit 1
             fi
-            echo "Attempt $attempt did not finish; waiting for Databricks and Azure state to settle."
+            echo "Attempt $attempt did not finish; waiting for Databricks and Azure state to settle." | tee -a apply.log
             sleep 45
             terraform plan -destroy -lock-timeout=10m -out=tfplan
           done
