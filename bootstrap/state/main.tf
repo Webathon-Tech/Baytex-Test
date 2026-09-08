@@ -13,22 +13,17 @@ resource "azurerm_storage_account" "state" {
   account_kind                  = "StorageV2"
   min_tls_version               = "TLS1_2"
   public_network_access_enabled = true
-  # Must stay true. The blob_properties block below is a DATA-PLANE setting, and
-  # the azurerm provider in this root reaches the blob endpoint with a shared
-  # account key. Setting this to false makes the account impossible to manage:
-  #   Error: encoding Storage Account (...): executing request: unexpected
-  #   status 403 (403 Key based authentication is not permitted on this storage
-  #   account.) with KeyBasedAuthenticationNotPermitted
+  # Entra-only. No shared account key exists to be leaked or rotated, and every
+  # path to this account authenticates as the service principal through its
+  # Storage Blob Data Contributor role: the Terraform backend with
+  # use_azuread_auth=true, the az CLI probes with --auth-mode login, and the
+  # provider itself with storage_use_azuread (set in versions.tf).
   #
-  # The environment roots avoid this by setting storage_use_azuread = true on
-  # their azurerm provider, which routes data-plane calls through Entra. This
-  # root does not set it, so the key path is the only one available here.
-  #
-  # Access to the state itself is Entra-only regardless: the Terraform backend
-  # uses use_azuread_auth=true and the az CLI probes use --auth-mode login, both
-  # as the service principal via its Storage Blob Data Contributor role. No
-  # pipeline ever reads or passes the account key.
-  shared_access_key_enabled        = true
+  # storage_use_azuread in versions.tf is what makes this possible. Without it
+  # the provider calls ListKeys to build its data-plane client and fails with
+  # "403 Key based authentication is not permitted on this storage account".
+  # Do not remove one without the other.
+  shared_access_key_enabled        = false
   default_to_oauth_authentication  = true
   allow_nested_items_to_be_public  = false
   cross_tenant_replication_enabled = false
