@@ -39,17 +39,22 @@ rotate, store, or leak.
 ```powershell
 cd scripts
 
-.\New-GitHubOidcServicePrincipal.ps1 -Environment dev  -SubscriptionId <dev-subscription-id>
-.\New-GitHubOidcServicePrincipal.ps1 -Environment test -SubscriptionId <test-subscription-id>
-.\New-GitHubOidcServicePrincipal.ps1 -Environment prod -SubscriptionId <prod-subscription-id>
+$org  = '<github-organisation>'
+$repo = '<github-repository>'
+
+.\New-GitHubOidcServicePrincipal.ps1 -Environment dev  -SubscriptionId <dev-subscription-id>  -GitHubOrg $org -GitHubRepo $repo
+.\New-GitHubOidcServicePrincipal.ps1 -Environment test -SubscriptionId <test-subscription-id> -GitHubOrg $org -GitHubRepo $repo
+.\New-GitHubOidcServicePrincipal.ps1 -Environment prod -SubscriptionId <prod-subscription-id> -GitHubOrg $org -GitHubRepo $repo
 ```
 
-Other parameters, all optional:
+`-GitHubOrg` and `-GitHubRepo` are required and must match the repository
+exactly — they form part of both federated credential subjects, and a mismatch
+produces an authentication failure at run time rather than an error here.
+
+Optional parameters:
 
 | Parameter | Default | Purpose |
 | --- | --- | --- |
-| `-GitHubOrg` | `Webathon-Tech` | Organisation that owns the repository |
-| `-GitHubRepo` | `Baytex-Test` | Repository name |
 | `-NamePrefix` | `sp-bte-dbx` | App registration name prefix |
 | `-UseOwnerRole` | off | Assign `Owner` instead of the least-privilege split below |
 

@@ -15,17 +15,23 @@ backend.hcl
 # Saved plans and rendered plan output
 *.tfplan
 tfplan
-dev-plan.txt
+plan.txt
+*-plan.txt
 
 # Generated handoff / validation artefacts
 handoff/
-dev-outputs.json
+outputs.json
+*-outputs.json
+run-metadata.json
+state-before.txt
+state-after.txt
+state-list.txt
+apply.log
+plan-checksum.txt
 connectivity-test-results.json
 
-# Rehearsal scaffolding: used locally to build the mock on-prem hub,
-# never part of the client deliverable. Kept on disk, not in git.
+# Local-only scaffolding, never part of the deliverable.
 sandbox/
 
-# Client network diagram (binary) and a stale release manifest.
+# Network diagrams (binary)
 *.vsdx
-SHA256SUMS.txt
