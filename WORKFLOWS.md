@@ -310,6 +310,7 @@ Download artefacts from the bottom of any run's summary page.
 | `The plan came from run N, not this run` | An apply was fed a plan from a different run | Start a fresh run; do not re-run a single job |
 | Plan shows the workspace **must be replaced** | Usually a change that forces replacement | **Do not approve.** Investigate first — this destroys and recreates the workspace |
 | `RemotePeeringIsDisconnected` on deploy | A stale hub-side peering from an earlier destroy | Delete the hub-side peering (command is in the destroy run's summary), then re-run |
+| Destroy log shows `cannot delete mws network connectivity config ... attached to one or more workspaces`, then succeeds | **Normal.** Unbinding the NCC and deleting it are separate Databricks calls, and the unbind is not immediately visible | Nothing. The apply retries automatically and typically completes on attempt 2. `apply.log` records each attempt |
 | `Error acquiring the state lock` | Another run holds it | Wait — runs queue by design. If a run was killed mid-apply, the lock may need clearing manually |
 | A run is queued behind another | Deploy and Destroy share a concurrency group | Expected. It will start when the other finishes |
 
