@@ -1,9 +1,8 @@
 # Architecture and Ownership Boundaries
 
-> This page is the **ownership summary**. For the full architecture — why each
-> component exists, detailed traffic flows, and design rationale — see
-> [ARCHITECTURE.md](../ARCHITECTURE.md). For how the Terraform itself works, see
-> [TERRAFORM-EXPLAINED.md](../TERRAFORM-EXPLAINED.md).
+> This page is the **ownership summary**. For what the platform builds and the
+> design choices behind it, see [README.md](../README.md). For how the pipelines
+> deploy it, see [WORKFLOWS.md](../WORKFLOWS.md).
 
 ## Target flow
 

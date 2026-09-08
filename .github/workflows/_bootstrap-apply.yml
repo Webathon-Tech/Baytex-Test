@@ -1,0 +1,332 @@
+name: Reusable - Bootstrap Apply
+
+# Applies the state backend plan approved by _bootstrap-plan.yml, then moves this
+# root's own state into the backend it has just created.
+#
+# Runs in the "<env>-apply" GitHub Environment, so required reviewers attached
+# there gate the creation of the state backend exactly as they gate a deployment.
+#
+# The sequence is decided by the mode recorded in the approved artefact, never
+# re-detected here - the reviewer approved a specific plan built for a specific
+# mode, and re-probing could silently take a different path.
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: Environment whose state backend is being created (dev / test / prod).
+        required: true
+        type: string
+      allowed_refs:
+        description: Space-separated ref patterns permitted to bootstrap.
+        required: false
+        default: refs/heads/main refs/heads/hotfix/*
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  apply:
+    name: apply
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}-apply
+    defaults:
+      run:
+        shell: bash
+        working-directory: bootstrap/state
+
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      ARM_USE_AZUREAD: "true"
+      TERRAFORM_VERSION: "1.16.1"
+
+    steps:
+      # working-directory: . is required. The job default is bootstrap/state,
+      # which does not exist until Checkout runs, so without it this step would
+      # die on a missing directory before evaluating the ref at all.
+      - name: Check the branch is allowed to bootstrap
+        working-directory: .
+        env:
+          ALLOWED_REFS: ${{ inputs.allowed_refs }}
+        run: |
+          set -uo pipefail
+          MATCHED=false
+          for pattern in $ALLOWED_REFS; do
+            # $pattern is deliberately unquoted: inside "case" an unquoted value
+            # is treated as a glob, which is what makes refs/heads/hotfix/* work.
+            case "${{ github.ref }}" in
+              $pattern) MATCHED=true; break ;;
+            esac
+          done
+
+          if [ "$MATCHED" != "true" ]; then
+            echo "::error::Refusing to bootstrap ${{ inputs.environment }} from '${{ github.ref }}'. Allowed: $ALLOWED_REFS"
+            exit 1
+          fi
+          echo "Ref '${{ github.ref }}' is allowed to bootstrap."
+
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      # TESTING ONLY: read from a repository VARIABLE so its content is visible
+      # in the GitHub UI while the platform is being validated. Switch to the
+      # commented line before any client deployment.
+      - name: Write terraform.tfvars
+        env:
+          # BOOTSTRAP_TFVARS: ${{ secrets.BOOTSTRAP_TFVARS }}
+          BOOTSTRAP_TFVARS: ${{ vars.BOOTSTRAP_TFVARS }}
+        run: |
+          test -n "$BOOTSTRAP_TFVARS" || { echo "::error::BOOTSTRAP_TFVARS is empty for ${{ inputs.environment }}. Set it on that GitHub Environment - see GITHUB-SETUP.md."; exit 1; }
+          printf '%s\n' "$BOOTSTRAP_TFVARS" > terraform.tfvars
+          terraform fmt terraform.tfvars
+
+      # Re-checked here and not only in the plan job, because the variables are
+      # editable in repository settings between the two.
+      - name: Check the variables agree with the backend configuration
+        env:
+          STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+          STATE_SA: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+          STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
+        run: |
+          set -euo pipefail
+          val () {
+            grep -E "^[[:space:]]*$1[[:space:]]*=" terraform.tfvars \
+              | head -1 | sed 's/.*=[[:space:]]*//; s/^"//; s/"[[:space:]]*$//'
+          }
+          FAIL=0
+          check () {
+            if [ "$2" != "$3" ]; then
+              echo "::error::$1 mismatch - BOOTSTRAP_TFVARS says '$2', TF_STATE_* says '$3'"
+              FAIL=1
+            else
+              printf '  %-22s %s\n' "$1" "$2"
+            fi
+          }
+          check resource_group_name  "$(val resource_group_name)"  "$STATE_RG"
+          check storage_account_name "$(val storage_account_name)" "$STATE_SA"
+          check container_name       "$(val container_name)"       "$STATE_CONTAINER"
+          [ "$FAIL" -eq 0 ] || { echo "::error::Fix the variables on this GitHub Environment before bootstrapping - see GITHUB-SETUP.md."; exit 1; }
+          echo "The variables file and the backend variables agree."
+
+      - name: Download the approved state backend plan
+        uses: actions/download-artifact@v8
+        with:
+          name: tfplan-bootstrap-${{ inputs.environment }}-${{ github.run_id }}
+          path: bootstrap/state
+
+      - name: Verify the approved plan artefact
+        id: approved
+        run: |
+          set -euo pipefail
+
+          for f in bootstrap.tfplan plan.txt mode.txt state_key.txt run-metadata.json; do
+            test -f "$f" || { echo "::error::$f is missing from the approved plan artefact"; exit 1; }
+          done
+
+          PLAN_SHA=$(jq -r .commit_sha run-metadata.json)
+          PLAN_RUN=$(jq -r .run_id run-metadata.json)
+          if [ "$PLAN_SHA" != "${{ github.sha }}" ]; then
+            echo "::error::The plan was built from commit $PLAN_SHA but this job is running ${{ github.sha }}."
+            exit 1
+          fi
+          if [ "$PLAN_RUN" != "${{ github.run_id }}" ]; then
+            echo "::error::The plan came from run $PLAN_RUN, not this run (${{ github.run_id }})."
+            exit 1
+          fi
+
+          MODE=$(tr -d '\r\n' < mode.txt)
+          KEY=$(tr -d '\r\n' < state_key.txt)
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "state_key=$KEY" >> "$GITHUB_OUTPUT"
+          sha256sum bootstrap.tfplan | tee plan-checksum.txt
+          echo "Approved plan verified. Applying mode '$MODE' with state key '$KEY'."
+
+      # ---------------------------------------------------------------- remote
+      - name: Initialise against the existing backend
+        if: steps.approved.outputs.mode == 'remote'
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ vars.TF_STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ vars.TF_STATE_CONTAINER }}" \
+            -backend-config="key=${{ steps.approved.outputs.state_key }}" \
+            -backend-config="use_azuread_auth=true"
+
+      # ------------------------------------------------------- create / import
+      - name: Move the backend block aside for the local-state phase
+        if: steps.approved.outputs.mode != 'remote'
+        run: mv backend.tf ../backend.tf.disabled
+
+      - name: Initialise with local state
+        if: steps.approved.outputs.mode != 'remote'
+        run: terraform init
+
+      # Importing is a state operation, not something a saved plan can carry, so
+      # it has to happen here. The approver saw a pre-import plan and the summary
+      # said so explicitly.
+      - name: Import the pre-existing backend resources
+        if: steps.approved.outputs.mode == 'import'
+        env:
+          SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+          STATE_SA: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+          STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
+        run: |
+          set -euo pipefail
+          RG_ID="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$STATE_RG"
+          SA_ID="$RG_ID/providers/Microsoft.Storage/storageAccounts/$STATE_SA"
+          CONTAINER_ID="$SA_ID/blobServices/default/containers/$STATE_CONTAINER"
+
+          terraform import azurerm_resource_group.state   "$RG_ID" || echo "resource group already tracked"
+          terraform import azurerm_storage_account.state  "$SA_ID" || echo "storage account already tracked"
+          terraform import azapi_resource.state_container "$CONTAINER_ID?api-version=2023-05-01" || echo "container already tracked"
+
+          # The approved plan was built before the import and no longer matches
+          # state, so it is replaced here. The end state is unchanged - the
+          # idempotency check below asserts the result converges.
+          terraform plan -lock-timeout=10m -out=bootstrap.tfplan
+
+      - name: Apply the approved state backend plan
+        run: |
+          set -o pipefail
+          terraform apply -lock-timeout=10m -auto-approve bootstrap.tfplan 2>&1 | tee apply.log
+
+      # --------------------------------------------------------------- migrate
+      - name: Restore the backend block
+        if: steps.approved.outputs.mode != 'remote'
+        run: mv ../backend.tf.disabled backend.tf
+
+      - name: Migrate the local state into the new backend
+        if: steps.approved.outputs.mode != 'remote'
+        run: |
+          terraform init -migrate-state -force-copy \
+            -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ vars.TF_STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ vars.TF_STATE_CONTAINER }}" \
+            -backend-config="key=${{ steps.approved.outputs.state_key }}" \
+            -backend-config="use_azuread_auth=true"
+
+      # ------------------------------------------------------------- reconcile
+      - name: Confirm the state is remote and the backend is idempotent
+        run: |
+          set -euo pipefail
+          echo "Resources tracked in remote state:"
+          terraform state list | tee state-list.txt
+
+          # A clean re-run must be a no-op. -detailed-exitcode returns 0 for no
+          # changes, 2 for changes pending, 1 for an error. Anything but 0 means
+          # this workflow is not idempotent and would drift on the next run.
+          set +e
+          terraform plan -detailed-exitcode -lock-timeout=10m > /dev/null 2>&1
+          CODE=$?
+          set -e
+          if [ "$CODE" -ne 0 ]; then
+            echo "::error::The backend is not idempotent - re-running would still show changes (exit $CODE)."
+            terraform plan -no-color
+            exit 1
+          fi
+          echo "Idempotency confirmed: a re-run produces no changes."
+
+      - name: Record the backend configuration
+        if: always()
+        env:
+          STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+          STATE_SA: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+          STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
+          STATE_KEY: ${{ vars.TF_STATE_KEY }}
+        run: |
+          cat > backend-config.hcl <<EOF
+          resource_group_name  = "$STATE_RG"
+          storage_account_name = "$STATE_SA"
+          container_name       = "$STATE_CONTAINER"
+          key                  = "$STATE_KEY"
+          use_azuread_auth     = true
+          EOF
+          printf '%s\n' "${{ steps.approved.outputs.mode }}" > applied-mode.txt
+          cat backend-config.hcl
+
+      - name: Publish the backend configuration for the platform workflows
+        if: success()
+        env:
+          STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+          STATE_SA: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+          STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
+          STATE_KEY: ${{ vars.TF_STATE_KEY }}
+        run: |
+          {
+            echo "### ${{ inputs.environment }} state backend is ready"
+            echo ""
+            echo '```hcl'
+            echo "resource_group_name  = \"$STATE_RG\""
+            echo "storage_account_name = \"$STATE_SA\""
+            echo "container_name       = \"$STATE_CONTAINER\""
+            echo "key                  = \"$STATE_KEY\""
+            echo "use_azuread_auth     = true"
+            echo '```'
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Bootstrap state key | \`${{ steps.approved.outputs.state_key }}\` |"
+            echo "| Mode applied | \`${{ steps.approved.outputs.mode }}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo ""
+            echo "**Terraform Deploy Platform** can now run for \`${{ inputs.environment }}\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record run metadata
+        if: always()
+        run: |
+          cat > run-metadata.json <<EOF
+          {
+            "operation": "bootstrap",
+            "environment": "${{ inputs.environment }}",
+            "phase": "apply",
+            "mode": "${{ steps.approved.outputs.mode }}",
+            "repository": "${{ github.repository }}",
+            "workflow": "${{ github.workflow }}",
+            "run_id": "${{ github.run_id }}",
+            "run_attempt": "${{ github.run_attempt }}",
+            "event": "${{ github.event_name }}",
+            "ref": "${{ github.ref }}",
+            "commit_sha": "${{ github.sha }}",
+            "triggered_by": "${{ github.actor }}",
+            "terraform_version": "${{ env.TERRAFORM_VERSION }}",
+            "recorded_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          EOF
+          cat run-metadata.json
+
+      # This root's storage account holds every environment's state, so the
+      # question "what exactly did that run do" must not depend on log retention.
+      - name: Upload the apply evidence bundle
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: evidence-bootstrap-${{ inputs.environment }}-${{ github.run_id }}
+          path: |
+            bootstrap/state/plan.txt
+            bootstrap/state/apply.log
+            bootstrap/state/state-list.txt
+            bootstrap/state/backend-config.hcl
+            bootstrap/state/applied-mode.txt
+            bootstrap/state/plan-checksum.txt
+            bootstrap/state/run-metadata.json
+          retention-days: 30
+          if-no-files-found: warn

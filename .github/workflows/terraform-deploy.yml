@@ -1,20 +1,19 @@
-name: Terraform Deploy
+name: Terraform Deploy Platform
 
-# Manual deployment with an enforced promotion order: dev -> test -> prod.
+# Builds or updates the Databricks platform in one or more environments.
 #
-# Environments are CHECKBOXES, so any combination can be run -- dev alone, test
-# and prod together, all three. Order is still enforced for whatever is ticked:
-# if dev and prod are both selected, prod waits for dev to apply successfully.
-# An environment that is NOT ticked simply drops out of the chain rather than
-# blocking the ones after it, which is what "!inputs.dev ||" expresses below.
+# Environments are checkboxes, so any combination can be run. Promotion order is
+# still enforced for whatever is ticked: with dev and prod selected, prod waits
+# for dev to apply successfully. An environment that is not ticked drops out of
+# the chain instead of blocking the ones after it.
 #
-# Ticking everything runs the full chain and STOPS at the first failure, so test
-# is only reached once dev has actually applied, and prod only once test has.
+# Every stage is a plan job followed by an apply job:
 #
-# Gating: each apply job targets the "<env>-apply" GitHub Environment. Attach
-# required reviewers to test-apply and prod-apply and the run pauses there for
-# sign-off. (Protection rules need GitHub Pro/Team/Enterprise on a private repo;
-# until then the gate is that a human chooses to run this workflow.)
+#   Plan dev deployment   ->  Apply dev deployment
+#     (dev-plan)                (dev-apply)   <- attach reviewers here to gate it
+#
+# The apply consumes the exact binary plan the plan job produced. It never
+# re-plans, so what a reviewer approves is what reaches Azure.
 
 on:
   workflow_dispatch:
@@ -36,72 +35,145 @@ permissions:
   contents: read
   id-token: write
 
-# Shared with terraform-destroy.yml so a deploy and a destroy can never run at
-# the same time and fight over the state lock. A deploy can span all three
-# environments, so this cannot be scoped per environment -- and serialising
-# mutating runs is the safe trade. Plans are cheap to redo; applies are not.
+# Shared with Terraform Destroy Platform so a deploy and a destroy can never run
+# at the same time and contend for the state lock. A single run can span all
+# three environments, so this cannot be scoped per environment - and serialising
+# mutating runs is the right trade. Plans are cheap to redo; applies are not.
 concurrency:
   group: terraform-mutate
   cancel-in-progress: false
 
 jobs:
-  # ----------------------------------------------------------------- dev
+  # Fails in seconds, before any Azure sign-in, if the run should not have been
+  # started at all.
+  preflight:
+    name: Check the run is allowed
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # workflow_dispatch lets whoever starts a run pick any branch. Without this
+      # check, anyone with write access could deploy unreviewed code to
+      # production by choosing their own branch from the dropdown.
+      #
+      # hotfix/* is the deliberate emergency path: branch from the last
+      # known-good commit, cherry-pick the single fix, and deploy that rather
+      # than whatever else has since landed on main.
+      - name: Check the branch is allowed to deploy
+        run: |
+          case "${{ github.ref }}" in
+            refs/heads/main|refs/heads/hotfix/*)
+              echo "Deploying from ${{ github.ref }}" ;;
+            *)
+              echo "::error::Refusing to deploy from '${{ github.ref }}'. Deploys run from main, or from a hotfix/* branch for emergency fixes."
+              exit 1 ;;
+          esac
+
+      - name: Check at least one environment is selected
+        run: |
+          if [ "${{ inputs.dev }}" != "true" ] && [ "${{ inputs.test }}" != "true" ] && [ "${{ inputs.prod }}" != "true" ]; then
+            echo "::error::No environment selected. Tick at least one of dev, test or prod."
+            exit 1
+          fi
+          SELECTED=""
+          [ "${{ inputs.dev }}"  = "true" ] && SELECTED="$SELECTED dev"
+          [ "${{ inputs.test }}" = "true" ] && SELECTED="$SELECTED test"
+          [ "${{ inputs.prod }}" = "true" ] && SELECTED="$SELECTED prod"
+          echo "Selected environments:$SELECTED"
+          {
+            echo "### Deployment requested"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Environments |\`$SELECTED\` |"
+            echo "| Branch | \`${{ github.ref_name }}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Requested by | @${{ github.actor }} |"
+            echo ""
+            echo "Promotion order is enforced: dev, then test, then prod."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------- dev
   dev-plan:
+    name: Plan dev deployment
+    needs: preflight
     if: inputs.dev
     uses: ./.github/workflows/_terraform-plan.yml
     with:
       environment: dev
+      operation: deploy
+      save_plan: true
     secrets: inherit
 
   dev-apply:
+    name: Apply dev deployment
     needs: dev-plan
     uses: ./.github/workflows/_terraform-apply.yml
     with:
       environment: dev
+      operation: deploy
+      allowed_refs: refs/heads/main refs/heads/hotfix/*
     secrets: inherit
 
-  # ---------------------------------------------------------------- test
-  # always() is required because on a single-environment run the dev jobs are
-  # SKIPPED, and a skipped dependency would otherwise skip everything downstream.
+  # ------------------------------------------------------------------ test
+  # always() is required because on a dev-only run the dev jobs are SKIPPED, and
+  # a skipped dependency would otherwise skip everything downstream. The
+  # conditions then have to re-state what "success" means, which is what the
+  # "!inputs.<env> ||" clauses do: an environment that was not ticked cannot
+  # block the ones after it, but one that WAS ticked must have applied cleanly.
   test-plan:
-    needs: dev-apply
+    name: Plan test deployment
+    needs: [preflight, dev-apply]
     if: >-
-      always() && inputs.test && (
-        !inputs.dev || needs.dev-apply.result == 'success'
-      )
+      always() && inputs.test
+      && needs.preflight.result == 'success'
+      && (!inputs.dev || needs.dev-apply.result == 'success')
     uses: ./.github/workflows/_terraform-plan.yml
     with:
       environment: test
+      operation: deploy
+      save_plan: true
     secrets: inherit
 
   test-apply:
+    name: Apply test deployment
     needs: test-plan
     if: always() && needs.test-plan.result == 'success'
     uses: ./.github/workflows/_terraform-apply.yml
     with:
       environment: test
+      operation: deploy
+      allowed_refs: refs/heads/main refs/heads/hotfix/*
     secrets: inherit
 
-  # ---------------------------------------------------------------- prod
-  # prod needs BOTH earlier stages in its needs list, not just test. With only
-  # dev and prod ticked, test drops out -- and if prod were gated on test alone,
-  # "!inputs.test" would be true and prod would deploy even after dev had FAILED.
+  # ------------------------------------------------------------------ prod
+  # prod depends on BOTH earlier stages, not just test. With dev and prod ticked
+  # but not test, test drops out - and if prod were gated on test alone,
+  # "!inputs.test" would be true and prod would deploy even after dev had failed.
   # Each stage is therefore gated on every earlier stage that was actually ticked.
   prod-plan:
-    needs: [dev-apply, test-apply]
+    name: Plan prod deployment
+    needs: [preflight, dev-apply, test-apply]
     if: >-
       always() && inputs.prod
+      && needs.preflight.result == 'success'
       && (!inputs.dev || needs.dev-apply.result == 'success')
       && (!inputs.test || needs.test-apply.result == 'success')
     uses: ./.github/workflows/_terraform-plan.yml
     with:
       environment: prod
+      operation: deploy
+      save_plan: true
     secrets: inherit
 
   prod-apply:
+    name: Apply prod deployment
     needs: prod-plan
     if: always() && needs.prod-plan.result == 'success'
     uses: ./.github/workflows/_terraform-apply.yml
     with:
       environment: prod
+      operation: deploy
+      allowed_refs: refs/heads/main refs/heads/hotfix/*
     secrets: inherit

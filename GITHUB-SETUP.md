@@ -1,35 +1,104 @@
-# GitHub Setup — Everything to Configure in the Repository
+# GitHub Setup — Repository Administrator Guide
 
-All the GitHub-side configuration the pipelines depend on: environments,
-variables, protection rules and repository settings. None of it lives in the
-repository, so a fresh clone has working *code* and a non-working *pipeline*
-until this is done.
+Everything that must be configured in GitHub and Entra before the workflows can
+run. Written as a from-zero checklist: following it in order takes an empty
+repository to a working platform.
 
-Companion to [PIPELINES.md](PIPELINES.md) (how the workflows behave) and
-[PIPELINE-SETUP.md](PIPELINE-SETUP.md) (the Azure and Databricks prerequisites).
-
-**Who needs to do this:** somebody with **admin** on the repository.
+For how to *run* the pipelines once this is done, see
+**[WORKFLOWS.md](WORKFLOWS.md)**.
 
 ---
 
-## 0. Do the Azure side first
+## 1. Prerequisites
 
-Two things must exist before any of this is useful, both covered in
-[PIPELINE-SETUP.md](PIPELINE-SETUP.md):
+| You need | For |
+| --- | --- |
+| **Global Administrator** in the Entra tenant (or Application Administrator **and** User Access Administrator) | Creating the app registrations and assigning roles |
+| **Owner** or **User Access Administrator** on each target subscription | Granting the service principals their roles |
+| **Databricks Account Admin** | Adding each service principal to the Databricks account console |
+| **Admin** on the GitHub repository | Creating environments, variables and protection rules |
+| Windows PowerShell 5.1 or PowerShell 7, with the Azure CLI signed in | Running the setup script |
 
-1. **A service principal per environment**, created by
-   `scripts/New-GitHubOidcServicePrincipal.ps1`. It prints the
-   `AZURE_CLIENT_ID` you need below.
-2. **Databricks account admin** granted to each of those principals, or
-   `module.ncc` fails.
-
-You cannot configure GitHub meaningfully without the client IDs from step 1.
+Each environment can live in its own subscription. The script takes the
+subscription as a parameter for exactly that reason — run it three times with
+three different subscription IDs.
 
 ---
 
-## 1. Create six environments
+## 2. Identity: three service principals
 
-`Settings → Environments → New environment`, six times:
+**One app registration per environment**, each with **two federated credentials**
+— one for the `<env>-plan` GitHub Environment and one for `<env>-apply`.
+
+No client secret is ever created. GitHub Actions presents a short-lived OIDC
+token which Entra exchanges for an access token, so there is no credential to
+rotate, store, or leak.
+
+### Run the script, once per environment
+
+```powershell
+cd scripts
+
+.\New-GitHubOidcServicePrincipal.ps1 -Environment dev  -SubscriptionId <dev-subscription-id>
+.\New-GitHubOidcServicePrincipal.ps1 -Environment test -SubscriptionId <test-subscription-id>
+.\New-GitHubOidcServicePrincipal.ps1 -Environment prod -SubscriptionId <prod-subscription-id>
+```
+
+Other parameters, all optional:
+
+| Parameter | Default | Purpose |
+| --- | --- | --- |
+| `-GitHubOrg` | `Webathon-Tech` | Organisation that owns the repository |
+| `-GitHubRepo` | `Baytex-Test` | Repository name |
+| `-NamePrefix` | `sp-bte-dbx` | App registration name prefix |
+| `-UseOwnerRole` | off | Assign `Owner` instead of the least-privilege split below |
+
+The script is **idempotent** — re-running reuses the existing app, service
+principal, federated credentials and role assignments rather than duplicating
+them. It prints the client ID, tenant ID and subscription ID you need in §4.
+
+### What it creates
+
+| Item | Value |
+| --- | --- |
+| App registration | `sp-bte-dbx-<env>-github` |
+| Federated credential 1 | Subject `repo:<org>/<repo>:environment:<env>-plan` |
+| Federated credential 2 | Subject `repo:<org>/<repo>:environment:<env>-apply` |
+| Issuer | `https://token.actions.githubusercontent.com` |
+| Audience | `api://AzureADTokenExchange` |
+
+> **Two subject formats.** Some organisations issue an *immutable* subject that
+> embeds numeric IDs — `repo:<org>@<orgId>/<repo>@<repoId>:environment:<env>`
+> — rather than the classic name-based one. The script registers **both**, so
+> the credentials work either way. If a run fails with `AADSTS700213`, the
+> subject format is the cause; re-running the script fixes it.
+
+### Azure roles granted, at subscription scope
+
+| Role | Why it is needed |
+| --- | --- |
+| **Contributor** | Create and manage the platform resources |
+| **User Access Administrator** | Assign the workspace's own roles to managed identities |
+| **Storage Blob Data Contributor** | Read and write the Terraform state blobs — the backend authenticates as the service principal (`use_azuread_auth=true`), never with an account key |
+
+`-UseOwnerRole` collapses the first two into `Owner`. The default split is the
+least privilege that still works.
+
+### Databricks account console
+
+Each service principal must be added to the Databricks account **and granted the
+Account Admin role**. Without it, the Network Connectivity Configuration API
+returns *"API disabled without account admin"* and the deploy fails partway.
+
+> Account console → **User management** → **Service principals** → add by
+> Application ID → enable the **Account admin** toggle.
+
+---
+
+## 3. The six GitHub Environments
+
+**Settings → Environments → New environment.** Create all six with these exact
+names:
 
 ```
 dev-plan     dev-apply
@@ -37,310 +106,216 @@ test-plan    test-apply
 prod-plan    prod-apply
 ```
 
-Two per stage is not redundancy. A federated credential is bound to a subject
-containing the environment name, so the credential that can *plan* an environment
-is a different credential from the one that can *apply* it — and it gives a place
-to hang an approval that affects applies only.
+**Why two per environment.** The plan job and the apply job run in different
+GitHub Environments so that approval can be attached to the apply alone. Planning
+is safe and should never need sign-off; applying is the decision. Splitting them
+also means the plan-side credentials are separable from the apply-side ones if
+you later want to narrow them.
 
 ---
 
-## 2. Set variables on every environment
+## 4. Variables, per environment
 
-Each of the six needs **all eight**. `plan` and `apply` for the same stage take
-identical values.
+Set these on **each of the six environments** (Settings → Environments → pick one
+→ **Environment variables**). All six need the full set — the plan and apply jobs
+each read them.
 
-| Variable | Value | Where it comes from |
+| Variable | Holds | Where the value comes from |
 | --- | --- | --- |
-| `AZURE_CLIENT_ID` | app ID for that environment | printed by the SP script |
-| `AZURE_TENANT_ID` | tenant GUID | your tenant |
-| `AZURE_SUBSCRIPTION_ID` | that environment's subscription | one per environment in a real deployment |
-| `TF_STATE_RESOURCE_GROUP` | e.g. `rg-bte-dbx-dev-tfstate-cnc-001` | you choose; the bootstrap workflow creates it |
-| `TF_STATE_STORAGE_ACCOUNT` | e.g. `stbtedbxdevtfcnc001` | globally unique |
-| `TF_STATE_CONTAINER` | `tfstate` | convention |
-| `TF_STATE_KEY` | `<env>/platform.tfstate` | one key per environment |
-| `TFVARS` | the whole `terraform.tfvars` for that environment | see §5 |
+| `AZURE_CLIENT_ID` | Service principal application ID | Printed by the script in §2 |
+| `AZURE_TENANT_ID` | Entra tenant ID | Printed by the script |
+| `AZURE_SUBSCRIPTION_ID` | Target subscription | Printed by the script |
+| `TF_STATE_RESOURCE_GROUP` | Resource group holding the state storage account | Your naming standard |
+| `TF_STATE_STORAGE_ACCOUNT` | State storage account name | Your naming standard |
+| `TF_STATE_CONTAINER` | Blob container for state | e.g. `tfstate` |
+| `TF_STATE_KEY` | Blob name for the platform state | e.g. `platform/dev.tfstate` |
+| `TFVARS` | **The entire `terraform.tfvars` file** for this environment | See below |
+| `BOOTSTRAP_TFVARS` | **The entire `terraform.tfvars` file** for the state backend root | See below |
 
-> The workflows read `vars.*`, never hard-coded values. That is what lets one
-> workflow serve three environments: the job declares `environment: dev-apply`
-> and GitHub injects that environment's values.
+### Why whole files live in variables
+
+`TFVARS` holds the complete contents of `environments/<env>/terraform.tfvars`,
+and the workflow writes it to disk at run time. This is what lets one set of
+`.tf` files serve three environments with **no environment-specific values in
+git** — no CIDRs, no resource names, no hostnames.
+
+`BOOTSTRAP_TFVARS` does the same for `bootstrap/state`. It must name the **same**
+resource group, storage account and container as the `TF_STATE_*` variables — the
+bootstrap workflow cross-checks them and refuses to run if they disagree, because
+otherwise it would create one storage account and store its state in a different
+one.
+
+### ⚠️ Variables vs secrets
+
+These are currently **variables**, so their content is visible in the GitHub UI
+during validation. GitHub masks **secrets** in logs automatically and does **not**
+mask variables.
+
+**Before any client deployment, switch `TFVARS` and `BOOTSTRAP_TFVARS` to
+secrets.** Each workflow already carries the alternative line, commented out
+directly above the one in use:
+
+```yaml
+# TFVARS: ${{ secrets.TFVARS }}
+TFVARS: ${{ vars.TFVARS }}
+```
+
+Swap which line is commented in these four files, then move the values from
+Environment *variables* to Environment *secrets*:
+
+- `.github/workflows/_terraform-plan.yml`
+- `.github/workflows/_terraform-apply.yml`
+- `.github/workflows/_bootstrap-plan.yml` (uses `BOOTSTRAP_TFVARS`)
+- `.github/workflows/_bootstrap-apply.yml` (uses `BOOTSTRAP_TFVARS`)
 
 ---
 
-## 3. Protection rules
+## 5. Environment protection rules
 
-This is the part that actually enforces anything.
+Set on the **`-apply`** environments only. The `-plan` environments stay open —
+planning changes nothing, and gating it would only slow reviews down.
 
-| Environment | Required reviewers | Deployment branches |
+### Required reviewers
+
+Settings → Environments → `test-apply` → **Required reviewers** → add one or more
+people or teams.
+
+| Environment | Recommended | Effect |
 | --- | --- | --- |
-| `dev-plan` | none | **any** |
-| `test-plan` | none | **any** |
-| `prod-plan` | none | **any** |
-| `dev-apply` | none | `main`, `hotfix/*` |
-| `test-apply` | **yes** | `main`, `hotfix/*` |
-| `prod-apply` | **yes** | `main`, `hotfix/*` |
+| `dev-apply` | none | Iterating on dev stays fast |
+| `test-apply` | 1+ reviewer | Run pauses before applying to test |
+| `prod-apply` | 1+ reviewer | Run pauses before applying to prod |
 
-Three things worth understanding:
+Because every mutating workflow routes its apply through `<env>-apply`, adding a
+reviewer here gates **deploy, destroy and bootstrap** for that environment at
+once. To gate dev as well, add a reviewer to `dev-apply` — no workflow change is
+needed.
 
-**Plan environments must allow any branch.** Pull-request plans run from feature
-branches. Restricting `*-plan` breaks every PR check.
+> **You cannot approve your own deployment** in some configurations. If a run you
+> started shows no Approve button, add a second reviewer.
 
-**`dev-apply` gets a branch policy but no reviewer.** Deploying dev should stay
-fast, but it should still only deploy reviewed code.
+Via the API:
 
-**Branch policies duplicate a check already in the workflows.** That is
-deliberate: the workflow guard can be edited by anyone who can edit workflows;
-the environment policy is repository settings and needs admin.
+```bash
+gh api -X PUT repos/<org>/<repo>/environments/test-apply \
+  -F "reviewers[][type]=User" -F "reviewers[][id]=<numeric-user-id>"
+```
 
-> Deployment protection rules require a **public** repository on the Free plan,
-> or **Pro / Team / Enterprise** on a private one. If the reviewer section is
-> missing, that is why — the environments and variables still work, you just lose
-> the gate.
+### Deployment branch policies
+
+On each `-apply` environment, set **Deployment branches** to *Selected branches*
+and add `main` and `hotfix/*`.
+
+This duplicates the branch check inside the workflows on purpose. The workflow
+check lives in code and is reviewed through a pull request; the environment policy
+lives in repository settings. Either alone is a single point of failure.
 
 ---
 
-## 4. Protect `main` — do not skip this
+## 6. Branch protection on `main`
 
-Without it, anyone with write access can push straight to `main`, which bypasses
-every PR check *and* puts unreviewed code on the branch that applies run from.
-
-**This is configured on this repository.** Verified: a direct push as a repository
-admin is refused with `GH006: Protected branch update failed`.
-
-Current settings:
+Settings → Branches → **Add branch protection rule** for `main`:
 
 | Setting | Value | Why |
 | --- | --- | --- |
-| Require a pull request | **on** | The control that stops direct pushes |
-| Required approvals | **0** | See the note below |
-| Dismiss stale reviews | on | A new push invalidates earlier approval |
-| Require conversation resolution | on | Review comments must be closed before merge |
-| **Include administrators** | **on** | Without it admins bypass everything — see below |
-| Allow force pushes | off | Protects history |
-| Allow deletions | off | `main` cannot be deleted |
+| Require a pull request before merging | on | Nothing reaches `main` unreviewed |
+| Required approvals | 1 (or more) | A second pair of eyes |
+| Require status checks to pass | on, with the checks below | Broken code cannot merge |
+| Require branches to be up to date | on | The checks ran against what will actually land |
+| **Include administrators** | **on** | Without this, admins bypass everything and the rule is decorative |
+| Allow force pushes | off | History stays intact |
+| Allow deletions | off | `main` cannot be removed |
 
-### Include administrators is the setting that matters
-
-With it off, GitHub *records* the violation and lets the push through:
+### Required status checks — exact names
 
 ```
-remote: Bypassed rule violations for refs/heads/main:
-remote: - Changes must be made through a pull request.
+Validate Terraform code / validate
+Check environment root parity
+Plan dev (review only) / plan
+Plan test (review only) / plan
+Plan prod (review only) / plan
 ```
 
-The push succeeds. That is an audit trail, not a control. With it on the same
-push is rejected outright. If you only change one thing, change this one.
+The `/ <job>` suffix appears because those jobs call reusable workflows; GitHub
+reports them as `<calling job name> / <called job name>`. The names must match
+exactly, so if a job is ever renamed, update this list too.
 
-### Why zero required approvals
+> A check name only becomes selectable after it has run at least once. Open a
+> throwaway pull request first if the list is empty.
 
-Requiring one approval would be correct for a team, but **GitHub does not let you
-approve your own pull request** — so on a repository where one person does the
-work, requiring an approval blocks every merge. Zero still forces the pull-request
-flow and still runs the checks; it just does not require a second person.
-
-**Raise this to at least 1 for the client deployment**, where more than one person
-has write access:
+Via the API:
 
 ```bash
-gh api -X PATCH "repos/<ORG>/<REPO>/branches/main/protection/required_pull_request_reviews"   -F required_approving_review_count=1
-```
-
-### Why status checks are not required
-
-The plan workflow has `paths:` filters, so it does not run on a documentation-only
-pull request. A required check that never runs leaves the pull request blocked
-forever. Either leave status checks advisory — the reviewer reads them — or remove
-the path filters first, then require:
-
-```
-Root parity (report only)
-plan-dev / Plan dev
-```
-
-Everything else in this document is pointless without branch protection. The
-workflow ref guards restrict applies to `main` and `hotfix/*` — which only means
-anything if getting code onto `main` requires review.
-
-### Applying it
-
-```bash
-gh api -X PUT "repos/<ORG>/<REPO>/branches/main/protection" --input - <<'JSON'
+gh api -X PUT repos/<org>/<repo>/branches/main/protection \
+  --input - <<'JSON'
 {
-  "required_status_checks": null,
-  "enforce_admins": true,
-  "required_pull_request_reviews": {
-    "dismiss_stale_reviews": true,
-    "require_code_owner_reviews": false,
-    "required_approving_review_count": 0,
-    "require_last_push_approval": false
+  "required_status_checks": {
+    "strict": true,
+    "contexts": [
+      "Validate Terraform code / validate",
+      "Check environment root parity",
+      "Plan dev (review only) / plan",
+      "Plan test (review only) / plan",
+      "Plan prod (review only) / plan"
+    ]
   },
+  "enforce_admins": true,
+  "required_pull_request_reviews": { "required_approving_review_count": 1 },
   "restrictions": null,
   "allow_force_pushes": false,
-  "allow_deletions": false,
-  "block_creations": false,
-  "required_conversation_resolution": true,
-  "required_linear_history": false
+  "allow_deletions": false
 }
 JSON
 ```
 
-> Once this is on, history rewrites stop working — force pushes are refused even
-> for admins. To rewind `main` you must delete the protection, push, and re-apply
-> it. That friction is the point.
+---
+
+## 7. Before handing over to the client
+
+- [ ] Switch `TFVARS` and `BOOTSTRAP_TFVARS` from variables to **secrets** (§4)
+- [ ] Decide repository **visibility**. On a public repository every Actions log
+      and artefact is world-readable, including `terraform show` output — a full
+      resource inventory — and subscription and workspace identifiers
+- [ ] If the repository was ever public, review or delete the existing **Actions
+      run history and artefacts**
+- [ ] Confirm required reviewers are set on `test-apply` and `prod-apply`
+- [ ] Confirm **Include administrators** is enabled on the `main` rule
+- [ ] Confirm each service principal still holds **Account admin** in Databricks
+- [ ] Re-point the required status check names if any job was renamed
 
 ---
 
-## 5. `TFVARS` — variable or secret
+## 8. Verify the configuration
 
-Currently a **variable** so its content is visible while testing. Each workflow
-has the secret line commented directly above it:
-
-```yaml
-# TFVARS: ${{ secrets.TFVARS }}   # <- switch back for client delivery
-TFVARS: ${{ vars.TFVARS }}
-```
-
-**Switch it back to a secret before any real deployment.** GitHub masks secrets in
-logs automatically and does **not** mask variables. On a public repository that
-masking is genuinely protective.
-
-To switch: uncomment the `secrets.` line and delete the `vars.` line in
-`_terraform-plan.yml`, `_terraform-apply.yml` and `terraform-destroy.yml`, then
-move the value:
+Run this to assert the setup is complete rather than assuming it. It reads only.
 
 ```bash
-gh secret   set TFVARS --env dev-apply --repo <ORG>/<REPO> < environments/dev/terraform.tfvars
-gh variable delete TFVARS --env dev-apply --repo <ORG>/<REPO>
-```
+REPO=<org>/<repo>
 
-Nothing in the file is a credential — the SSH key is a public key — but the
-topology, subscription IDs and storage names are not worth publishing.
+echo "== environments =="
+gh api repos/$REPO/environments --jq '.environments[].name'
 
----
-
-## 6. Repository settings
-
-| Setting | Recommended | Why |
-| --- | --- | --- |
-| Visibility | **private** for a client repo | Content, git history, Actions logs and artefacts are all public otherwise |
-| Default branch | `main` | The ref guards and workflow triggers assume it |
-| Allow forking | off for a client repo | Fork PRs cannot read secrets, so their plan jobs fail noisily anyway |
-| Actions permissions | allow `actions/*` and `azure/login`, `hashicorp/setup-terraform` | The workflows use nothing else |
-
-> On a **public** repository every Actions log and artefact is world-readable.
-> Terraform plan output is a complete resource inventory. Weigh that against the
-> free protection rules before choosing public.
-
----
-
-## 7. Doing it with the CLI
-
-Everything above, scripted. Replace the placeholders and run once per
-environment. These are the exact calls used to configure this repository.
-
-```bash
-R=<ORG>/<REPO>
-TENANT=<tenant-guid>
-
-# --- per environment -------------------------------------------------------
-for e in dev test prod; do
-  SUB=<subscription-id-for-$e>
-  CID=<client-id-for-$e>          # from New-GitHubOidcServicePrincipal.ps1
-  for p in plan apply; do
-    ENV="$e-$p"
-    gh api -X PUT "repos/$R/environments/$ENV" --silent
-
-    gh variable set AZURE_CLIENT_ID          --env "$ENV" --repo "$R" --body "$CID"
-    gh variable set AZURE_TENANT_ID          --env "$ENV" --repo "$R" --body "$TENANT"
-    gh variable set AZURE_SUBSCRIPTION_ID    --env "$ENV" --repo "$R" --body "$SUB"
-    gh variable set TF_STATE_RESOURCE_GROUP  --env "$ENV" --repo "$R" --body "rg-bte-dbx-$e-tfstate-cnc-001"
-    gh variable set TF_STATE_STORAGE_ACCOUNT --env "$ENV" --repo "$R" --body "stbtedbx${e}tfcnc001"
-    gh variable set TF_STATE_CONTAINER       --env "$ENV" --repo "$R" --body "tfstate"
-    gh variable set TF_STATE_KEY             --env "$ENV" --repo "$R" --body "$e/platform.tfstate"
-
-    # TFVARS: use ONE of these. Secret is correct for a real deployment.
-    gh secret   set TFVARS --env "$ENV" --repo "$R" < "environments/$e/terraform.tfvars"
-    # gh variable set TFVARS --env "$ENV" --repo "$R" < "environments/$e/terraform.tfvars"
-  done
-done
-
-# --- branch policy on all three apply environments -------------------------
-for ENV in dev-apply test-apply prod-apply; do
-  gh api -X PUT "repos/$R/environments/$ENV" \
-    -F "deployment_branch_policy[protected_branches]=false" \
-    -F "deployment_branch_policy[custom_branch_policies]=true" --silent
-  for B in main "hotfix/*"; do
-    gh api -X POST "repos/$R/environments/$ENV/deployment-branch-policies" \
-      -f "name=$B" -f "type=branch" --silent
-  done
-done
-
-# --- required reviewers on test and prod only ------------------------------
-REVIEWER_ID=$(gh api users/<github-username> --jq .id)
-for ENV in test-apply prod-apply; do
-  gh api -X PUT "repos/$R/environments/$ENV" \
-    -F "reviewers[][type]=User" -F "reviewers[][id]=$REVIEWER_ID" \
-    -F "deployment_branch_policy[protected_branches]=false" \
-    -F "deployment_branch_policy[custom_branch_policies]=true" --silent
-done
-```
-
-> Re-running is safe. `PUT .../environments/<name>` is idempotent, and
-> `gh variable set` overwrites.
->
-> One caveat: `PUT` on an environment **replaces** its protection rules. Setting a
-> branch policy without re-sending `reviewers` clears the reviewers. Always send
-> both together, as the last block does.
-
----
-
-## 8. Verify
-
-```bash
-R=<ORG>/<REPO>
-
-gh api "repos/$R/environments" --jq '.environments[].name'
-
+echo "== variables per environment =="
 for e in dev-plan dev-apply test-plan test-apply prod-plan prod-apply; do
-  printf '%-11s rules=%-38s ' "$e" \
-    "$(gh api "repos/$R/environments/$e" --jq '[.protection_rules[]?.type]|join(",")//"none"')"
-  gh api "repos/$R/environments/$e/deployment-branch-policies" \
-    --jq '[.branch_policies[]?.name]|join(", ")' 2>/dev/null || echo "any branch"
+  echo "-- $e"
+  gh api repos/$REPO/environments/$e/variables --jq '.variables[].name' | sort | tr '\n' ' '
+  echo
 done
 
-gh api "repos/$R/environments/dev-apply/variables" --jq '.variables[].name' | sort
+echo "== reviewers on apply environments =="
+for e in dev-apply test-apply prod-apply; do
+  printf '%-12s ' "$e"
+  gh api repos/$REPO/environments/$e \
+    --jq '[.protection_rules[] | select(.type=="required_reviewers") | .reviewers[].reviewer.login] | join(", ") // "none"'
+done
+
+echo "== branch protection on main =="
+gh api repos/$REPO/branches/main/protection \
+  --jq '{checks: .required_status_checks.contexts,
+         approvals: .required_pull_request_reviews.required_approving_review_count,
+         admins_included: .enforce_admins.enabled,
+         force_pushes: .allow_force_pushes.enabled}'
 ```
 
-Expected:
-
-```
-dev-plan     rules=none                                  any branch
-dev-apply    rules=branch_policy                         hotfix/*, main
-test-plan    rules=none                                  any branch
-test-apply   rules=required_reviewers,branch_policy      hotfix/*, main
-prod-plan    rules=none                                  any branch
-prod-apply   rules=required_reviewers,branch_policy      hotfix/*, main
-```
-
-A `404` from the branch-policies endpoint on the `*-plan` environments is
-**correct** — they have no policy, which is what lets PR plans run from feature
-branches.
-
----
-
-## 9. Handover checklist
-
-- [ ] Service principals created, one per environment
-- [ ] Each SP granted **Databricks account admin**
-- [ ] Six environments created
-- [ ] All eight variables set on each
-- [ ] `TFVARS` moved back to a **secret**
-- [ ] Branch policy (`main`, `hotfix/*`) on all three `*-apply`
-- [ ] Required reviewers on `test-apply` and `prod-apply`
-- [ ] `*-plan` environments left unrestricted
-- [ ] **Branch protection on `main`**, with **Include administrators** enabled
-- [ ] Required approvals raised to at least 1 for a team
-- [ ] Repository set to **private**
-- [ ] Actions run history reviewed or cleared if the repo was ever public
-
-Then run **Terraform Bootstrap State Backend** for each environment, and the
-pipelines are live.
+Every one of the six environments should list all nine variables. Anything
+missing will surface as a workflow failure naming the variable.
