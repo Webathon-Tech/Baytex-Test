@@ -61,7 +61,65 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v7
 
+      # Runs before the Azure sign-in, because that is what breaks first. An
+      # environment whose service principal does not exist yet has no
+      # AZURE_CLIENT_ID, and azure/login then fails with an authentication error
+      # that says nothing about the real cause.
+      #
+      # test and prod are normally configured later than dev - their service
+      # principals are created only once dev has been verified - so a
+      # pull-request plan for them has to report "not configured yet" rather than
+      # a red failure that people learn to ignore.
+      #
+      # A real bootstrap run still fails here: it names an environment
+      # explicitly, so missing configuration is a genuine error.
+      - name: Check the environment is configured
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+          STATE_SA: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+          STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
+          BOOTSTRAP_TFVARS: ${{ vars.BOOTSTRAP_TFVARS }}
+        run: |
+          set -uo pipefail
+          MISSING=""
+          need () { [ -n "${2:-}" ] || MISSING="$MISSING $1"; }
+          need AZURE_CLIENT_ID          "${AZURE_CLIENT_ID:-}"
+          need AZURE_TENANT_ID          "${AZURE_TENANT_ID:-}"
+          need AZURE_SUBSCRIPTION_ID    "${AZURE_SUBSCRIPTION_ID:-}"
+          need TF_STATE_RESOURCE_GROUP  "${STATE_RG:-}"
+          need TF_STATE_STORAGE_ACCOUNT "${STATE_SA:-}"
+          need TF_STATE_CONTAINER       "${STATE_CONTAINER:-}"
+          need BOOTSTRAP_TFVARS         "${BOOTSTRAP_TFVARS:-}"
+
+          if [ -z "$MISSING" ]; then
+            echo "Environment ${{ inputs.environment }} is configured."
+            exit 0
+          fi
+
+          if [ "${{ inputs.save_plan }}" = "true" ]; then
+            echo "::error::Environment '${{ inputs.environment }}' is not configured. Missing:$MISSING. Create its service principal and set these variables on the ${{ inputs.environment }}-plan and ${{ inputs.environment }}-apply GitHub Environments - see GITHUB-SETUP.md."
+            exit 1
+          fi
+
+          echo "SKIP=true" >> "$GITHUB_ENV"
+          echo "::notice::Skipping ${{ inputs.environment }} state backend - not configured yet (missing:$MISSING)."
+          {
+            echo "### ${{ inputs.environment }} state backend: not configured yet"
+            echo ""
+            echo "No plan was produced: this environment has no deployment identity."
+            echo ""
+            echo "Missing variables:"
+            for v in $MISSING; do echo "- \`$v\`"; done
+            echo ""
+            echo "Expected until the service principal for \`${{ inputs.environment }}\` is created."
+            echo "See GITHUB-SETUP.md."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Sign in to Azure with OIDC
+        if: env.SKIP != 'true'
         uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -69,6 +127,7 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Install Terraform
+        if: env.SKIP != 'true'
         uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
@@ -77,6 +136,7 @@ jobs:
       # Runs before terraform.tfvars is written, so the formatting gate reports
       # on repository code rather than on the content of a GitHub variable.
       - name: Check Terraform formatting
+        if: env.SKIP != 'true'
         working-directory: .
         run: terraform fmt -check -recursive
 
@@ -88,6 +148,7 @@ jobs:
       # in the GitHub UI while the platform is being validated. Switch to the
       # commented line before any client deployment.
       - name: Write terraform.tfvars
+        if: env.SKIP != 'true'
         env:
           # BOOTSTRAP_TFVARS: ${{ secrets.BOOTSTRAP_TFVARS }}
           BOOTSTRAP_TFVARS: ${{ vars.BOOTSTRAP_TFVARS }}
@@ -102,6 +163,7 @@ jobs:
       # account, so they can drift - and if they do, this pipeline creates one
       # storage account and then stores its state in a different one.
       - name: Check the variables agree with the backend configuration
+        if: env.SKIP != 'true'
         env:
           STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
           STATE_SA: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
@@ -128,6 +190,7 @@ jobs:
           echo "The variables file and the backend variables agree."
 
       - name: Determine what already exists
+        if: env.SKIP != 'true'
         id: probe
         env:
           STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
@@ -172,7 +235,7 @@ jobs:
           printf '  %-24s %s\n' "Mode:"                   "$MODE"
 
       - name: Initialise against the existing backend
-        if: steps.probe.outputs.mode == 'remote'
+        if: env.SKIP != 'true' && steps.probe.outputs.mode == 'remote'
         run: |
           terraform init \
             -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
@@ -187,11 +250,11 @@ jobs:
       # required". Moving the file out of the root is the only way to plan with
       # purely local state.
       - name: Move the backend block aside for the local-state plan
-        if: steps.probe.outputs.mode != 'remote'
+        if: env.SKIP != 'true' && steps.probe.outputs.mode != 'remote'
         run: mv backend.tf ../backend.tf.disabled
 
       - name: Initialise with local state
-        if: steps.probe.outputs.mode != 'remote'
+        if: env.SKIP != 'true' && steps.probe.outputs.mode != 'remote'
         run: terraform init
 
       # Locking matches _terraform-plan.yml: a plan that feeds an apply takes the
@@ -199,6 +262,7 @@ jobs:
       # plan runs with -lock=false. Review plans never write state, so taking the
       # lease would only make concurrent pull requests contend.
       - name: Create the state backend plan
+        if: env.SKIP != 'true'
         run: |
           set -euo pipefail
           if [ "${{ inputs.save_plan }}" = "true" ]; then
@@ -214,6 +278,7 @@ jobs:
       # The reason the split exists: put the numbers in front of the approver,
       # and say plainly when something is being replaced or removed.
       - name: Publish the plan summary for the approver
+        if: env.SKIP != 'true'
         run: |
           MODE="${{ steps.probe.outputs.mode }}"
           {
@@ -242,7 +307,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Record run metadata
-        if: always()
+        if: always() && env.SKIP != 'true'
         run: |
           cat > run-metadata.json <<EOF
           {
@@ -266,7 +331,7 @@ jobs:
           echo "Evidence header written to run-metadata.json"
 
       - name: Upload the plan for approval
-        if: inputs.save_plan
+        if: inputs.save_plan && env.SKIP != 'true'
         uses: actions/upload-artifact@v7
         with:
           name: tfplan-bootstrap-${{ inputs.environment }}-${{ github.run_id }}
@@ -283,7 +348,7 @@ jobs:
       # No binary plan, so nothing downstream can apply what a pull request
       # produced. The rendered plan and the detected mode are kept for review.
       - name: Upload the review evidence bundle
-        if: ${{ !inputs.save_plan }}
+        if: ${{ !inputs.save_plan && env.SKIP != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: evidence-bootstrap-plan-${{ inputs.environment }}-${{ github.run_id }}

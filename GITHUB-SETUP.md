@@ -34,6 +34,13 @@ No client secret is ever created. GitHub Actions presents a short-lived OIDC
 token which Entra exchanges for an access token, so there is no credential to
 rotate, store, or leak.
 
+> **You do not have to do all three at once.** Configure `dev` first and verify
+> it end to end; create the `test` and `prod` service principals later. Until an
+> environment's variables exist, pull-request plans for it report *"not
+> configured yet"* and pass, rather than failing. They begin planning for real as
+> soon as you complete §2 and §4 for that environment — nothing in the workflows
+> needs changing.
+
 ### Run the script, once per environment
 
 ```powershell

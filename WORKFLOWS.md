@@ -211,8 +211,23 @@ Nothing to run — it starts itself when a pull request is opened or updated.
 Planning all three matters: the environment roots are separate copies of the same
 files, so a change can be valid for dev and break prod.
 
-An environment that has not been bootstrapped shows a **skipped** plan with a note
-saying so, rather than a failure.
+An environment that is not ready yet shows a **skipped** plan with a note saying
+why, rather than a failure. There are two such cases:
+
+| State | What the plan reports |
+| --- | --- |
+| **No service principal yet** — the environment's `AZURE_*` and `TF_STATE_*` variables are unset | `not configured yet`, listing the missing variables |
+| **Not bootstrapped yet** — configured, but no state backend exists | `skipped`, naming the storage account it looked for |
+
+This is what lets you roll out one environment at a time. Configure and verify
+dev first; `test` and `prod` report as not configured until you create their
+service principals, and start planning for real the moment you do — no workflow
+change is needed.
+
+A **deploy, destroy or bootstrap** run still fails for an unconfigured
+environment. Those name the environment explicitly, so missing configuration is a
+genuine error rather than something to skip past, and the message lists exactly
+which variables are missing.
 
 ### The state backend plans
 
@@ -328,6 +343,8 @@ Download artefacts from the bottom of any run's summary page.
 | `Refusing to deploy from 'refs/heads/...'` | You started a run from a feature branch | Merge to `main`, or use a `hotfix/*` branch |
 | `Refusing to destroy from ...` | Destroy was started from a non-`main` branch | Destroy runs from `main` only |
 | `Confirmation '...' does not match` | The `confirm` box does not match the ticked boxes | Retype exactly, e.g. `dev,prod` |
+| `Environment '<env>' is not configured. Missing: ...` | You asked to deploy, destroy or bootstrap an environment with no service principal | Create it and set the variables — [GITHUB-SETUP.md](GITHUB-SETUP.md) §2 and §4 |
+| A pull-request plan says `not configured yet` | Expected before that environment's service principal exists | Nothing. It starts planning once §2 and §4 are done |
 | `TFVARS is empty for <env>-plan` | The variable is missing on that environment | See [GITHUB-SETUP.md](GITHUB-SETUP.md) §4 |
 | `<field> mismatch - BOOTSTRAP_TFVARS says X, TF_STATE_* says Y` | The two descriptions of the backend disagree | Fix the variables so they name the same account |
 | `The plan came from run N, not this run` | An apply was fed a plan from a different run | Start a fresh run; do not re-run a single job |
