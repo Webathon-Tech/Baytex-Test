@@ -94,12 +94,7 @@ jobs:
           {
             echo "### Bootstrap requested"
             echo ""
-            echo "| | |"
-            echo "| --- | --- |"
-            echo "| Environments | \`$SELECTED\` |"
-            echo "| Branch | \`${{ github.ref_name }}\` |"
-            echo "| Commit | \`${{ github.sha }}\` |"
-            echo "| Requested by | @${{ github.actor }} |"
+            echo "Environments: \`$SELECTED\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Environments are independent - each gets its own resource group, storage

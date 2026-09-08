@@ -221,8 +221,6 @@ jobs:
               echo "> first, then applies. The plan above is pre-import, so it shows creates"
               echo "> for resources that already exist - that is expected."
             fi
-            echo ""
-            echo "Commit \`${{ github.sha }}\` on \`${{ github.ref_name }}\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Record run metadata
@@ -247,7 +245,7 @@ jobs:
             "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           }
           EOF
-          cat run-metadata.json
+          echo "Evidence header written to run-metadata.json"
 
       - name: Upload the plan for approval
         uses: actions/upload-artifact@v7

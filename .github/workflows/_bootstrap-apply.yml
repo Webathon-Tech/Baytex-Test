@@ -284,7 +284,6 @@ jobs:
             echo "| --- | --- |"
             echo "| Bootstrap state key | \`${{ steps.approved.outputs.state_key }}\` |"
             echo "| Mode applied | \`${{ steps.approved.outputs.mode }}\` |"
-            echo "| Commit | \`${{ github.sha }}\` |"
             echo ""
             echo "**Terraform Deploy Platform** can now run for \`${{ inputs.environment }}\`."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -311,7 +310,7 @@ jobs:
             "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           }
           EOF
-          cat run-metadata.json
+          echo "Evidence header written to run-metadata.json"
 
       # This root's storage account holds every environment's state, so the
       # question "what exactly did that run do" must not depend on log retention.

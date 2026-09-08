@@ -241,8 +241,6 @@ jobs:
               v=$(terraform output -raw "$k" 2>/dev/null || echo "-")
               echo "| \`$k\` | \`$v\` |"
             done
-            echo ""
-            echo "Applied commit \`${{ github.sha }}\` from \`${{ github.ref_name }}\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
       # The hub side of the VNet peering is customer-owned and is not managed by
@@ -292,7 +290,7 @@ jobs:
             "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           }
           EOF
-          cat run-metadata.json
+          echo "Evidence header written to run-metadata.json"
 
       # The durable record: 30 days, and uploaded even when the apply failed,
       # because a failed apply is exactly the run somebody needs to reconstruct.

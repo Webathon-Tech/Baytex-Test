@@ -268,8 +268,6 @@ jobs:
             echo '```'
             grep -E '^(Plan:|No changes|Terraform will perform)' plan.txt || tail -n 5 plan.txt
             echo '```'
-            echo ""
-            echo "Commit \`${{ github.sha }}\` on \`${{ github.ref_name }}\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Record run metadata
@@ -293,7 +291,7 @@ jobs:
             "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           }
           EOF
-          cat run-metadata.json
+          echo "Evidence header written to run-metadata.json"
 
       # The handover artefact. Keyed on run_id so an apply job can only ever pick
       # up the plan produced by its own run, and short-lived because it is a
