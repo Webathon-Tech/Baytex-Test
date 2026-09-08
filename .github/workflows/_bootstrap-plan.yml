@@ -28,6 +28,14 @@ on:
         description: Environment whose state backend is being planned (dev / test / prod).
         required: true
         type: string
+      save_plan:
+        description: >-
+          Upload the binary plan so the apply job can consume it. false produces a
+          human-readable plan for review only, and nothing can apply it - used by
+          the pull-request checks.
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -186,10 +194,20 @@ jobs:
         if: steps.probe.outputs.mode != 'remote'
         run: terraform init
 
+      # Locking matches _terraform-plan.yml: a plan that feeds an apply takes the
+      # lease so it sees a state nothing else is mutating, while a review-only
+      # plan runs with -lock=false. Review plans never write state, so taking the
+      # lease would only make concurrent pull requests contend.
       - name: Create the state backend plan
         run: |
           set -euo pipefail
-          terraform plan -lock-timeout=10m -out=bootstrap.tfplan
+          if [ "${{ inputs.save_plan }}" = "true" ]; then
+            echo "Plan will be applied: acquiring the state lock."
+            terraform plan -lock-timeout=10m -out=bootstrap.tfplan
+          else
+            echo "Review-only plan: running with -lock=false so concurrent runs do not contend."
+            terraform plan -lock=false -out=bootstrap.tfplan
+          fi
           terraform show -no-color bootstrap.tfplan > plan.txt
           grep -E '^(Plan:|No changes)' plan.txt || true
 
@@ -248,6 +266,7 @@ jobs:
           echo "Evidence header written to run-metadata.json"
 
       - name: Upload the plan for approval
+        if: inputs.save_plan
         uses: actions/upload-artifact@v7
         with:
           name: tfplan-bootstrap-${{ inputs.environment }}-${{ github.run_id }}
@@ -260,3 +279,17 @@ jobs:
             bootstrap/state/.terraform.lock.hcl
           retention-days: 5
           if-no-files-found: error
+
+      # No binary plan, so nothing downstream can apply what a pull request
+      # produced. The rendered plan and the detected mode are kept for review.
+      - name: Upload the review evidence bundle
+        if: ${{ !inputs.save_plan }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: evidence-bootstrap-plan-${{ inputs.environment }}-${{ github.run_id }}
+          path: |
+            bootstrap/state/plan.txt
+            bootstrap/state/mode.txt
+            bootstrap/state/run-metadata.json
+          retention-days: 14
+          if-no-files-found: warn

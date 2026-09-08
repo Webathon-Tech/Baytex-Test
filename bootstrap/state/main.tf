@@ -13,13 +13,22 @@ resource "azurerm_storage_account" "state" {
   account_kind                  = "StorageV2"
   min_tls_version               = "TLS1_2"
   public_network_access_enabled = true
-  # Entra-only authentication. Every pipeline reaches this account with
-  # use_azuread_auth=true (the Terraform backend) or --auth-mode login (the az
-  # CLI probes), so no shared account key is ever fetched or used. Leaving keys
-  # enabled would leave a credential that bypasses the service principals'
-  # Storage Blob Data Contributor role. The data storage account in
-  # modules/data-foundation is configured the same way.
-  shared_access_key_enabled        = false
+  # Must stay true. The blob_properties block below is a DATA-PLANE setting, and
+  # the azurerm provider in this root reaches the blob endpoint with a shared
+  # account key. Setting this to false makes the account impossible to manage:
+  #   Error: encoding Storage Account (...): executing request: unexpected
+  #   status 403 (403 Key based authentication is not permitted on this storage
+  #   account.) with KeyBasedAuthenticationNotPermitted
+  #
+  # The environment roots avoid this by setting storage_use_azuread = true on
+  # their azurerm provider, which routes data-plane calls through Entra. This
+  # root does not set it, so the key path is the only one available here.
+  #
+  # Access to the state itself is Entra-only regardless: the Terraform backend
+  # uses use_azuread_auth=true and the az CLI probes use --auth-mode login, both
+  # as the service principal via its Storage Blob Data Contributor role. No
+  # pipeline ever reads or passes the account key.
+  shared_access_key_enabled        = true
   default_to_oauth_authentication  = true
   allow_nested_items_to_be_public  = false
   cross_tenant_replication_enabled = false

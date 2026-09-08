@@ -245,6 +245,11 @@ The `/ <job>` suffix appears because those jobs call reusable workflows; GitHub
 reports them as `<calling job name> / <called job name>`. The names must match
 exactly, so if a job is ever renamed, update this list too.
 
+> **Do not add the state backend plans** (`Plan dev state backend (review only) / plan`
+> and its test and prod siblings) to this list. They run only when a pull request
+> touches bootstrap files, so requiring them would make every other merge depend
+> on a check that legitimately does not run.
+
 > A check name only becomes selectable after it has run at least once. Open a
 > throwaway pull request first if the list is empty.
 

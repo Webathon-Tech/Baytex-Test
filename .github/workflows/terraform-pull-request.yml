@@ -39,6 +39,66 @@ jobs:
     name: Validate Terraform code
     uses: ./.github/workflows/_terraform-validate.yml
 
+  # The state backend plans are gated on this rather than on the workflow's own
+  # "paths" filter, because that filter decides whether the WHOLE workflow runs.
+  # A change to environments/ alone should still run the environment plans, but
+  # planning the state backend three more times would add minutes to every pull
+  # request for no new information - the bootstrap root would be unchanged, so
+  # those plans could only ever report "No changes".
+  detect-bootstrap-changes:
+    name: Check whether the state backend changed
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          # Full history: the diff below needs the base commit, which a shallow
+          # clone of the merge ref does not contain.
+          fetch-depth: 0
+
+      - name: Compare the branch against the base
+        id: check
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+
+          # Fail open. If either commit is unavailable the safe answer is to run
+          # the plans, not to skip them silently.
+          if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Could not determine the diff range; running the state backend plans."
+            exit 0
+          fi
+
+          FILES=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- \
+                    'bootstrap/**' \
+                    '.github/workflows/_bootstrap-*.yml' \
+                    '.github/workflows/terraform-bootstrap.yml')
+
+          if [ -n "$FILES" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Bootstrap files changed:"
+            printf '%s\n' "$FILES" | sed 's/^/  /'
+            {
+              echo "### State backend plans will run"
+              echo ""
+              printf '%s\n' "$FILES" | sed 's/^/- `/; s/$/`/'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No bootstrap files changed; skipping the state backend plans."
+            {
+              echo "### State backend plans skipped"
+              echo ""
+              echo "Nothing under \`bootstrap/\` or the bootstrap workflows changed."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   # Reports, never fails. The three environment roots can drift with nothing to
   # notice. Divergence is sometimes deliberate, and a hard failure would train
   # people to work around the check; making it visible on every pull request is
@@ -136,5 +196,47 @@ jobs:
     with:
       environment: prod
       operation: deploy
+      save_plan: false
+    secrets: inherit
+
+  # ------------------------------------------------------- state backend plans
+  # Run ONLY when the pull request changes bootstrap files. Planned for all three
+  # environments for the same reason the platform is: one root serves all three,
+  # so a change can be harmless for dev and destructive for prod.
+  #
+  # This is the review that matters most on this root. The storage account it
+  # manages holds the state for every environment, so a change forcing its
+  # replacement would destroy the state it is tracked in - and previously that
+  # was only visible after somebody triggered the bootstrap workflow by hand.
+  #
+  # save_plan: false keeps them review-only: no binary plan is uploaded, so
+  # nothing a pull request produces can be applied.
+  plan-bootstrap-dev:
+    name: Plan dev state backend (review only)
+    needs: [validate, detect-bootstrap-changes]
+    if: needs.detect-bootstrap-changes.outputs.changed == 'true'
+    uses: ./.github/workflows/_bootstrap-plan.yml
+    with:
+      environment: dev
+      save_plan: false
+    secrets: inherit
+
+  plan-bootstrap-test:
+    name: Plan test state backend (review only)
+    needs: [validate, detect-bootstrap-changes]
+    if: needs.detect-bootstrap-changes.outputs.changed == 'true'
+    uses: ./.github/workflows/_bootstrap-plan.yml
+    with:
+      environment: test
+      save_plan: false
+    secrets: inherit
+
+  plan-bootstrap-prod:
+    name: Plan prod state backend (review only)
+    needs: [validate, detect-bootstrap-changes]
+    if: needs.detect-bootstrap-changes.outputs.changed == 'true'
+    uses: ./.github/workflows/_bootstrap-plan.yml
+    with:
+      environment: prod
       save_plan: false
     secrets: inherit
