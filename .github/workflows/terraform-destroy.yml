@@ -114,12 +114,7 @@ jobs:
           {
             echo "### Destroy requested"
             echo ""
-            echo "| | |"
-            echo "| --- | --- |"
-            echo "| Environments | \`$SELECTED\` |"
-            echo "| Branch | \`${{ github.ref_name }}\` |"
-            echo "| Commit | \`${{ github.sha }}\` |"
-            echo "| Requested by | @${{ github.actor }} |"
+            echo "Environments: \`$SELECTED\`"
             echo ""
             echo "A destroy plan is produced for each environment first. Read it before approving."
           } >> "$GITHUB_STEP_SUMMARY"

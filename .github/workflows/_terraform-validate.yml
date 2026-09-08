@@ -114,7 +114,7 @@ jobs:
             "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           }
           EOF
-          cat run-metadata.json
+          echo "Evidence header written to run-metadata.json"
 
       - name: Upload the validation evidence bundle
         if: always()
