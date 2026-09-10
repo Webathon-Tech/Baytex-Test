@@ -12,16 +12,6 @@ locals {
 
   frontend_ips = [for endpoint in values(var.endpoints) : endpoint.frontend_ip]
 
-  # Every rendered template is CR-stripped before it reaches cloud-init.
-  # On a Windows checkout (git core.autocrlf=true) these .tftpl files arrive with
-  # CRLF endings, and templatefile() preserves them verbatim. A shell script that
-  # begins "#!/usr/bin/env bash\r" then dies with:
-  #     /usr/bin/env: 'bash\r': No such file or directory
-  # which silently breaks the whole tier: configure-lb-ips never creates dummy0,
-  # the load balancer frontend IPs are never bound, and HAProxy cannot bind its
-  # listeners so it fails to start -- while terraform still reports success.
-  # .gitattributes pins these files to LF; this replace() is the belt-and-braces
-  # guard so the module is correct regardless of how the repo was checked out.
   haproxy_config = replace(templatefile("${path.module}/templates/haproxy.cfg.tftpl", {
     dns_servers = var.dns_servers
     endpoints   = var.endpoints

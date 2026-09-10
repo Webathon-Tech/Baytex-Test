@@ -1,9 +1,5 @@
 # Architecture and Ownership Boundaries
 
-> This page is the **ownership summary**. For what the platform builds and the
-> design choices behind it, see [README.md](../README.md). For how the pipelines
-> deploy it, see [WORKFLOWS.md](../WORKFLOWS.md).
-
 ## Target flow
 
 ```text

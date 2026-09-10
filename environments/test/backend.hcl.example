@@ -1,5 +1,5 @@
-resource_group_name  = "rg-bte-dbx-dev-tfstate-cnc-001"
-storage_account_name = "stbtedbxdevtfcnc001"
+resource_group_name  = "rg-bte-dbx-test-tfstate-cnc-001"
+storage_account_name = "stbtedbxtesttfcnc001"
 container_name       = "tfstate"
-key                  = "dev/platform.tfstate"
+key                  = "test/platform.tfstate"
 use_azuread_auth     = true

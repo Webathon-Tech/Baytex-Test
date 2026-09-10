@@ -1,13 +1,20 @@
+# Dev values. Each environment supplies its own copy through BOOTSTRAP_TFVARS:
+#
+#   test  rg-bte-dbx-test-tfstate-cnc-001 / stbtedbxtesttfcnc001
+#   prod  rg-bte-dbx-prod-tfstate-cnc-001 / stbtedbxprodtfcnc001
+
 tenant_id       = "9a6302b1-6a51-4f41-ad6b-ad23218c074d"
 subscription_id = "e3a6598e-28b1-4d6a-8698-6683cd1d6995"
 location        = "canadacentral"
 
-resource_group_name = "rg-bte-dbx-dev-tfstate-cnc-001"
+# Must match TF_STATE_RESOURCE_GROUP, TF_STATE_STORAGE_ACCOUNT and
+# TF_STATE_CONTAINER on the same GitHub Environment. The bootstrap workflow
+# cross-checks them.
+resource_group_name  = "rg-bte-dbx-dev-tfstate-cnc-001"
 storage_account_name = "stbtedbxdevtfcnc001"
-container_name        = "tfstate"
+container_name       = "tfstate"
 
-
-# Object IDs, not client/application IDs. Include the GitHub OIDC service principal and any approved operators.
-state_blob_data_contributor_principal_ids = [
-  "<GITHUB-OIDC-SERVICE-PRINCIPAL-OBJECT-ID>"
-]
+# Object IDs, not client/application IDs. Grants Storage Blob Data Contributor on
+# the state account. The deployment service principal already holds it at
+# subscription scope.
+state_blob_data_contributor_principal_ids = []

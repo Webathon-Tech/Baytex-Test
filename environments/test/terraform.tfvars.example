@@ -1,7 +1,8 @@
-# Dev environment values. cost_centre is provisional. IPAM sign-off pending.
+# Test environment values. subscription_id pending. cost_centre is provisional.
+# IPAM sign-off pending.
 
 tenant_id       = "9a6302b1-6a51-4f41-ad6b-ad23218c074d"
-subscription_id = "e3a6598e-28b1-4d6a-8698-6683cd1d6995"
+subscription_id = "<BAYTEX-TEST-SUBSCRIPTION-ID>"
 
 # From the Baytex Databricks account console.
 databricks_account_id = "1ff56ce7-99f9-4d29-b2d7-5da177c5f55b"
@@ -10,20 +11,20 @@ existing_metastore_id = "858890e3-8d95-42c7-922e-4107a0055500"
 location     = "canadacentral"
 organization = "bte"
 workload     = "dbx"
-environment  = "dev"
+environment  = "test"
 region_short = "cnc"
 instance     = "001"
 
 owner               = "Baytex Infrastructure"
-cost_centre         = "BTX-DBX-DEV"
+cost_centre         = "BTX-DBX-TEST"
 data_classification = "Internal"
 
 # Spoke address space.
-vnet_cidr                        = "10.40.96.0/20"
-databricks_host_subnet_cidr      = "10.40.96.0/24"
-databricks_container_subnet_cidr = "10.40.97.0/24"
-private_endpoint_subnet_cidr     = "10.40.98.0/26"
-proxy_subnet_cidr                = "10.40.99.0/26"
+vnet_cidr                        = "10.40.112.0/20"
+databricks_host_subnet_cidr      = "10.40.112.0/24"
+databricks_container_subnet_cidr = "10.40.113.0/24"
+private_endpoint_subnet_cidr     = "10.40.114.0/26"
+proxy_subnet_cidr                = "10.40.115.0/26"
 
 # Corporate DNS servers, in preference order. Applied to the VNet and to the
 # HAProxy resolver.
@@ -42,7 +43,7 @@ hub_vnet_id               = "/subscriptions/557d1301-8d98-483e-ac69-4f23bf2cb2eb
 cisco_firewall_private_ip = "10.40.240.36"
 
 # Set false if Baytex creates both peering directions.
-create_spoke_to_hub_peering = false
+create_spoke_to_hub_peering = true
 
 # Prefixes routed to cisco_firewall_private_ip.
 on_prem_routes = {
@@ -61,8 +62,8 @@ ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIpC6AYv2TDM3+DFJJYLSy3hQZ
 
 proxy_vm_size = "Standard_D4s_v3"
 proxy_vm_private_ips = [
-  "10.40.99.5",
-  "10.40.99.6"
+  "10.40.115.5",
+  "10.40.115.6"
 ]
 
 # On-premises destinations. SQL03YYC and Trimble/TMW are not configured.
@@ -70,48 +71,48 @@ proxy_vm_private_ips = [
 # Trailing comments are the confirmed IP addresses.
 on_prem_endpoints = {
   sqlbidb01yyc = {
-    frontend_ip = "10.40.99.11"
-    pls_nat_ip  = "10.40.99.21"
+    frontend_ip = "10.40.115.11"
+    pls_nat_ip  = "10.40.115.21"
     listen_port = 1433
     target_fqdn = "sqlbidb01yyc.baytexenergy.com" # 172.19.77.45
     target_port = 1433
     domain_name = "sqlbidb01yyc.baytexenergy.com"
   }
   sqlbidb01yyc_t = {
-    frontend_ip = "10.40.99.12"
-    pls_nat_ip  = "10.40.99.22"
+    frontend_ip = "10.40.115.12"
+    pls_nat_ip  = "10.40.115.22"
     listen_port = 1433
     target_fqdn = "sqlbidb01yyc-t.baytexenergy.com" # 172.19.96.44
     target_port = 1433
     domain_name = "sqlbidb01yyc-t.baytexenergy.com"
   }
   sql14yyc = {
-    frontend_ip = "10.40.99.13"
-    pls_nat_ip  = "10.40.99.23"
+    frontend_ip = "10.40.115.13"
+    pls_nat_ip  = "10.40.115.23"
     listen_port = 1433
     target_fqdn = "sql14yyc.baytexenergy.com" # 172.19.77.94
     target_port = 1433
     domain_name = "sql14yyc.baytexenergy.com"
   }
   sql6 = {
-    frontend_ip = "10.40.99.16"
-    pls_nat_ip  = "10.40.99.26"
+    frontend_ip = "10.40.115.16"
+    pls_nat_ip  = "10.40.115.26"
     listen_port = 1433
     target_fqdn = "sql6.baytexenergy.com" # 172.19.77.123
     target_port = 1433
     domain_name = "sql6.baytexenergy.com"
   }
   ora33yyc = {
-    frontend_ip = "10.40.99.14"
-    pls_nat_ip  = "10.40.99.24"
+    frontend_ip = "10.40.115.14"
+    pls_nat_ip  = "10.40.115.24"
     listen_port = 1521
     target_fqdn = "ora33yyc.baytexenergy.com" # 172.19.77.88
     target_port = 1521
     domain_name = "ora33yyc.baytexenergy.com"
   }
   ora33yyc_t = {
-    frontend_ip = "10.40.99.15"
-    pls_nat_ip  = "10.40.99.25"
+    frontend_ip = "10.40.115.15"
+    pls_nat_ip  = "10.40.115.25"
     listen_port = 1521
     target_fqdn = "ora33yyc-t.baytexenergy.com" # 172.19.96.112
     target_port = 1521
@@ -127,8 +128,8 @@ pls_visibility_subscription_ids        = []
 pls_auto_approval_subscription_ids     = []
 
 # Must be globally unique.
-data_storage_account_name           = "stbtedbxdevcnc001"
-workspace_root_storage_account_name = "stbtedbxdevroot001"
+data_storage_account_name           = "stbtedbxtestcnc001"
+workspace_root_storage_account_name = "stbtedbxtestroot001"
 
 data_containers = ["managed", "external", "landing", "checkpoints"]
 
