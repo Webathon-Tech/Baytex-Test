@@ -241,3 +241,5 @@ variable "alert_email_receivers" {
   default     = {}
   description = "Map of receiver name to email address."
 }
+
+# end-to-end verification: unconfigured environment path
