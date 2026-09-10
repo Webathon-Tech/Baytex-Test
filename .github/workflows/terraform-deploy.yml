@@ -2,9 +2,8 @@ name: Terraform Deploy Platform
 
 # Builds or updates the Databricks platform in one or more environments.
 #
-# Environments are checkboxes, so any combination can be run. Promotion order is
-# still enforced for whatever is ticked: with dev and prod selected, prod waits
-# for dev to apply successfully. An environment that is not ticked drops out of
+# Environments are checkboxes, so any combination can be run. Promotion order is still enforced for whatever is ticked:
+# with dev and prod selected, prod waits for dev to apply successfully. An environment that is not ticked drops out of
 # the chain instead of blocking the ones after it.
 #
 # Every stage is a plan job followed by an apply job:
@@ -12,8 +11,8 @@ name: Terraform Deploy Platform
 #   Plan dev deployment   ->  Apply dev deployment
 #     (dev-plan)                (dev-apply)   <- attach reviewers here to gate it
 #
-# The apply consumes the exact binary plan the plan job produced. It never
-# re-plans, so what a reviewer approves is what reaches Azure.
+# The apply consumes the exact binary plan the plan job produced. It never re-plans, so what a reviewer approves is what
+# reaches Azure.
 
 on:
   workflow_dispatch:
@@ -35,17 +34,15 @@ permissions:
   contents: read
   id-token: write
 
-# Shared with Terraform Destroy Platform so a deploy and a destroy can never run
-# at the same time and contend for the state lock. A single run can span all
-# three environments, so this cannot be scoped per environment - and serialising
+# Shared with Terraform Destroy Platform so a deploy and a destroy can never run at the same time and contend for the
+# state lock. A single run can span all three environments, so this cannot be scoped per environment - and serialising
 # mutating runs is the right trade. Plans are cheap to redo; applies are not.
 concurrency:
   group: terraform-mutate
   cancel-in-progress: false
 
 jobs:
-  # Fails in seconds, before any Azure sign-in, if the run should not have been
-  # started at all.
+  # Fails in seconds, before any Azure sign-in, if the run should not have been started at all.
   preflight:
     name: Check the run is allowed
     runs-on: ubuntu-latest
@@ -53,13 +50,11 @@ jobs:
       run:
         shell: bash
     steps:
-      # workflow_dispatch lets whoever starts a run pick any branch. Without this
-      # check, anyone with write access could deploy unreviewed code to
-      # production by choosing their own branch from the dropdown.
+      # workflow_dispatch lets whoever starts a run pick any branch. Without this check, anyone with write access could
+      # deploy unreviewed code to production by choosing their own branch from the dropdown.
       #
-      # hotfix/* is the deliberate emergency path: branch from the last
-      # known-good commit, cherry-pick the single fix, and deploy that rather
-      # than whatever else has since landed on main.
+      # hotfix/* is the deliberate emergency path: branch from the last known-good commit, cherry-pick the single fix,
+      # and deploy that rather than whatever else has since landed on main.
       - name: Check the branch is allowed to deploy
         run: |
           case "${{ github.ref }}" in
@@ -91,7 +86,7 @@ jobs:
 
   # ------------------------------------------------------------------- dev
   dev-plan:
-    name: Plan dev deployment
+    name: Plan dev platform
     needs: preflight
     if: inputs.dev
     uses: ./.github/workflows/_terraform-plan.yml
@@ -102,7 +97,7 @@ jobs:
     secrets: inherit
 
   dev-apply:
-    name: Apply dev deployment
+    name: Apply dev platform
     needs: dev-plan
     uses: ./.github/workflows/_terraform-apply.yml
     with:
@@ -118,7 +113,7 @@ jobs:
   # "!inputs.<env> ||" clauses do: an environment that was not ticked cannot
   # block the ones after it, but one that WAS ticked must have applied cleanly.
   test-plan:
-    name: Plan test deployment
+    name: Plan test platform
     needs: [preflight, dev-apply]
     if: >-
       always() && inputs.test
@@ -132,7 +127,7 @@ jobs:
     secrets: inherit
 
   test-apply:
-    name: Apply test deployment
+    name: Apply test platform
     needs: test-plan
     if: always() && needs.test-plan.result == 'success'
     uses: ./.github/workflows/_terraform-apply.yml
@@ -142,13 +137,13 @@ jobs:
       allowed_refs: refs/heads/main refs/heads/hotfix/*
     secrets: inherit
 
-  # ------------------------------------------------------------------ prod
-  # prod depends on BOTH earlier stages, not just test. With dev and prod ticked
-  # but not test, test drops out - and if prod were gated on test alone,
-  # "!inputs.test" would be true and prod would deploy even after dev had failed.
-  # Each stage is therefore gated on every earlier stage that was actually ticked.
+  # ------------------------------------------------------------------ prod prod depends on
+  # BOTH earlier stages, not
+  # just test. With dev and prod ticked but not test, test drops out - and if prod were gated on test alone,
+  # "!inputs.test" would be true and prod would deploy even after dev had failed. Each stage is therefore gated on every
+  # earlier stage that was actually ticked.
   prod-plan:
-    name: Plan prod deployment
+    name: Plan prod platform
     needs: [preflight, dev-apply, test-apply]
     if: >-
       always() && inputs.prod
@@ -163,7 +158,7 @@ jobs:
     secrets: inherit
 
   prod-apply:
-    name: Apply prod deployment
+    name: Apply prod platform
     needs: prod-plan
     if: always() && needs.prod-plan.result == 'success'
     uses: ./.github/workflows/_terraform-apply.yml

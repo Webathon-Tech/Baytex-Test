@@ -2,8 +2,7 @@ name: Reusable - Terraform Plan
 
 # Produces a Terraform plan for one environment and uploads it.
 #
-# One workflow covers all three kinds of plan because the mechanics are the same
-# in each case; only the flags differ:
+# One workflow covers all three kinds of plan because the mechanics are the same in each case; only the flags differ:
 #
 #   operation: deploy   terraform plan            -> what will be created/changed
 #   operation: destroy  terraform plan -destroy   -> what will be removed
@@ -13,9 +12,8 @@ name: Reusable - Terraform Plan
 # splitting them into separate workflows would duplicate everything in order to
 # change two command-line flags.
 #
-# This job runs in the "<env>-plan" GitHub Environment, which holds the
-# credentials for the environment and carries no approval gate. Approval belongs
-# on the apply, once there is a plan to approve.
+# This job runs in the "<env>-plan" GitHub Environment, which holds the credentials for the environment and carries no
+# approval gate. Approval belongs on the apply, once there is a plan to approve.
 
 on:
   workflow_call:
@@ -55,28 +53,24 @@ jobs:
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
       ARM_USE_AZUREAD: "true"
-      TERRAFORM_VERSION: "1.16.1"
-      # The NCC private endpoint rule resource sits behind a provider feature
-      # flag. Without this the resource type is unknown and the plan fails.
+      # The NCC private endpoint rule resource sits behind a provider feature flag. Without this the resource type is
+      # unknown and the plan fails.
       DATABRICKS_TF_ENABLED_PF_RESOURCES: databricks_mws_ncc_private_endpoint_rule
 
     steps:
       - name: Check out the repository
         uses: actions/checkout@v7
 
-      # Runs before the Azure sign-in, because that is what breaks first. An
-      # environment whose service principal does not exist yet has no
-      # AZURE_CLIENT_ID, and azure/login then fails with an authentication error
-      # that says nothing about the real cause.
+      # Runs before the Azure sign-in, because that is what breaks first. An environment whose service principal does
+      # not exist yet has no AZURE_CLIENT_ID, and azure/login then fails with an authentication error that says nothing
+      # about the real cause.
       #
-      # test and prod are normally configured later than dev - their service
-      # principals are created only once dev has been verified - so a
-      # pull-request plan for them has to report "not configured yet" rather than
-      # a red failure that people learn to ignore.
+      # test and prod are normally configured later than dev - their service principals are created only once dev has
+      # been verified - so a pull-request plan for them has to report "not configured yet" rather than a red failure
+      # that people learn to ignore.
       #
-      # A deploy or destroy still fails here: those name an environment
-      # explicitly, so missing configuration is a genuine error, not a state to
-      # skip past.
+      # A deploy or destroy still fails here: those name an environment explicitly, so missing configuration is a
+      # genuine error, not a state to skip past.
       - name: Check the environment is configured
         env:
           AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
@@ -110,17 +104,6 @@ jobs:
 
           echo "SKIP=true" >> "$GITHUB_ENV"
           echo "::notice::Skipping ${{ inputs.environment }} - not configured yet (missing:$MISSING)."
-          {
-            echo "### ${{ inputs.environment }}: not configured yet"
-            echo ""
-            echo "No plan was produced: this environment has no deployment identity."
-            echo ""
-            echo "Missing variables:"
-            for v in $MISSING; do echo "- \`$v\`"; done
-            echo ""
-            echo "Expected until the service principal for \`${{ inputs.environment }}\` is created."
-            echo "See GITHUB-SETUP.md."
-          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Sign in to Azure with OIDC
         if: env.SKIP != 'true'
@@ -134,17 +117,31 @@ jobs:
         if: env.SKIP != 'true'
         uses: hashicorp/setup-terraform@v4
         with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_version: ${{ vars.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
       # Runs before terraform.tfvars is written. "terraform fmt -check
       # -recursive" also inspects .tfvars files, so writing the variables file
       # first would make this gate report on the content of a GitHub variable
       # instead of on repository code.
+      #
+      # Scoped to the code this pipeline deploys. "terraform fmt" takes a single
+      # target, so the deployed paths are walked in turn.
       - name: Check Terraform formatting
         if: env.SKIP != 'true'
         working-directory: .
-        run: terraform fmt -check -recursive
+        run: |
+          set -uo pipefail
+          FAILED=0
+
+          for dir in environments/dev environments/test environments/prod \
+                     bootstrap/dev bootstrap/test bootstrap/prod modules; do
+            [ -d "$dir" ] || continue
+            terraform fmt -check -recursive "$dir" || FAILED=1
+          done
+
+          [ "$FAILED" -eq 0 ] || { echo "::error::Formatting issues listed above. Run 'terraform fmt -recursive' on the reported directories and commit the result."; exit 1; }
+          echo "All Terraform files are correctly formatted."
 
       # "terraform init" against a storage account that does not exist fails with
       # a raw Azure error that reads like a permissions problem. Probing first
@@ -186,22 +183,13 @@ jobs:
 
           echo "SKIP=true" >> "$GITHUB_ENV"
           echo "::notice::Skipping ${{ inputs.environment }} - it has no state backend yet."
-          {
-            echo "### ${{ inputs.environment }}: skipped"
-            echo ""
-            echo "No state backend found (\`$STATE_SA\` / \`$STATE_CONTAINER\` in \`$STATE_RG\`)."
-            echo "This environment has not been bootstrapped, so there is nothing to plan against."
-            echo ""
-            echo "Run **Terraform Bootstrap State Backend** for \`${{ inputs.environment }}\` to enable it."
-          } >> "$GITHUB_STEP_SUMMARY"
 
-      # The complete variables file for this environment lives in GitHub rather
-      # than in git, so one set of .tf files serves all three environments.
+      # The complete variables file for this environment lives in GitHub rather than in git, so one set of .tf files
+      # serves all three environments.
       #
-      # TESTING ONLY: read from a repository VARIABLE so its content is visible
-      # in the GitHub UI while the platform is being validated. Switch to the
-      # commented line before any client deployment - GitHub masks secrets in
-      # logs and does not mask variables.
+      # TESTING ONLY: read from a repository VARIABLE so its content is visible in the GitHub UI while the platform is
+      # being validated. Switch to the commented line before any client deployment - GitHub masks secrets in logs and
+      # does not mask variables.
       - name: Write terraform.tfvars
         if: env.SKIP != 'true'
         env:
@@ -211,9 +199,8 @@ jobs:
           test -n "$TFVARS" || { echo "::error::TFVARS is empty for ${{ inputs.environment }}-plan. Set it on that GitHub Environment - see GITHUB-SETUP.md."; exit 1; }
           printf '%s\n' "$TFVARS" > terraform.tfvars
 
-      # use_azuread_auth makes the backend authenticate as the signed-in service
-      # principal via its Storage Blob Data Contributor role. No storage account
-      # key is fetched, stored, or passed to Terraform.
+      # use_azuread_auth makes the backend authenticate as the signed-in service principal via its Storage Blob Data
+      # Contributor role. No storage account key is fetched, stored, or passed to Terraform.
       - name: Initialise the Terraform backend
         if: env.SKIP != 'true'
         run: |
@@ -228,31 +215,22 @@ jobs:
         if: env.SKIP != 'true'
         run: terraform validate
 
-      # Recorded before anything is torn down, so the evidence bundle shows what
-      # the environment contained at the moment the destroy was planned.
+      # Recorded before anything is torn down, so the evidence bundle shows what the environment contained at the moment
+      # the destroy was planned.
       - name: Record the resources that exist before destroying
         if: inputs.operation == 'destroy' && env.SKIP != 'true'
         run: |
           terraform state list > state-before.txt || true
           echo "Resources currently tracked: $(wc -l < state-before.txt)"
-          {
-            echo "### ${{ inputs.environment }}: resources before destroy"
-            echo ""
-            echo '```'
-            cat state-before.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
 
-      # Azure refuses to delete a Private Link Service that still has private
-      # endpoint connections. The Databricks-managed endpoints created by the NCC
-      # rules outlive the NCC itself: they stay "Approved" against the Private
-      # Link Service after the NCC is gone, and the destroy then fails with
-      # PrivateLinkServiceWithPrivateEndpointConnectionsCannotBeDeleted, leaving
-      # the network and connectivity resource groups behind.
+      # Azure refuses to delete a Private Link Service that still has private endpoint connections. The
+      # Databricks-managed endpoints created by the NCC rules outlive the NCC itself: they stay "Approved" against the
+      # Private Link Service after the NCC is gone, and the destroy then fails with
+      # PrivateLinkServiceWithPrivateEndpointConnectionsCannotBeDeleted, leaving the network and connectivity resource
+      # groups behind.
       #
-      # Clearing them here makes a destroy complete in one pass. The step is a
-      # no-op when there is nothing to clear, and runs before the plan so the
-      # plan reflects the cleared state.
+      # Clearing them here makes a destroy complete in one pass. The step is a no-op when there is nothing to clear, and
+      # runs before the plan so the plan reflects the cleared state.
       - name: Clear private endpoint connections from Private Link Services
         if: inputs.operation == 'destroy' && env.SKIP != 'true'
         env:
@@ -260,9 +238,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # The connectivity resource group name is rebuilt from the same naming
-          # components the Terraform uses (see locals.tf), rather than hardcoded,
-          # so this works for any client prefix, workload and region.
+          # The connectivity resource group name is rebuilt from the same naming components the Terraform uses (see
+          # locals.tf), rather than hardcoded, so this works for any client prefix, workload and region.
           val () {
             grep -E "^[[:space:]]*$1[[:space:]]*=" terraform.tfvars \
               | head -1 | sed 's/.*=[[:space:]]*//; s/^"//; s/"[[:space:]]*$//'
@@ -345,20 +322,19 @@ jobs:
             "ref": "${{ github.ref }}",
             "commit_sha": "${{ github.sha }}",
             "triggered_by": "${{ github.actor }}",
-            "terraform_version": "${{ env.TERRAFORM_VERSION }}",
+            "terraform_version": "${{ vars.TERRAFORM_VERSION }}",
             "recorded_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           }
           EOF
           echo "Evidence header written to run-metadata.json"
 
-      # The handover artefact. Keyed on run_id so an apply job can only ever pick
-      # up the plan produced by its own run, and short-lived because it is a
-      # working file rather than a record - the durable record is the evidence
-      # bundle the apply job uploads.
+      # The handover artefact. Keyed on run_id so an apply job can only ever pick up the plan produced by its own run,
+      # and short-lived because it is a working file rather than a record - the durable record is the evidence bundle
+      # the apply job uploads.
       #
-      # if-no-files-found: error, because an apply job silently finding no plan
-      # is far worse than a plan job failing loudly.
+      # if-no-files-found: error, because an apply job silently finding no plan is far worse than a plan job failing
+      # loudly.
       - name: Upload the plan for approval
         if: inputs.save_plan && env.SKIP != 'true'
         uses: actions/upload-artifact@v7

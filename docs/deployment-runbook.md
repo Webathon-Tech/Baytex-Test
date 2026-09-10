@@ -12,7 +12,7 @@
 
 ## Gate 1 — state bootstrap
 
-Deploy `bootstrap/state` using an approved administrative identity. Enable Blob versioning and soft delete. Record the backend values.
+Deploy `bootstrap/<env>` using an approved administrative identity. Enable Blob versioning and soft delete. Record the backend values.
 
 ## Gate 2 — plan
 

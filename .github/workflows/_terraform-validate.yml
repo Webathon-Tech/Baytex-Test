@@ -6,9 +6,8 @@ name: Reusable - Terraform Validate
 # -backend=false" is enough for validate, so this is safe to run on a branch
 # opened by someone with no deployment rights, and it finishes in seconds.
 #
-# The plan jobs depend on this rather than running beside it. A plan against an
-# environment with no state backend reports a clean skip, so without this gate a
-# syntax error could pass unnoticed as three green skips.
+# The plan jobs depend on this rather than running beside it. A plan against an environment with no state backend
+# reports a clean skip, so without this gate a syntax error could pass unnoticed as three green skips.
 
 on:
   workflow_call:
@@ -27,7 +26,6 @@ jobs:
     env:
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
-      TERRAFORM_VERSION: "1.16.1"
 
     steps:
       - name: Check out the repository
@@ -36,20 +34,33 @@ jobs:
       - name: Install Terraform
         uses: hashicorp/setup-terraform@v4
         with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_version: ${{ vars.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
+      # Scoped to the code this pipeline deploys. "terraform fmt" takes a single
+      # target, so the deployed paths are walked in turn rather than recursing
+      # from the repository root - which would also grade roots that are never
+      # planned or applied from here.
       - name: Check Terraform formatting
         run: |
-          if terraform fmt -check -recursive; then
+          set -uo pipefail
+          FAILED=0
+
+          for dir in environments/dev environments/test environments/prod \
+                     bootstrap/dev bootstrap/test bootstrap/prod modules; do
+            [ -d "$dir" ] || continue
+            terraform fmt -check -recursive "$dir" || FAILED=1
+          done
+
+          if [ "$FAILED" -eq 0 ]; then
             echo "All Terraform files are correctly formatted."
           else
-            echo "::error::Formatting issues listed above. Run 'terraform fmt -recursive' locally and commit the result."
+            echo "::error::Formatting issues listed above. Run 'terraform fmt -recursive' on the reported directories and commit the result."
             exit 1
           fi
 
-      # Each root is validated on its own. Modules are validated through the
-      # roots that call them, which is also how they are consumed in practice.
+      # Each root is validated on its own. Modules are validated through the roots that call them, which is also how
+      # they are consumed in practice.
       - name: Validate every Terraform root
         run: |
           set -uo pipefail
@@ -57,7 +68,7 @@ jobs:
           : > validate.txt
 
           for dir in environments/dev environments/test environments/prod \
-                     bootstrap/state baytex-bi-owned-unity-catalog-example; do
+                     bootstrap/dev bootstrap/test bootstrap/prod; do
             [ -d "$dir" ] || continue
             echo "::group::validate $dir"
             if terraform -chdir="$dir" init -backend=false -input=false >/dev/null 2>&1 \
@@ -74,26 +85,6 @@ jobs:
 
           exit $FAILED
 
-      # head_ref rather than ref_name: on a pull_request event ref_name is
-      # "<number>/merge", which tells a reviewer nothing useful.
-      - name: Publish the validation summary
-        if: always()
-        env:
-          BRANCH: ${{ github.head_ref || github.ref_name }}
-        run: |
-          {
-            echo "### Terraform fmt and validate"
-            echo ""
-            if [ "${{ job.status }}" = "success" ]; then
-              echo "Passed on \`$BRANCH\`."
-            else
-              echo "Failed on \`$BRANCH\`. Run \`terraform fmt -recursive\` for formatting issues,"
-              echo "fix any validate errors, and push again - the plan jobs wait on this."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      # Every artefact carries this header so that months later it is possible to
-      # say which commit produced it and who triggered the run.
       - name: Record run metadata
         if: always()
         run: |
@@ -109,7 +100,7 @@ jobs:
             "ref": "${{ github.ref }}",
             "commit_sha": "${{ github.sha }}",
             "triggered_by": "${{ github.actor }}",
-            "terraform_version": "${{ env.TERRAFORM_VERSION }}",
+            "terraform_version": "${{ vars.TERRAFORM_VERSION }}",
             "recorded_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           }

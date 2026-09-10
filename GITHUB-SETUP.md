@@ -180,7 +180,7 @@ and the workflow writes it to disk at run time. This is what lets one set of
 `.tf` files serve three environments with **no environment-specific values in
 git** — no CIDRs, no resource names, no hostnames.
 
-`BOOTSTRAP_TFVARS` does the same for `bootstrap/state`. It must name the **same**
+`BOOTSTRAP_TFVARS` does the same for `bootstrap/<env>`. It must name the **same**
 resource group, storage account and container as the `TF_STATE_*` variables — the
 bootstrap workflow cross-checks them and refuses to run if they disagree, because
 otherwise it would create one storage account and store its state in a different
@@ -315,19 +315,19 @@ Settings → Branches → **Add branch protection rule** for `main`:
 ```
 Validate Terraform code / validate
 Check environment root parity
-Plan dev (review only) / plan
-Plan test (review only) / plan
-Plan prod (review only) / plan
+Plan dev platform (review only) / plan
+Plan test platform (review only) / plan
+Plan prod platform (review only) / plan
 ```
 
 The `/ <job>` suffix appears because those jobs call reusable workflows; GitHub
 reports them as `<calling job name> / <called job name>`. The names must match
 exactly, so if a job is ever renamed, update this list too.
 
-> **Do not add the state backend plans** (`Plan dev state backend (review only) / plan`
-> and its test and prod siblings) to this list. They run only when a pull request
-> touches bootstrap files, so requiring them would make every other merge depend
-> on a check that legitimately does not run.
+> **Only `Validate Terraform code / validate` should be required.** Every other check in that workflow is conditional
+> — the platform plans run when `environments/**` or `modules/**` changed, the bootstrap plans and both parity checks
+> when their own directory changed. A required check that gets skipped leaves the pull request permanently unmergeable,
+> so listing any of them here would block ordinary merges.
 
 > A check name only becomes selectable after it has run at least once. Open a
 > throwaway pull request first if the list is empty.
@@ -343,9 +343,9 @@ gh api -X PUT repos/<org>/<repo>/branches/main/protection \
     "contexts": [
       "Validate Terraform code / validate",
       "Check environment root parity",
-      "Plan dev (review only) / plan",
-      "Plan test (review only) / plan",
-      "Plan prod (review only) / plan"
+      "Plan dev platform (review only) / plan",
+      "Plan test platform (review only) / plan",
+      "Plan prod platform (review only) / plan"
     ]
   },
   "enforce_admins": true,

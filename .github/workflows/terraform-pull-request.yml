@@ -1,61 +1,58 @@
 name: Terraform Pull Request Checks
 
-# Everything a reviewer needs before approving a change, in one run. Plan only -
-# this workflow can never apply anything, and holds no path to an apply job.
+# Everything a reviewer needs before approving a change, in one run. Plan only - this workflow can never apply anything
+# and holds no path to an apply job.
 #
-# Runs on pull requests only. A merge does not re-run it: the same commit was
-# already checked on the pull request, and repeating five checks on code that has
-# just been approved teaches people to ignore them.
+# It runs on every pull request, with no paths filter. Filtering at the workflow level decides whether the workflow
+# STARTS, so a documentation-only change would never run it - and a required status check that never runs sits pending
+# forever and blocks the merge. The filtering happens per job instead, driven by "Detect changed areas".
 #
-# All three environments are planned, not just dev. The environment roots are
-# separate copies of the same .tf files, so a change can be valid for dev and
-# break prod - a name collision, or an address range that does not fit prod's
-# allocation. Planning dev alone would not show it.
+# Each area triggers only the checks that can say something about it:
+#
+#   environments/**   environment parity, plus all three platform plans
+#   modules/**        all three platform plans, because the roots consume the modules
+#   bootstrap/**      bootstrap parity, plus all three state backend plans
+#   anything else     neither
+#
+# "Validate Terraform code" is the only check that should be required in branch protection. Everything else here is
+# conditional, and a required check that gets skipped is the same trap as a paths filter.
 
 on:
   pull_request:
-    paths:
-      - "environments/**"
-      - "modules/**"
-      - "bootstrap/**"
-      - ".github/workflows/**"
 
 permissions:
   contents: read
   id-token: write
 
-# Superseded by a newer push to the same branch. Safe to cancel because nothing
-# here writes state and the plans run with -lock=false.
+# Superseded by a newer push to the same branch. Safe to cancel because nothing here writes state and the plans run with
+# -lock=false.
 concurrency:
   group: terraform-pull-request-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # Seconds, and no credentials, so it runs first and everything expensive waits
-  # on it. The plan jobs depend on it because a plan against an environment with
-  # no state backend reports a clean skip - without this gate a syntax error
-  # could pass as three green skips.
+  # Seconds, and no credentials. Every plan job depends on it, because a plan against an environment with no state
+  # backend reports a clean skip - without this gate a syntax error could pass as a set of green skips.
   validate:
     name: Validate Terraform code
     uses: ./.github/workflows/_terraform-validate.yml
 
-  # The state backend plans are gated on this rather than on the workflow's own
-  # "paths" filter, because that filter decides whether the WHOLE workflow runs.
-  # A change to environments/ alone should still run the environment plans, but
-  # planning the state backend three more times would add minutes to every pull
-  # request for no new information - the bootstrap root would be unchanged, so
-  # those plans could only ever report "No changes".
-  detect-bootstrap-changes:
-    name: Check whether the state backend changed
+  # One git diff against the pull request base decides which of the checks below have anything to say.
+  #
+  # The bootstrap flag counts bootstrap/** only. What a state backend plan shows is decided by that root's .tf files and
+  # the BOOTSTRAP_TFVARS variable, so editing the bootstrap workflows cannot change the plan output - gating on them
+  # would run three Azure-authenticated jobs to reprint a plan nobody changed.
+  detect:
+    name: Detect changed areas
     runs-on: ubuntu-latest
     outputs:
-      changed: ${{ steps.check.outputs.changed }}
+      environments: ${{ steps.check.outputs.environments }}
+      bootstrap: ${{ steps.check.outputs.bootstrap }}
     steps:
       - name: Check out the repository
         uses: actions/checkout@v7
         with:
-          # Full history: the diff below needs the base commit, which a shallow
-          # clone of the merge ref does not contain.
+          # Full history: the diff below needs the base commit, which a shallow clone of the merge ref does not contain.
           fetch-depth: 0
 
       - name: Compare the branch against the base
@@ -67,44 +64,33 @@ jobs:
         run: |
           set -uo pipefail
 
-          # Fail open. If either commit is unavailable the safe answer is to run
-          # the plans, not to skip them silently.
+          # Fail open. If either commit is unavailable the safe answer is to run everything, not to skip silently.
           if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "Could not determine the diff range; running the state backend plans."
+            echo "environments=true" >> "$GITHUB_OUTPUT"
+            echo "bootstrap=true" >> "$GITHUB_OUTPUT"
+            echo "Could not determine the diff range; running every check."
             exit 0
           fi
 
-          FILES=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- \
-                    'bootstrap/**' \
-                    '.github/workflows/_bootstrap-*.yml' \
-                    '.github/workflows/terraform-bootstrap.yml')
+          changed () {
+            if [ -n "$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- "$@")" ]; then echo true; else echo false; fi
+          }
 
-          if [ -n "$FILES" ]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "Bootstrap files changed:"
-            printf '%s\n' "$FILES" | sed 's/^/  /'
-            {
-              echo "### State backend plans will run"
-              echo ""
-              printf '%s\n' "$FILES" | sed 's/^/- `/; s/$/`/'
-            } >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "No bootstrap files changed; skipping the state backend plans."
-            {
-              echo "### State backend plans skipped"
-              echo ""
-              echo "Nothing under \`bootstrap/\` or the bootstrap workflows changed."
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
+          # modules/** feeds the environment roots, so a module change is planned as an environment change.
+          ENVIRONMENTS=$(changed 'environments/**' 'modules/**')
+          BOOTSTRAP=$(changed 'bootstrap/**')
 
-  # Reports, never fails. The three environment roots can drift with nothing to
-  # notice. Divergence is sometimes deliberate, and a hard failure would train
-  # people to work around the check; making it visible on every pull request is
-  # what matters.
-  parity:
+          echo "environments=$ENVIRONMENTS" >> "$GITHUB_OUTPUT"
+          echo "bootstrap=$BOOTSTRAP" >> "$GITHUB_OUTPUT"
+          echo "environments or modules changed: $ENVIRONMENTS"
+          echo "bootstrap changed:               $BOOTSTRAP"
+
+  # Reports, never fails. The three roots hold identical .tf files and can drift with nothing to notice; divergence is
+  # sometimes deliberate, and a hard failure would train people to work around the check.
+  parity-environments:
     name: Check environment root parity
+    needs: detect
+    if: needs.detect.outputs.environments == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -113,65 +99,80 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v7
 
-      - name: Compare the dev, test and prod roots
+      - name: Compare the dev, test and prod platform roots
         run: |
           set -uo pipefail
           DIFFS=0
-          : > /tmp/rows.md
-
-          {
-            echo "### Environment root parity"
-            echo ""
-            echo "\`environments/{dev,test,prod}\` should hold identical \`.tf\` files."
-            echo "Only \`terraform.tfvars\` is expected to differ, and it is not in git."
-            echo ""
-          } >> "$GITHUB_STEP_SUMMARY"
 
           for f in main.tf variables.tf outputs.tf locals.tf providers.tf versions.tf backend.tf; do
-            base="environments/dev/$f"
-            [ -f "$base" ] || continue
+            [ -f "environments/dev/$f" ] || continue
             for env in test prod; do
-              other="environments/$env/$f"
-              if [ ! -f "$other" ]; then
-                echo "| \`$f\` | dev vs $env | **missing in $env** |" >> /tmp/rows.md
+              if [ ! -f "environments/$env/$f" ]; then
+                echo "missing in $env: $f"
                 DIFFS=$((DIFFS+1))
-                continue
-              fi
-              if ! diff -q "$base" "$other" >/dev/null 2>&1; then
-                echo "| \`$f\` | dev vs $env | **differs** |" >> /tmp/rows.md
+              elif ! diff -q "environments/dev/$f" "environments/$env/$f" >/dev/null 2>&1; then
+                echo "differs: $f (dev vs $env)"
+                diff -u "environments/dev/$f" "environments/$env/$f" || true
                 DIFFS=$((DIFFS+1))
               fi
             done
           done
 
           if [ "$DIFFS" -eq 0 ]; then
-            echo "All roots are identical." >> "$GITHUB_STEP_SUMMARY"
-            echo "Roots are identical."
+            echo "All three platform roots are identical."
           else
-            {
-              echo "| File | Comparison | Result |"
-              echo "| --- | --- | --- |"
-              cat /tmp/rows.md
-              echo ""
-              echo "> $DIFFS difference(s). This is a **report, not a failure** - divergence may"
-              echo "> be intentional. If it is not, copy the change to the other roots."
-            } >> "$GITHUB_STEP_SUMMARY"
-            echo "$DIFFS difference(s) found:"
-            cat /tmp/rows.md
-            for env in test prod; do
-              for f in main.tf variables.tf outputs.tf locals.tf providers.tf versions.tf; do
-                [ -f "environments/dev/$f" ] && [ -f "environments/$env/$f" ] || continue
-                diff -u "environments/dev/$f" "environments/$env/$f" || true
-              done
-            done
+            echo "::notice::$DIFFS difference(s) between the platform roots. This is a report, not a failure."
           fi
-          exit 0
 
-  # save_plan: false is what makes these review-only. No binary plan is uploaded,
-  # so nothing downstream can apply what is produced here.
+  # The bootstrap roots are three copies of the same files for the same reason the platform roots are, so they can drift
+  # the same way.
+  parity-bootstrap:
+    name: Check bootstrap root parity
+    needs: detect
+    if: needs.detect.outputs.bootstrap == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Compare the dev, test and prod bootstrap roots
+        run: |
+          set -uo pipefail
+          DIFFS=0
+
+          for f in main.tf variables.tf outputs.tf versions.tf backend.tf; do
+            [ -f "bootstrap/dev/$f" ] || continue
+            for env in test prod; do
+              if [ ! -f "bootstrap/$env/$f" ]; then
+                echo "missing in $env: $f"
+                DIFFS=$((DIFFS+1))
+              elif ! diff -q "bootstrap/dev/$f" "bootstrap/$env/$f" >/dev/null 2>&1; then
+                echo "differs: $f (dev vs $env)"
+                diff -u "bootstrap/dev/$f" "bootstrap/$env/$f" || true
+                DIFFS=$((DIFFS+1))
+              fi
+            done
+          done
+
+          if [ "$DIFFS" -eq 0 ]; then
+            echo "All three bootstrap roots are identical."
+          else
+            echo "::notice::$DIFFS difference(s) between the bootstrap roots. This is a report, not a failure."
+          fi
+
+  # ------------------------------------------------------------------- platform plans
+  # All three environments are
+  # planned, not just dev. The roots are separate copies of the same .tf files, so a change can be valid for dev and
+  # break prod - a name collision, or an address range that does not fit prod's allocation.
+  #
+  # save_plan: false is what makes these review-only. No binary plan is uploaded, so nothing can apply what they show.
   plan-dev:
-    name: Plan dev (review only)
-    needs: validate
+    name: Plan dev platform (review only)
+    needs: [validate, detect]
+    if: needs.detect.outputs.environments == 'true'
     uses: ./.github/workflows/_terraform-plan.yml
     with:
       environment: dev
@@ -180,8 +181,9 @@ jobs:
     secrets: inherit
 
   plan-test:
-    name: Plan test (review only)
-    needs: validate
+    name: Plan test platform (review only)
+    needs: [validate, detect]
+    if: needs.detect.outputs.environments == 'true'
     uses: ./.github/workflows/_terraform-plan.yml
     with:
       environment: test
@@ -190,8 +192,9 @@ jobs:
     secrets: inherit
 
   plan-prod:
-    name: Plan prod (review only)
-    needs: validate
+    name: Plan prod platform (review only)
+    needs: [validate, detect]
+    if: needs.detect.outputs.environments == 'true'
     uses: ./.github/workflows/_terraform-plan.yml
     with:
       environment: prod
@@ -199,22 +202,14 @@ jobs:
       save_plan: false
     secrets: inherit
 
-  # ------------------------------------------------------- state backend plans
-  # Run ONLY when the pull request changes bootstrap files. Planned for all three
-  # environments for the same reason the platform is: one root serves all three,
-  # so a change can be harmless for dev and destructive for prod.
-  #
-  # This is the review that matters most on this root. The storage account it
-  # manages holds the state for every environment, so a change forcing its
-  # replacement would destroy the state it is tracked in - and previously that
-  # was only visible after somebody triggered the bootstrap workflow by hand.
-  #
-  # save_plan: false keeps them review-only: no binary plan is uploaded, so
-  # nothing a pull request produces can be applied.
+  # -------------------------------------------------------------- state backend plans
+  # The storage account these manage
+  # holds the state for its environment, so a change forcing its replacement would destroy the state it is tracked in.
+  # Before this check existed that was only visible after somebody triggered the bootstrap workflow by hand.
   plan-bootstrap-dev:
-    name: Plan dev state backend (review only)
-    needs: [validate, detect-bootstrap-changes]
-    if: needs.detect-bootstrap-changes.outputs.changed == 'true'
+    name: Plan dev bootstrap storage account (review only)
+    needs: [validate, detect]
+    if: needs.detect.outputs.bootstrap == 'true'
     uses: ./.github/workflows/_bootstrap-plan.yml
     with:
       environment: dev
@@ -222,9 +217,9 @@ jobs:
     secrets: inherit
 
   plan-bootstrap-test:
-    name: Plan test state backend (review only)
-    needs: [validate, detect-bootstrap-changes]
-    if: needs.detect-bootstrap-changes.outputs.changed == 'true'
+    name: Plan test bootstrap storage account (review only)
+    needs: [validate, detect]
+    if: needs.detect.outputs.bootstrap == 'true'
     uses: ./.github/workflows/_bootstrap-plan.yml
     with:
       environment: test
@@ -232,9 +227,9 @@ jobs:
     secrets: inherit
 
   plan-bootstrap-prod:
-    name: Plan prod state backend (review only)
-    needs: [validate, detect-bootstrap-changes]
-    if: needs.detect-bootstrap-changes.outputs.changed == 'true'
+    name: Plan prod bootstrap storage account (review only)
+    needs: [validate, detect]
+    if: needs.detect.outputs.bootstrap == 'true'
     uses: ./.github/workflows/_bootstrap-plan.yml
     with:
       environment: prod

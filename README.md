@@ -104,7 +104,7 @@ at run time:
 | Variable | Holds |
 | --- | --- |
 | `TFVARS` | The complete `environments/<env>/terraform.tfvars` |
-| `BOOTSTRAP_TFVARS` | The complete `bootstrap/state/terraform.tfvars` |
+| `BOOTSTRAP_TFVARS` | The complete `bootstrap/<env>/terraform.tfvars` |
 
 `BOOTSTRAP_TFVARS` must name the same resource group, storage account and
 container as the `TF_STATE_*` variables on the same environment. The bootstrap
@@ -119,7 +119,7 @@ branch protection — is documented in [GITHUB-SETUP.md](GITHUB-SETUP.md).
 
 ```text
 .
-├── bootstrap/state/                         # Per-environment Azure Blob backend
+├── bootstrap/{dev,test,prod}/               # Azure Blob state backend, one root per environment
 ├── environments/
 │   ├── dev/                                 # Platform root, one per environment
 │   ├── test/

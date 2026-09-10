@@ -118,12 +118,11 @@ module "databricks_workspace" {
   source  = "Azure/avm-res-databricks-workspace/azurerm"
   version = "0.5.0"
 
-  # The AVM module reads `data "azurerm_resource_group" "parent"` on the
-  # resource group this root creates. Because the group name is statically
-  # known, Terraform would resolve that data source during plan and fail with
-  # "Resource Group ... was not found" on any first run against empty state.
-  # depends_on defers the module's data reads until after the group exists.
-  depends_on = [azurerm_resource_group.platform]
+  # No depends_on here, deliberately. resource_group_name below references azurerm_resource_group.platform, which is a
+  # real dependency edge, so Terraform still orders the module after the group and still defers the module's resource
+  # group data read on a first run. A module-level depends_on would additionally mark every data source inside the
+  # module unknown at plan time on EVERY run, and that unknown propagates into the workspace's parent_id -- which makes
+  # Terraform report a full workspace replacement for something as small as a tag edit.
 
   name                              = local.names.workspace
   resource_group_name               = azurerm_resource_group.platform.name

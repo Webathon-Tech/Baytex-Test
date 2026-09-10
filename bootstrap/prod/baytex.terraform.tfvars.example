@@ -1,0 +1,25 @@
+# BAYTEX DELIVERY VALUES for the prod Terraform state backend.
+#
+# Kept alongside terraform.tfvars.example, which holds the values this repository is tested with. To deliver, copy this
+# into the BOOTSTRAP_TFVARS content for prod in the Baytex repository.
+
+# Entra tenant and the subscription holding prod state (SUB-BTE-CAN-DATA-PROD).
+tenant_id       = "9a6302b1-6a51-4f41-ad6b-ad23218c074d"
+subscription_id = "a88dbdba-a2fc-4990-b854-b2bb2eba72f8"
+location        = "canadacentral"
+
+# These three must match TF_STATE_RESOURCE_GROUP, TF_STATE_STORAGE_ACCOUNT and TF_STATE_CONTAINER on the same GitHub
+# Environment. The storage account name is globally unique across all of Azure.
+resource_group_name  = "rg-bte-dbx-prod-tfstate-cnc-001"
+storage_account_name = "stbtedbxprodtfcnc001"
+container_name       = "tfstate"
+
+tags = {
+  Application = "AzureDatabricks"
+  Environment = "Prod"
+  ManagedBy   = "Terraform"
+}
+
+# Object IDs, not application IDs. The deployment service principal already holds Storage Blob Data Contributor at
+# subscription scope, so this is only for a human operator who needs to read state directly.
+state_blob_data_contributor_principal_ids = []
