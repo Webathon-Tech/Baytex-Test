@@ -423,3 +423,5 @@ The Terraform version comes from a single **repository variable**, `TERRAFORM_VE
 
 If that variable is unset, `setup-terraform` silently installs the latest Terraform — which is exactly the drift it
 exists to prevent, so `GITHUB-SETUP.md` lists it as required and the verification script checks for it.
+
+<!-- end-to-end verification: docs-only change, expects validate + detect only -->
