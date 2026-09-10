@@ -2,9 +2,8 @@ name: Terraform Destroy Platform
 
 # Tears down the platform in one or more environments.
 #
-# Scope: the platform roots only (environments/<env>). The state backend is NOT
-# destroyed, so an environment can be rebuilt with Terraform Deploy Platform
-# without bootstrapping again - and the state account holds the very state file
+# Scope: the platform roots only (environments/<env>). The state backend is NOT destroyed, so an environment can be
+# rebuilt with Terraform Deploy Platform without bootstrapping again - and the state account holds the very state file
 # this run writes to, so destroying it from here would be self-defeating.
 #
 # Not destroyed, because this Terraform never owned them:
@@ -18,10 +17,9 @@ name: Terraform Destroy Platform
 #      so it must come from reviewed, merged code.
 #   2. The ticked environments have to be retyped exactly.
 #
-# The structure matches Terraform Deploy Platform - plan in <env>-plan, apply in
-# <env>-apply - so required reviewers attached to <env>-apply gate a destroy the
-# same way they gate a deployment, with the full destroy plan already published
-# for them to read.
+# The structure matches Terraform Deploy Platform - plan in <env>-plan, apply in <env>-apply - so required reviewers
+# attached to <env>-apply gate a destroy the same way they gate a deployment, with the full destroy plan already
+# published for them to read.
 
 on:
   workflow_dispatch:
@@ -47,8 +45,7 @@ permissions:
   contents: read
   id-token: write
 
-# Shared with Terraform Deploy Platform - see the note there. A destroy must
-# never overlap a deploy.
+# Shared with Terraform Deploy Platform - see the note there. A destroy must never overlap a deploy.
 concurrency:
   group: terraform-mutate
   cancel-in-progress: false
@@ -72,10 +69,9 @@ jobs:
           fi
           echo "Destroying from ${{ github.ref }}"
 
-      # The order is fixed dev,test,prod regardless of which boxes were ticked,
-      # so the string an operator has to retype is unambiguous. Comparing against
-      # the resolved list rather than a fixed word means they have to have read
-      # what they actually selected.
+      # The order is fixed dev,test,prod regardless of which boxes were ticked, so the string an operator has to retype
+      # is unambiguous. Comparing against the resolved list rather than a fixed word means they have to have read what
+      # they actually selected.
       - name: Resolve and confirm the selected environments
         id: resolve
         run: |
@@ -121,7 +117,7 @@ jobs:
 
   # Environments are independent, so one failing does not abandon the others.
   plan:
-    name: Plan ${{ matrix.environment }} destroy
+    name: Plan ${{ matrix.environment }} platform teardown
     needs: preflight
     strategy:
       fail-fast: false
@@ -134,12 +130,11 @@ jobs:
       save_plan: true
     secrets: inherit
 
-  # The apply legs wait for every plan leg, not just their own - GitHub does not
-  # pair matrix legs across jobs. If any environment fails to plan, nothing is
-  # destroyed: a clean stop is easier to reason about mid-teardown than a partial
+  # The apply legs wait for every plan leg, not just their own - GitHub does not pair matrix legs across jobs. If any
+  # environment fails to plan, nothing is destroyed: a clean stop is easier to reason about mid-teardown than a partial
   # one, and re-running after fixing the cause costs only the plan again.
   apply:
-    name: Apply ${{ matrix.environment }} destroy
+    name: Apply ${{ matrix.environment }} platform teardown
     needs: [preflight, plan]
     strategy:
       fail-fast: false

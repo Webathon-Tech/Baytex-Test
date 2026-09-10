@@ -1,0 +1,25 @@
+# Terraform state backend for the prod environment. The whole of this file is held in the BOOTSTRAP_TFVARS variable on
+# the prod-plan and prod-apply GitHub Environments; the workflow writes it to disk at run time.
+
+# The Entra tenant and the subscription that will hold prod state. Each environment may use its own subscription.
+tenant_id       = "be945e7a-2e17-4b44-926f-512e85873eec"
+subscription_id = "6a3bb170-5159-4bff-860b-aa74fb762697"
+location        = "canadacentral"
+
+# These three must match TF_STATE_RESOURCE_GROUP, TF_STATE_STORAGE_ACCOUNT and TF_STATE_CONTAINER on the same GitHub
+# Environment. If they disagree the workflow creates one storage account and then stores its state in another.
+# The storage account name is globally unique across all of Azure, so change the organisation prefix before reusing it.
+resource_group_name  = "rg-vkp-dbx-prod-tfstate-cnc-001"
+storage_account_name = "stvkpdbxprodtfcnc001"
+container_name       = "tfstate"
+
+# Tags applied to the resource group and the storage account.
+tags = {
+  Application = "AzureDatabricks"
+  Environment = "Prod"
+  ManagedBy   = "Terraform"
+}
+
+# Object IDs, not application IDs. The deployment service principal already holds Storage Blob Data Contributor at
+# subscription scope, so this is only for a human operator who needs to read state directly.
+state_blob_data_contributor_principal_ids = []

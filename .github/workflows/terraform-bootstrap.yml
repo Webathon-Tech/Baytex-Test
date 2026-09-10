@@ -1,19 +1,16 @@
 name: Terraform Bootstrap State Backend
 
-# Creates the Azure Blob backend that every other workflow keeps its state in,
-# then moves this root's own state into it.
+# Creates the Azure Blob backend that every other workflow keeps its state in, then moves this root's own state into it.
 #
-# This is the first workflow ever run for an environment. Until it has completed,
-# Terraform Deploy Platform has nowhere to store state and will refuse to run.
+# This is the first workflow ever run for an environment. Until it has completed, Terraform Deploy Platform has nowhere
+# to store state and will refuse to run.
 #
-# Structured as plan then apply, like every other mutating workflow, because this
-# is the one root where a careless change is unrecoverable: the storage account
-# it manages holds the state for every environment. A reviewer must see the plan
-# before anything is applied.
+# Structured as plan then apply, like every other mutating workflow, because this is the one root where a careless
+# change is unrecoverable: the storage account it manages holds the state for every environment. A reviewer must see the
+# plan before anything is applied.
 #
-# Re-running is safe. The plan job detects what already exists and records the
-# mode in the artefact, so the apply performs exactly the sequence that was
-# reviewed:
+# Re-running is safe. The plan job detects what already exists and records the mode in the artefact, so the apply
+# performs exactly the sequence that was reviewed:
 #
 #   create   nothing exists yet
 #   import   the storage account exists but nothing tracks it
@@ -39,9 +36,8 @@ permissions:
   contents: read
   id-token: write
 
-# One group for the whole workflow. Two overlapping bootstrap runs would contend
-# for the same state, and the selection is a set of checkboxes so there is no
-# single environment name to key on.
+# One group for the whole workflow. Two overlapping bootstrap runs would contend for the same state, and the selection
+# is a set of checkboxes so there is no single environment name to key on.
 concurrency:
   group: terraform-bootstrap
   cancel-in-progress: false
@@ -57,8 +53,7 @@ jobs:
       environments: ${{ steps.resolve.outputs.environments }}
       selected: ${{ steps.resolve.outputs.selected }}
     steps:
-      # This workflow applies Terraform, so it carries the same branch rule as a
-      # deployment.
+      # This workflow applies Terraform, so it carries the same branch rule as a deployment.
       - name: Check the branch is allowed to bootstrap
         run: |
           case "${{ github.ref }}" in
@@ -69,8 +64,7 @@ jobs:
               exit 1 ;;
           esac
 
-      # The order is fixed dev,test,prod so the matrix legs always appear in a
-      # predictable order.
+      # The order is fixed dev,test,prod so the matrix legs always appear in a predictable order.
       - name: Resolve the selected environments
         id: resolve
         run: |
@@ -97,10 +91,10 @@ jobs:
             echo "Environments: \`$SELECTED\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # Environments are independent - each gets its own resource group, storage
-  # account and state file - so one failing does not abandon the others.
+  # Environments are independent - each gets its own resource group, storage account and state file - so one failing
+  # does not abandon the others.
   plan:
-    name: Plan ${{ matrix.environment }} state backend
+    name: Plan ${{ matrix.environment }} bootstrap storage account (state backend)
     needs: preflight
     strategy:
       fail-fast: false
@@ -111,11 +105,10 @@ jobs:
       environment: ${{ matrix.environment }}
     secrets: inherit
 
-  # Apply legs wait for every plan leg; GitHub does not pair matrix legs across
-  # jobs. A bootstrap that partially failed is recoverable by re-running, so
-  # stopping cleanly costs nothing.
+  # Apply legs wait for every plan leg; GitHub does not pair matrix legs across jobs. A bootstrap that partially failed
+  # is recoverable by re-running, so stopping cleanly costs nothing.
   apply:
-    name: Apply ${{ matrix.environment }} state backend
+    name: Apply ${{ matrix.environment }} bootstrap storage account (state backend)
     needs: [preflight, plan]
     strategy:
       fail-fast: false

@@ -1,153 +1,120 @@
-# Prod environment values. Target subscription SUB-BTE-CAN-DATA-PROD.
-# cost_centre is provisional. IPAM sign-off pending.
+# Values this repository is TESTED with: an isolated sandbox subscription under the "vkp" prefix, so nothing here can
+# collide with Baytex's globally unique resource names. For the configuration intended for Baytex, see
+# baytex.terraform.tfvars.example alongside this file.
+#
+# The whole of this file is held in the TFVARS variable on the prod-plan and prod-apply GitHub Environments; the
+# workflow writes it to disk at run time, which is why no environment-specific value is committed to git.
 
-tenant_id       = "9a6302b1-6a51-4f41-ad6b-ad23218c074d"
-subscription_id = "a88dbdba-a2fc-4990-b854-b2bb2eba72f8"
+# Entra tenant and the subscription this environment deploys into.
+tenant_id       = "be945e7a-2e17-4b44-926f-512e85873eec"
+subscription_id = "6a3bb170-5159-4bff-860b-aa74fb762697"
 
-# From the Baytex Databricks account console.
-databricks_account_id = "1ff56ce7-99f9-4d29-b2d7-5da177c5f55b"
-existing_metastore_id = "858890e3-8d95-42c7-922e-4107a0055500"
+# From the Databricks account console. The metastore is the existing regional one; the platform binds to it rather than
+# creating its own.
+databricks_account_id = "e198df6c-3932-4959-847b-5257ea8dec5a"
+existing_metastore_id = "9bf4d8e9-c078-4730-a533-51d10f5c44d6"
 
+# These five compose every resource name: rg-<organization>-<workload>-<environment>-<purpose>-<region_short>-<instance>
 location     = "canadacentral"
-organization = "bte"
+organization = "vkp"
 workload     = "dbx"
 environment  = "prod"
 region_short = "cnc"
 instance     = "001"
 
-owner               = "Baytex Infrastructure"
-cost_centre         = "BTX-DBX-PROD"
+owner               = "Platform Engineering"
+cost_centre         = "VKP-DBX-PROD"
 data_classification = "Internal"
 
-# Spoke address space.
-vnet_cidr                        = "10.40.144.0/20"
-databricks_host_subnet_cidr      = "10.40.144.0/24"
-databricks_container_subnet_cidr = "10.40.145.0/24"
-private_endpoint_subnet_cidr     = "10.40.146.0/26"
-proxy_subnet_cidr                = "10.40.147.0/26"
+# Spoke address space. Each environment takes a separate /20 so the three can coexist and peer to the same hub.
+vnet_cidr                        = "10.99.32.0/20"
+databricks_host_subnet_cidr      = "10.99.32.0/24"
+databricks_container_subnet_cidr = "10.99.33.0/24"
+private_endpoint_subnet_cidr     = "10.99.34.0/26"
+proxy_subnet_cidr                = "10.99.34.64/26"
 
-# Corporate DNS servers, in preference order. Applied to the VNet and to the
-# HAProxy resolver.
-dns_servers = [
-  "10.40.128.5",
-  "10.40.128.6",
-  "172.19.65.39",
-  "172.19.65.3",
-  "172.19.96.124"
-]
+# Azure-provided DNS. A real deployment points at corporate resolvers instead.
+dns_servers = ["168.63.129.16"]
 
-hub_subscription_id       = "557d1301-8d98-483e-ac69-4f23bf2cb2eb"
-hub_resource_group_name   = "rg-network-bte-hub-cnc-02"
-hub_vnet_name             = "vnet-bte-hub-cnc-02"
-hub_vnet_id               = "/subscriptions/557d1301-8d98-483e-ac69-4f23bf2cb2eb/resourceGroups/rg-network-bte-hub-cnc-02/providers/Microsoft.Network/virtualNetworks/vnet-bte-hub-cnc-02"
-cisco_firewall_private_ip = "10.40.240.36"
+# The hub this spoke peers to and routes through.
+hub_subscription_id       = "6a3bb170-5159-4bff-860b-aa74fb762697"
+hub_resource_group_name   = "rg-sbx-hub-cnc-001"
+hub_vnet_name             = "vnet-sbx-hub-cnc-001"
+hub_vnet_id               = "/subscriptions/6a3bb170-5159-4bff-860b-aa74fb762697/resourceGroups/rg-sbx-hub-cnc-001/providers/Microsoft.Network/virtualNetworks/vnet-sbx-hub-cnc-001"
+cisco_firewall_private_ip = "10.98.0.4"
 
-# Set false if Baytex creates both peering directions.
+# True is possible here because the hub is in the same subscription as the spoke. Where the hub belongs to another
+# subscription the peering is usually created by whoever owns it, and this is set to false.
 create_spoke_to_hub_peering = true
 
-# Prefixes routed to cisco_firewall_private_ip.
+# Prefixes routed to cisco_firewall_private_ip rather than out through the NAT gateway.
 on_prem_routes = {
-  azure_spokes = {
-    address_prefix = "10.40.0.0/16"
-  }
-  baytex_onprem = {
-    address_prefix = "172.19.64.0/18"
+  onprem_sim = {
+    address_prefix = "10.98.1.0/24"
   }
 }
 
-# One Allow-SSH rule is created per CIDR on the proxy NSG. Empty creates none.
+# One Allow-SSH rule is created per CIDR on the proxy NSG. Empty creates none, which is the intended posture: the
+# proxy VMs are reachable through "az vm run-command invoke" without opening port 22.
 admin_ssh_source_cidrs = []
 
-ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIpC6AYv2TDM3+DFJJYLSy3hQZjIRMoFKkB0xtvf2PMx baytex-terraform"
+ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMhki1LbqhnxgL8qjn0rcCIy6b/7NYAW6AT1D+6NvlNJ vkp-platform"
 
 proxy_vm_size = "Standard_D4s_v3"
 proxy_vm_private_ips = [
-  "10.40.147.5",
-  "10.40.147.6"
+  "10.99.34.70",
+  "10.99.34.71"
 ]
 
-# On-premises destinations. SQL03YYC and Trimble/TMW are not configured.
-# target_fqdn is resolved at run time by the HAProxy baytex_dns resolver.
-# Trailing comments are the confirmed IP addresses.
+# One HAProxy frontend and one Private Link Service per destination. frontend_ip and pls_nat_ip must both sit inside
+# proxy_subnet_cidr and must not collide with proxy_vm_private_ips.
 on_prem_endpoints = {
-  sqlbidb01yyc = {
-    frontend_ip = "10.40.147.11"
-    pls_nat_ip  = "10.40.147.21"
+  sqlsim = {
+    frontend_ip = "10.99.34.75"
+    pls_nat_ip  = "10.99.34.85"
     listen_port = 1433
-    target_fqdn = "sqlbidb01yyc.baytexenergy.com" # 172.19.77.45
+    target_fqdn = "sqlsim.sandbox.baytexdemo.net"
     target_port = 1433
-    domain_name = "sqlbidb01yyc.baytexenergy.com"
+    domain_name = "sqlsim.sandbox.baytexdemo.net"
   }
-  sqlbidb01yyc_t = {
-    frontend_ip = "10.40.147.12"
-    pls_nat_ip  = "10.40.147.22"
-    listen_port = 1433
-    target_fqdn = "sqlbidb01yyc-t.baytexenergy.com" # 172.19.96.44
-    target_port = 1433
-    domain_name = "sqlbidb01yyc-t.baytexenergy.com"
-  }
-  sql14yyc = {
-    frontend_ip = "10.40.147.13"
-    pls_nat_ip  = "10.40.147.23"
-    listen_port = 1433
-    target_fqdn = "sql14yyc.baytexenergy.com" # 172.19.77.94
-    target_port = 1433
-    domain_name = "sql14yyc.baytexenergy.com"
-  }
-  sql6 = {
-    frontend_ip = "10.40.147.16"
-    pls_nat_ip  = "10.40.147.26"
-    listen_port = 1433
-    target_fqdn = "sql6.baytexenergy.com" # 172.19.77.123
-    target_port = 1433
-    domain_name = "sql6.baytexenergy.com"
-  }
-  ora33yyc = {
-    frontend_ip = "10.40.147.14"
-    pls_nat_ip  = "10.40.147.24"
+  orasim = {
+    frontend_ip = "10.99.34.76"
+    pls_nat_ip  = "10.99.34.86"
     listen_port = 1521
-    target_fqdn = "ora33yyc.baytexenergy.com" # 172.19.77.88
+    target_fqdn = "orasim.sandbox.baytexdemo.net"
     target_port = 1521
-    domain_name = "ora33yyc.baytexenergy.com"
-  }
-  ora33yyc_t = {
-    frontend_ip = "10.40.147.15"
-    pls_nat_ip  = "10.40.147.25"
-    listen_port = 1521
-    target_fqdn = "ora33yyc-t.baytexenergy.com" # 172.19.96.112
-    target_port = 1521
-    domain_name = "ora33yyc-t.baytexenergy.com"
+    domain_name = "orasim.sandbox.baytexdemo.net"
   }
 }
 
-# allow_all = true makes the Private Link Services discoverable by any
-# subscription. Empty auto-approval means every connection request requires
-# manual approval.
+# allow_all makes the Private Link Services discoverable by any subscription. Listing a subscription under
+# auto_approval means its connection requests are accepted without anyone clicking approve.
 allow_all_subscriptions_pls_visibility = true
 pls_visibility_subscription_ids        = []
-pls_auto_approval_subscription_ids     = []
+pls_auto_approval_subscription_ids     = ["6a3bb170-5159-4bff-860b-aa74fb762697"]
 
-# Must be globally unique.
-data_storage_account_name           = "stbtedbxprodcnc001"
-workspace_root_storage_account_name = "stbtedbxprodroot001"
+# Both must be globally unique across all of Azure. The organisation prefix is what keeps them from colliding.
+data_storage_account_name           = "stvkpdbxprodcnc001"
+workspace_root_storage_account_name = "stvkpdbxprodroot001"
 
 data_containers = ["managed", "external", "landing", "checkpoints"]
 
-# Empty creates the private endpoints without zone groups.
-blob_private_dns_zone_ids = []
-dfs_private_dns_zone_ids  = []
+# Private DNS zones the blob and dfs private endpoints register into. Creating a zone group needs write access on the
+# zone, so where the zones live in another subscription the owner grants it or these are left empty.
+blob_private_dns_zone_ids = ["/subscriptions/6a3bb170-5159-4bff-860b-aa74fb762697/resourceGroups/rg-sbx-hub-cnc-001/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"]
+dfs_private_dns_zone_ids  = ["/subscriptions/6a3bb170-5159-4bff-860b-aa74fb762697/resourceGroups/rg-sbx-hub-cnc-001/providers/Microsoft.Network/privateDnsZones/privatelink.dfs.core.windows.net"]
 
-# Workspace front-end is public. Classic compute has no public IPs.
+# The workspace front end stays public so users, Power BI and GitHub can reach it. Classic compute still has no public
+# IPs, and the Databricks-managed default storage is firewalled.
 workspace_public_network_access_enabled     = true
 workspace_default_storage_firewall_enabled  = true
 workspace_infrastructure_encryption_enabled = true
 
-# Optional creation-time default catalog name.
+# Optional creation-time catalog. null leaves Unity Catalog setup to whoever owns the data layer.
 default_catalog_initial_name = null
 
 enable_diagnostics           = true
-log_analytics_retention_days = 90
+log_analytics_retention_days = 30
 
-alert_email_receivers = {
-  # cloud_operations = "cloud-operations@baytexenergy.com"
-}
+# Email receivers on the platform action group. Empty creates the group with no receivers.
+alert_email_receivers = {}

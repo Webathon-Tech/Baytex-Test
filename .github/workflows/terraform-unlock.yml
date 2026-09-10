@@ -1,0 +1,254 @@
+name: Terraform Unlock State
+
+# Releases a Terraform state lock left behind by a run that was killed.
+#
+# A cancelled deploy or destroy stops the process while it still holds the lease on the state blob. Terraform never gets
+# to release it, so every later run queues on that lease and fails once its -lock-timeout expires.
+#
+# This is the only supported way to clear it. Nobody holds write access to the state account directly - the deployment
+# service principal does, and it is reached through this workflow, so a recovery is approved and evidenced like every
+# other change.
+#
+# The lock ID is a required input and is NOT discovered automatically. The failed run prints it:
+#
+#   Error acquiring the state lock
+#     ID:        1d37202c-66b4-8222-c507-181b0520df6f
+#     Operation: OperationTypeApply
+#     Created:   2026-09-08 23:45:54 +0000 UTC
+#
+# Requiring it is the safety property. Breaking the lease blind would also break a lock held by a run that is still
+# working, corrupting its state write. Read the Created timestamp and Operation before running this: if they belong to a
+# run that is still going, cancel that run first.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment whose state lock should be released
+        type: choice
+        required: true
+        options: [dev, test, prod]
+      lock_id:
+        description: "Lock ID from the failed run's error message"
+        type: string
+        required: true
+      confirm:
+        description: Retype the environment name exactly
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+# Shares the group used by deploy and destroy. An unlock must not run beside a mutating run, because that run's lock is
+# legitimate and breaking it would corrupt the state it is about to write.
+concurrency:
+  group: terraform-mutate
+  cancel-in-progress: false
+
+jobs:
+  # Separate job, and deliberately not in an Environment: it fails in seconds on a bad branch or a mistyped
+  # confirmation, before a reviewer is asked to approve anything. It also checks out nothing, so it must not inherit a
+  # working-directory that only exists after a checkout.
+  preflight:
+    name: Check the run is allowed
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # main only. A recovery runs from reviewed code, never from whatever branch happens to be selected in the
+      # dropdown.
+      - name: Check the branch is allowed
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "::error::Refusing to unlock from '${{ github.ref }}'. Recovery runs from main."
+            exit 1
+          fi
+          echo "Running from ${{ github.ref }}"
+
+      - name: Check the environment was retyped correctly
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$CONFIRM" != "${{ inputs.environment }}" ]; then
+            echo "::error::Confirmation '$CONFIRM' does not match environment '${{ inputs.environment }}'. Nothing was unlocked."
+            {
+              echo "### Run refused"
+              echo ""
+              echo "| | |"
+              echo "| --- | --- |"
+              echo "| Selected | \`${{ inputs.environment }}\` |"
+              echo "| Typed | \`$CONFIRM\` |"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "Confirmed ${{ inputs.environment }}."
+
+          {
+            echo "### Unlock requested"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Environment | \`${{ inputs.environment }}\` |"
+            echo "| Lock ID | \`${{ inputs.lock_id }}\` |"
+            echo ""
+            echo "Confirm this lock belongs to a run that has stopped before approving."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  unlock:
+    name: Unlock ${{ inputs.environment }} state
+    needs: preflight
+    runs-on: ubuntu-latest
+    # The apply environment, so the reviewers who gate a deployment also gate a recovery. Unlocking is not a routine
+    # action.
+    environment: ${{ inputs.environment }}-apply
+    defaults:
+      run:
+        shell: bash
+        working-directory: environments/${{ inputs.environment }}
+
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      ARM_USE_AZUREAD: "true"
+
+    steps:
+      # First, because every "run" step below inherits a working-directory that does not exist until the repository is
+      # on disk.
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Check the environment is configured
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+          STATE_SA: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+          STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
+          STATE_KEY: ${{ vars.TF_STATE_KEY }}
+        run: |
+          set -uo pipefail
+          MISSING=""
+          need () { [ -n "${2:-}" ] || MISSING="$MISSING $1"; }
+          need AZURE_CLIENT_ID          "${AZURE_CLIENT_ID:-}"
+          need AZURE_TENANT_ID          "${AZURE_TENANT_ID:-}"
+          need AZURE_SUBSCRIPTION_ID    "${AZURE_SUBSCRIPTION_ID:-}"
+          need TF_STATE_RESOURCE_GROUP  "${STATE_RG:-}"
+          need TF_STATE_STORAGE_ACCOUNT "${STATE_SA:-}"
+          need TF_STATE_CONTAINER       "${STATE_CONTAINER:-}"
+          need TF_STATE_KEY             "${STATE_KEY:-}"
+
+          if [ -n "$MISSING" ]; then
+            echo "::error::Environment '${{ inputs.environment }}' is not configured. Missing:$MISSING. See GITHUB-SETUP.md."
+            exit 1
+          fi
+          echo "Environment ${{ inputs.environment }} is configured."
+
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ vars.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      # No terraform.tfvars is written. force-unlock is a state operation and never evaluates the configuration's
+      # variables, so the recovery path does not depend on the variables being valid - which matters when the reason for
+      # the failed run was a bad value.
+      - name: Initialise the Terraform backend
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ vars.TF_STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ vars.TF_STATE_CONTAINER }}" \
+            -backend-config="key=${{ vars.TF_STATE_KEY }}" \
+            -backend-config="use_azuread_auth=true"
+
+      # -force skips the interactive prompt only. The lock ID is still checked against the lock actually held, so a
+      # stale or mistyped ID fails here rather than releasing somebody else's lock.
+      - name: Release the state lock
+        id: unlock
+        env:
+          LOCK_ID: ${{ inputs.lock_id }}
+        run: |
+          set -uo pipefail
+          echo "Releasing lock $LOCK_ID on ${{ vars.TF_STATE_KEY }}"
+          terraform force-unlock -force "$LOCK_ID" 2>&1 | tee unlock.log
+          STATUS=${PIPESTATUS[0]}
+
+          if [ "$STATUS" -ne 0 ]; then
+            {
+              echo "### State lock NOT released"
+              echo ""
+              echo "\`terraform force-unlock\` failed. Most likely causes:"
+              echo ""
+              echo "- The lock ID does not match the lock currently held"
+              echo "- The lock was already released"
+              echo "- The state blob has no lock at all"
+              echo ""
+              echo '```'
+              cat unlock.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit "$STATUS"
+          fi
+
+          {
+            echo "### State lock released"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Environment | \`${{ inputs.environment }}\` |"
+            echo "| State key | \`${{ vars.TF_STATE_KEY }}\` |"
+            echo "| Lock ID | \`$LOCK_ID\` |"
+            echo "| Released by | \`${{ github.actor }}\` |"
+            echo ""
+            echo "Re-run the plan to confirm the backend is usable again. A run that"
+            echo "was killed part-way may have left resources in Azure that are absent"
+            echo "from state; the next apply reports those as conflicts."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Recorded whatever the outcome, so an unlock attempt is auditable even when it fails.
+      - name: Record run metadata
+        if: always()
+        run: |
+          cat > run-metadata.json <<EOF
+          {
+            "operation": "force-unlock",
+            "environment": "${{ inputs.environment }}",
+            "lock_id": "${{ inputs.lock_id }}",
+            "state_key": "${{ vars.TF_STATE_KEY }}",
+            "result": "${{ steps.unlock.outcome }}",
+            "repository": "${{ github.repository }}",
+            "workflow": "${{ github.workflow }}",
+            "run_id": "${{ github.run_id }}",
+            "run_attempt": "${{ github.run_attempt }}",
+            "event": "${{ github.event_name }}",
+            "ref": "${{ github.ref }}",
+            "commit_sha": "${{ github.sha }}",
+            "triggered_by": "${{ github.actor }}",
+            "terraform_version": "${{ vars.TERRAFORM_VERSION }}",
+            "recorded_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          EOF
+          echo "Evidence header written to run-metadata.json"
+
+      - name: Upload the unlock evidence bundle
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: evidence-unlock-${{ inputs.environment }}-${{ github.run_id }}
+          path: |
+            environments/${{ inputs.environment }}/unlock.log
+            environments/${{ inputs.environment }}/run-metadata.json
+          retention-days: 14
+          if-no-files-found: warn

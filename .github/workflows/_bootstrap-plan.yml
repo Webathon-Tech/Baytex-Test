@@ -2,24 +2,19 @@ name: Reusable - Bootstrap Plan
 
 # Plans the Azure Blob state backend for one environment.
 #
-# This root is unlike the platform roots in one important way: the storage
-# account it manages HOLDS THE STATE FOR EVERY ENVIRONMENT. A change that forced
-# replacement of that account would destroy the state it is tracked in. That is
-# why the bootstrap has the same gated plan/apply split as a deployment - a
-# reviewer must see the plan before anything is applied.
+# This root is unlike the platform roots in one important way: the storage account it manages HOLDS THE STATE FOR EVERY
+# ENVIRONMENT. A change that forced replacement of that account would destroy the state it is tracked in. That is why
+# the bootstrap has the same gated plan/apply split as a deployment - a reviewer must see the plan before anything is
+# applied.
 #
-# There is also a chicken-and-egg problem: Terraform cannot keep state in a
-# storage account that does not exist yet. The first run therefore works with
-# local state, creates the account, and migrates. Later runs go straight to the
-# remote backend. Which of those applies is decided here and passed to the apply
-# job in the artefact, so the apply performs exactly the sequence that was
-# reviewed.
+# There is also a chicken-and-egg problem: Terraform cannot keep state in a storage account that does not exist yet. The
+# first run therefore works with local state, creates the account, and migrates. Later runs go straight to the remote
+# backend. Which of those applies is decided here and passed to the apply job in the artefact, so the apply performs
+# exactly the sequence that was reviewed.
 #
-# The decision looks at the STATE BLOB, not just the storage account. If an
-# earlier run created the account but stopped before migrating, checking only the
-# account would take the "remote" path against an empty backend, and Terraform
-# would then try to create a storage account whose name is already taken.
-# Importing recovers from that cleanly.
+# The decision looks at the STATE BLOB, not just the storage account. If an earlier run created the account but stopped
+# before migrating, checking only the account would take the "remote" path against an empty backend, and Terraform would
+# then try to create a storage account whose name is already taken. Importing recovers from that cleanly.
 
 on:
   workflow_call:
@@ -49,30 +44,27 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: bootstrap/state
+        working-directory: bootstrap/${{ inputs.environment }}
 
     env:
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
       ARM_USE_AZUREAD: "true"
-      TERRAFORM_VERSION: "1.16.1"
 
     steps:
       - name: Check out the repository
         uses: actions/checkout@v7
 
-      # Runs before the Azure sign-in, because that is what breaks first. An
-      # environment whose service principal does not exist yet has no
-      # AZURE_CLIENT_ID, and azure/login then fails with an authentication error
-      # that says nothing about the real cause.
+      # Runs before the Azure sign-in, because that is what breaks first. An environment whose service principal does
+      # not exist yet has no AZURE_CLIENT_ID, and azure/login then fails with an authentication error that says nothing
+      # about the real cause.
       #
-      # test and prod are normally configured later than dev - their service
-      # principals are created only once dev has been verified - so a
-      # pull-request plan for them has to report "not configured yet" rather than
-      # a red failure that people learn to ignore.
+      # test and prod are normally configured later than dev - their service principals are created only once dev has
+      # been verified - so a pull-request plan for them has to report "not configured yet" rather than a red failure
+      # that people learn to ignore.
       #
-      # A real bootstrap run still fails here: it names an environment
-      # explicitly, so missing configuration is a genuine error.
+      # A real bootstrap run still fails here: it names an environment explicitly, so missing configuration is a genuine
+      # error.
       - name: Check the environment is configured
         env:
           AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
@@ -106,17 +98,6 @@ jobs:
 
           echo "SKIP=true" >> "$GITHUB_ENV"
           echo "::notice::Skipping ${{ inputs.environment }} state backend - not configured yet (missing:$MISSING)."
-          {
-            echo "### ${{ inputs.environment }} state backend: not configured yet"
-            echo ""
-            echo "No plan was produced: this environment has no deployment identity."
-            echo ""
-            echo "Missing variables:"
-            for v in $MISSING; do echo "- \`$v\`"; done
-            echo ""
-            echo "Expected until the service principal for \`${{ inputs.environment }}\` is created."
-            echo "See GITHUB-SETUP.md."
-          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Sign in to Azure with OIDC
         if: env.SKIP != 'true'
@@ -130,23 +111,35 @@ jobs:
         if: env.SKIP != 'true'
         uses: hashicorp/setup-terraform@v4
         with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_version: ${{ vars.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
-      # Runs before terraform.tfvars is written, so the formatting gate reports
-      # on repository code rather than on the content of a GitHub variable.
+      # Runs before terraform.tfvars is written, so the formatting gate reports on repository code rather than on the
+      # content of a GitHub variable.
+      #
+      # Scoped to the code this pipeline deploys. "terraform fmt" takes a single
+      # target, so the deployed paths are walked in turn.
       - name: Check Terraform formatting
         if: env.SKIP != 'true'
         working-directory: .
-        run: terraform fmt -check -recursive
+        run: |
+          set -uo pipefail
+          FAILED=0
 
-      # The whole variables file for this environment's backend. Nothing about
-      # the environment - not the region, not the account name - is hardcoded in
-      # this workflow.
+          for dir in environments/dev environments/test environments/prod \
+                     bootstrap/dev bootstrap/test bootstrap/prod modules; do
+            [ -d "$dir" ] || continue
+            terraform fmt -check -recursive "$dir" || FAILED=1
+          done
+
+          [ "$FAILED" -eq 0 ] || { echo "::error::Formatting issues listed above. Run 'terraform fmt -recursive' on the reported directories and commit the result."; exit 1; }
+          echo "All Terraform files are correctly formatted."
+
+      # The whole variables file for this environment's backend. Nothing about the environment - not the region, not the
+      # account name - is hardcoded in this workflow.
       #
-      # TESTING ONLY: read from a repository VARIABLE so its content is visible
-      # in the GitHub UI while the platform is being validated. Switch to the
-      # commented line before any client deployment.
+      # TESTING ONLY: read from a repository VARIABLE so its content is visible in the GitHub UI while the platform is
+      # being validated. Switch to the commented line before any client deployment.
       - name: Write terraform.tfvars
         if: env.SKIP != 'true'
         env:
@@ -157,38 +150,10 @@ jobs:
           printf '%s\n' "$BOOTSTRAP_TFVARS" > terraform.tfvars
           terraform fmt terraform.tfvars
 
-      # This root is configured from two independent places: BOOTSTRAP_TFVARS
-      # describes the resources Terraform will CREATE, and TF_STATE_* describes
-      # the backend every workflow READS AND WRITES. They name the same storage
-      # account, so they can drift - and if they do, this pipeline creates one
-      # storage account and then stores its state in a different one.
-      - name: Check the variables agree with the backend configuration
-        if: env.SKIP != 'true'
-        env:
-          STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
-          STATE_SA: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
-          STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
-        run: |
-          set -euo pipefail
-          val () {
-            grep -E "^[[:space:]]*$1[[:space:]]*=" terraform.tfvars \
-              | head -1 | sed 's/.*=[[:space:]]*//; s/^"//; s/"[[:space:]]*$//'
-          }
-          FAIL=0
-          check () {
-            if [ "$2" != "$3" ]; then
-              echo "::error::$1 mismatch - BOOTSTRAP_TFVARS says '$2', TF_STATE_* says '$3'"
-              FAIL=1
-            else
-              printf '  %-22s %s\n' "$1" "$2"
-            fi
-          }
-          check resource_group_name  "$(val resource_group_name)"  "$STATE_RG"
-          check storage_account_name "$(val storage_account_name)" "$STATE_SA"
-          check container_name       "$(val container_name)"       "$STATE_CONTAINER"
-          [ "$FAIL" -eq 0 ] || { echo "::error::Fix the variables on this GitHub Environment before bootstrapping - see GITHUB-SETUP.md."; exit 1; }
-          echo "The variables file and the backend variables agree."
-
+      # This root is configured from two independent places: BOOTSTRAP_TFVARS describes the resources Terraform will
+      # CREATE, and TF_STATE_* describes the backend every workflow READS AND WRITES. They name the same storage
+      # account, so they can drift - and if they do, this pipeline creates one storage account and then stores its state
+      # in a different one.
       - name: Determine what already exists
         if: env.SKIP != 'true'
         id: probe
@@ -257,10 +222,9 @@ jobs:
         if: env.SKIP != 'true' && steps.probe.outputs.mode != 'remote'
         run: terraform init
 
-      # Locking matches _terraform-plan.yml: a plan that feeds an apply takes the
-      # lease so it sees a state nothing else is mutating, while a review-only
-      # plan runs with -lock=false. Review plans never write state, so taking the
-      # lease would only make concurrent pull requests contend.
+      # Locking matches _terraform-plan.yml: a plan that feeds an apply takes the lease so it sees a state nothing else
+      # is mutating, while a review-only plan runs with -lock=false. Review plans never write state, so taking the lease
+      # would only make concurrent pull requests contend.
       - name: Create the state backend plan
         if: env.SKIP != 'true'
         run: |
@@ -275,8 +239,8 @@ jobs:
           terraform show -no-color bootstrap.tfplan > plan.txt
           grep -E '^(Plan:|No changes)' plan.txt || true
 
-      # The reason the split exists: put the numbers in front of the approver,
-      # and say plainly when something is being replaced or removed.
+      # The reason the split exists: put the numbers in front of the approver, and say plainly when something is being
+      # replaced or removed.
       - name: Publish the plan summary for the approver
         if: env.SKIP != 'true'
         run: |
@@ -323,7 +287,7 @@ jobs:
             "ref": "${{ github.ref }}",
             "commit_sha": "${{ github.sha }}",
             "triggered_by": "${{ github.actor }}",
-            "terraform_version": "${{ env.TERRAFORM_VERSION }}",
+            "terraform_version": "${{ vars.TERRAFORM_VERSION }}",
             "recorded_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           }
@@ -336,25 +300,25 @@ jobs:
         with:
           name: tfplan-bootstrap-${{ inputs.environment }}-${{ github.run_id }}
           path: |
-            bootstrap/state/bootstrap.tfplan
-            bootstrap/state/plan.txt
-            bootstrap/state/mode.txt
-            bootstrap/state/state_key.txt
-            bootstrap/state/run-metadata.json
-            bootstrap/state/.terraform.lock.hcl
+            bootstrap/${{ inputs.environment }}/bootstrap.tfplan
+            bootstrap/${{ inputs.environment }}/plan.txt
+            bootstrap/${{ inputs.environment }}/mode.txt
+            bootstrap/${{ inputs.environment }}/state_key.txt
+            bootstrap/${{ inputs.environment }}/run-metadata.json
+            bootstrap/${{ inputs.environment }}/.terraform.lock.hcl
           retention-days: 5
           if-no-files-found: error
 
-      # No binary plan, so nothing downstream can apply what a pull request
-      # produced. The rendered plan and the detected mode are kept for review.
+      # No binary plan, so nothing downstream can apply what a pull request produced. The rendered plan and the detected
+      # mode are kept for review.
       - name: Upload the review evidence bundle
         if: ${{ !inputs.save_plan && env.SKIP != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: evidence-bootstrap-plan-${{ inputs.environment }}-${{ github.run_id }}
           path: |
-            bootstrap/state/plan.txt
-            bootstrap/state/mode.txt
-            bootstrap/state/run-metadata.json
+            bootstrap/${{ inputs.environment }}/plan.txt
+            bootstrap/${{ inputs.environment }}/mode.txt
+            bootstrap/${{ inputs.environment }}/run-metadata.json
           retention-days: 14
           if-no-files-found: warn

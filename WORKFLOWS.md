@@ -107,7 +107,7 @@ to run, because there is nowhere to keep Terraform state.
 
 ```
 Check the run is allowed
-Plan dev state backend       ← in dev-plan
+Plan dev bootstrap storage account   ← in dev-plan
 Apply dev state backend      ← in dev-apply, pauses here if reviewers are set
 ```
 
@@ -202,11 +202,23 @@ Nothing to run — it starts itself when a pull request is opened or updated.
 
 | Job | What it means |
 | --- | --- |
-| `Validate Terraform code` | Formatting and syntax. Must be green. |
-| `Check environment root parity` | **Reports only, never fails.** Flags where `environments/dev`, `test` and `prod` have drifted. Divergence is sometimes deliberate — read it and decide. |
-| `Check whether the state backend changed` | Decides whether the three state backend plans below run. |
-| `Plan dev / test / prod (review only)` | What this change would do to each environment. |
-| `Plan dev / test / prod state backend (review only)` | What this change would do to the **state backend**. Only when bootstrap files changed. |
+| `Validate Terraform code` | Formatting and syntax across every deployed root. Must be green. Always runs. |
+| `Detect changed areas` | Decides which of the checks below have anything to say about this change. Always runs. |
+| `Check environment root parity` | **Reports only, never fails.** Flags where `environments/dev`, `test` and `prod` have drifted. |
+| `Check bootstrap root parity` | The same, for the three `bootstrap/` roots. |
+| `Plan dev / test / prod platform (review only)` | What this change would do to each environment. |
+| `Plan dev / test / prod bootstrap storage account (review only)` | What it would do to the **state backend**. |
+
+Which of them run depends on what the pull request touched:
+
+| Change in | Checks that run |
+| --- | --- |
+| `environments/**` | validate, detect, environment parity, the three platform plans |
+| `modules/**` | validate, detect, the three platform plans |
+| `bootstrap/**` | validate, detect, bootstrap parity, the three bootstrap plans |
+| Anything else — docs, workflows, scripts | validate and detect only |
+
+A check that does not apply shows as **Skipped**, which does not block a merge.
 
 Planning all three matters: the environment roots are separate copies of the same
 files, so a change can be valid for dev and break prod.
@@ -319,7 +331,7 @@ a failed apply is exactly the run somebody needs to reconstruct later.
 | Deploy apply | `evidence-deploy-<env>-<run>` | Plan, apply log, outputs, final state list | **30 days** |
 | Destroy plan | `tfplan-destroy-<env>-<run>` | Binary plan, plan text, state before | 5 days |
 | Destroy apply | `evidence-destroy-<env>-<run>` | Plan, apply log, state before and after | **30 days** |
-| Bootstrap plan | `tfplan-bootstrap-<env>-<run>` | Binary plan, plan text, mode | 5 days |
+| Bootstrap plan | `tfplan-bootstrap-<env>-<run>` | Binary plan, plan text, detected mode | 5 days |
 | Bootstrap apply | `evidence-bootstrap-<env>-<run>` | Plan, apply log, state list, backend config | **30 days** |
 
 `tfplan-*` artefacts are working files handed from a plan job to its apply job.
@@ -351,6 +363,7 @@ Download artefacts from the bottom of any run's summary page.
 | Plan shows the workspace **must be replaced** | Usually a change that forces replacement | **Do not approve.** Investigate first — this destroys and recreates the workspace |
 | `RemotePeeringIsDisconnected` on deploy | A stale hub-side peering from an earlier destroy | Delete the hub-side peering (command is in the destroy run's summary), then re-run |
 | Destroy log shows `cannot delete mws network connectivity config ... attached to one or more workspaces`, then succeeds | **Normal.** Unbinding the NCC and deleting it are separate Databricks calls, and the unbind is not immediately visible | Nothing. The apply retries automatically and typically completes on attempt 2. `apply.log` records each attempt |
+| Need to inspect a HAProxy VM | Port 22 is deliberately closed (`admin_ssh_source_cidrs = []`). Use `az vm run-command invoke -g <rg> -n <vm> --command-id RunShellScript --scripts "systemctl status haproxy"` — it runs as root over the Azure control plane and needs only Virtual Machine Contributor |
 | `Error acquiring the state lock` | Another run holds it | Wait — runs queue by design. If a run was killed mid-apply, the lock may need clearing manually |
 | A run is queued behind another | Deploy and Destroy share a concurrency group | Expected. It will start when the other finishes |
 
@@ -380,6 +393,7 @@ Download artefacts from the bottom of any run's summary page.
 | `_terraform-apply.yml` | Reusable — apply a saved plan in `<env>-apply` |
 | `_bootstrap-plan.yml` | Reusable — plan the state backend in `<env>-plan` |
 | `_bootstrap-apply.yml` | Reusable — apply and migrate state in `<env>-apply` |
+| `terraform-unlock.yml` | Entry point — release a state lock left by a killed run |
 
 The reusable workflows are called with an `operation` of `deploy` or `destroy`,
 which is why one pair of files serves both directions.
@@ -404,5 +418,8 @@ Six GitHub Environments, two per Azure environment:
 | `azure/login` | v3 |
 | `hashicorp/setup-terraform` | v4 |
 
-The Terraform version is set as `TERRAFORM_VERSION` at the top of each workflow's
-job. Changing it means editing that value in each workflow file.
+The Terraform version comes from a single **repository variable**, `TERRAFORM_VERSION`, read by every workflow as
+`${{ vars.TERRAFORM_VERSION }}`. Changing the version is one edit in repository settings rather than ten in code.
+
+If that variable is unset, `setup-terraform` silently installs the latest Terraform — which is exactly the drift it
+exists to prevent, so `GITHUB-SETUP.md` lists it as required and the verification script checks for it.

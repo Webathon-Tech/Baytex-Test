@@ -35,3 +35,6 @@ sandbox/
 
 # Network diagrams (binary)
 *.vsdx
+
+# Provider lock files are resolved per run by the pipelines, not pinned in git.
+.terraform.lock.hcl
