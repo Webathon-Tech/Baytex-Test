@@ -87,10 +87,12 @@ on_prem_endpoints = {
   }
 }
 
-# allow_all makes the Private Link Services discoverable by any subscription. Listing a subscription under
-# auto_approval means its connection requests are accepted without anyone clicking approve.
-allow_all_subscriptions_pls_visibility = true
-pls_visibility_subscription_ids        = []
+# Azure requires the auto-approval list to be a SUBSET of the visibility list. allow_all = true maps to an empty
+# visibility list, and pairing that with a non-empty auto-approval list is rejected at create time with
+# InvalidCorrelationBetweenAutoApprovalAndVisibility. To auto-approve connections from a subscription, that
+# subscription has to appear in both lists.
+allow_all_subscriptions_pls_visibility = false
+pls_visibility_subscription_ids        = ["6a3bb170-5159-4bff-860b-aa74fb762697"]
 pls_auto_approval_subscription_ids     = ["6a3bb170-5159-4bff-860b-aa74fb762697"]
 
 # Both must be globally unique across all of Azure. The organisation prefix is what keeps them from colliding.
