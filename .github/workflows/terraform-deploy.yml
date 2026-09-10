@@ -79,9 +79,11 @@ jobs:
           {
             echo "### Deployment requested"
             echo ""
-            echo "Environments:\`$SELECTED\`"
-            echo ""
-            echo "Promotion order is enforced: dev, then test, then prod."
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Environments |\`$SELECTED\` |"
+            echo "| Branch | \`${{ github.ref_name }}\` |"
+            echo "| Promotion order | dev, then test, then prod |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ------------------------------------------------------------------- dev

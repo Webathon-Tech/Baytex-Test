@@ -205,7 +205,7 @@ jobs:
         if: inputs.operation == 'deploy' && success()
         run: |
           {
-            echo "### ${{ inputs.environment }}: deployed"
+            echo "### ${{ inputs.environment }} platform - deployed"
             echo ""
             echo "| Output | Value |"
             echo "| --- | --- |"
@@ -222,22 +222,13 @@ jobs:
         if: inputs.operation == 'destroy' && success()
         run: |
           {
-            echo "### ${{ inputs.environment }}: destroyed"
+            echo "### ${{ inputs.environment }} platform - destroyed"
             echo ""
-            echo "The state backend was kept, so **Terraform Deploy Platform** can rebuild"
-            echo "this environment without running the bootstrap again."
-            echo ""
-            echo "**Still present, and not owned by this Terraform:** the hub-side VNet"
-            echo "peering. Remove it if the spoke is gone for good, otherwise the next"
-            echo "deploy fails with \`RemotePeeringIsDisconnected\`."
-            echo ""
-            echo '```bash'
-            echo "az network vnet peering delete \\"
-            echo "  --subscription <hub-subscription> \\"
-            echo "  --resource-group <hub-resource-group> \\"
-            echo "  --vnet-name <hub-vnet> \\"
-            echo "  --name peer-hub-to-<spoke-vnet-name>"
-            echo '```'
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Environment | \`${{ inputs.environment }}\` |"
+            echo "| Resources destroyed | \`$(grep -c . state-before.txt 2>/dev/null || echo 0)\` |"
+            echo "| State backend | kept - Terraform Deploy Platform can rebuild without bootstrapping |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Record run metadata

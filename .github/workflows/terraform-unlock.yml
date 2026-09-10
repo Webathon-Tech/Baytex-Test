@@ -75,7 +75,7 @@ jobs:
           if [ "$CONFIRM" != "${{ inputs.environment }}" ]; then
             echo "::error::Confirmation '$CONFIRM' does not match environment '${{ inputs.environment }}'. Nothing was unlocked."
             {
-              echo "### Run refused"
+              echo "### Unlock refused"
               echo ""
               echo "| | |"
               echo "| --- | --- |"
@@ -93,8 +93,7 @@ jobs:
             echo "| --- | --- |"
             echo "| Environment | \`${{ inputs.environment }}\` |"
             echo "| Lock ID | \`${{ inputs.lock_id }}\` |"
-            echo ""
-            echo "Confirm this lock belongs to a run that has stopped before approving."
+            echo "| Before approving | confirm this lock belongs to a run that has stopped |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   unlock:
@@ -186,17 +185,13 @@ jobs:
 
           if [ "$STATUS" -ne 0 ]; then
             {
-              echo "### State lock NOT released"
-              echo ""
-              echo "\`terraform force-unlock\` failed. Most likely causes:"
-              echo ""
-              echo "- The lock ID does not match the lock currently held"
-              echo "- The lock was already released"
-              echo "- The state blob has no lock at all"
-              echo ""
-              echo '```'
-              cat unlock.log
-              echo '```'
+                echo "### State lock not released"
+                echo ""
+                echo "| | |"
+                echo "| --- | --- |"
+                echo "| Environment | \`${{ inputs.environment }}\` |"
+                echo "| Lock ID supplied | \`$LOCK_ID\` |"
+                echo "| Result | force-unlock failed - see the log |"
             } >> "$GITHUB_STEP_SUMMARY"
             exit "$STATUS"
           fi
@@ -210,10 +205,6 @@ jobs:
             echo "| State key | \`${{ vars.TF_STATE_KEY }}\` |"
             echo "| Lock ID | \`$LOCK_ID\` |"
             echo "| Released by | \`${{ github.actor }}\` |"
-            echo ""
-            echo "Re-run the plan to confirm the backend is usable again. A run that"
-            echo "was killed part-way may have left resources in Azure that are absent"
-            echo "from state; the next apply reports those as conflicts."
           } >> "$GITHUB_STEP_SUMMARY"
 
       # Recorded whatever the outcome, so an unlock attempt is auditable even when it fails.

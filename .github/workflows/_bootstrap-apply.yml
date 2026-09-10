@@ -232,22 +232,15 @@ jobs:
           STATE_KEY: ${{ vars.TF_STATE_KEY }}
         run: |
           {
-            echo "### ${{ inputs.environment }} state backend is ready"
-            echo ""
-            echo '```hcl'
-            echo "resource_group_name  = \"$STATE_RG\""
-            echo "storage_account_name = \"$STATE_SA\""
-            echo "container_name       = \"$STATE_CONTAINER\""
-            echo "key                  = \"$STATE_KEY\""
-            echo "use_azuread_auth     = true"
-            echo '```'
+            echo "### ${{ inputs.environment }} state backend - ready"
             echo ""
             echo "| | |"
             echo "| --- | --- |"
-            echo "| Bootstrap state key | \`${{ steps.approved.outputs.state_key }}\` |"
+            echo "| Environment | \`${{ inputs.environment }}\` |"
             echo "| Mode applied | \`${{ steps.approved.outputs.mode }}\` |"
-            echo ""
-            echo "**Terraform Deploy Platform** can now run for \`${{ inputs.environment }}\`."
+            echo "| Storage account | \`$STATE_SA\` |"
+            echo "| Container | \`$STATE_CONTAINER\` |"
+            echo "| State key | \`${{ steps.approved.outputs.state_key }}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Record run metadata

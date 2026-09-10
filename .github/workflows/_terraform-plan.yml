@@ -299,11 +299,13 @@ jobs:
         if: env.SKIP != 'true'
         run: |
           {
-            echo "### ${{ inputs.environment }}: ${{ inputs.operation }} plan"
+            echo "### ${{ inputs.environment }} platform - ${{ inputs.operation }} plan"
             echo ""
-            echo '```'
-            grep -E '^(Plan:|No changes|Terraform will perform)' plan.txt || tail -n 5 plan.txt
-            echo '```'
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Environment | \`${{ inputs.environment }}\` |"
+            echo "| Operation | \`${{ inputs.operation }}\` |"
+            echo "| Result | \`$(grep -m1 -E '^(Plan:|No changes)' plan.txt || echo 'see log')\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Record run metadata

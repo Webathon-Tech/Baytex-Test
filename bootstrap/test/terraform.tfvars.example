@@ -22,4 +22,6 @@ tags = {
 
 # Object IDs, not application IDs. The deployment service principal already holds Storage Blob Data Contributor at
 # subscription scope, so this is only for a human operator who needs to read state directly.
+# Object IDs, not application IDs. Example:
+#   state_blob_data_contributor_principal_ids = ["00000000-0000-0000-0000-000000000000"]
 state_blob_data_contributor_principal_ids = []
