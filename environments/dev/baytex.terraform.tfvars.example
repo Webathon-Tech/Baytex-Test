@@ -126,6 +126,22 @@ on_prem_endpoints = {
     target_port = 1521
     domain_name = "ora33yyc-t.baytexenergy.com"
   }
+  sql03yyc = {
+    frontend_ip = "10.40.99.17"
+    pls_nat_ip  = "10.40.99.27"
+    listen_port = 1433
+    target_fqdn = "sql03yyc.baytexenergy.com" # address to be confirmed by Baytex
+    target_port = 1433
+    domain_name = "sql03yyc.baytexenergy.com"
+  }
+  trimble_sql = {
+    frontend_ip = "10.40.99.18"
+    pls_nat_ip  = "10.40.99.28"
+    listen_port = 1433
+    target_fqdn = "btx-sql01.trimble.vpn" # 172.23.178.197, reached over the Trimble vendor VPN
+    target_port = 1433
+    domain_name = "btx-sql01.trimble.vpn"
+  }
 }
 
 # allow_all = true makes the Private Link Services discoverable by any
