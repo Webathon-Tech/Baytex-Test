@@ -49,3 +49,5 @@ variable "state_blob_data_contributor_principal_ids" {
   type        = set(string)
   default     = []
 }
+
+# end-to-end verification: bootstrap-only change
