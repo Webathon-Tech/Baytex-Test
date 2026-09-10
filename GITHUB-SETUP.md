@@ -17,11 +17,12 @@ For how to *run* the pipelines once this is done, see
 | **Owner** or **User Access Administrator** on each target subscription | Granting the service principals their roles |
 | **Databricks Account Admin** | Adding each service principal to the Databricks account console |
 | **Admin** on the GitHub repository | Creating environments, variables and protection rules |
-| Windows PowerShell 5.1 or PowerShell 7, with the Azure CLI signed in | Running the setup script |
+| **Azure CLI** (`az`), signed in | Creating the app registrations, credentials and role assignments |
+| **GitHub CLI** (`gh`), signed in | Setting environments, variables and protection rules |
 
-Each environment can live in its own subscription. The script takes the
-subscription as a parameter for exactly that reason — run it three times with
-three different subscription IDs.
+Each environment can live in its own subscription. Every command below takes the
+subscription as a variable for exactly that reason — run the sequence once per
+environment with a different subscription ID.
 
 ---
 
@@ -41,35 +42,53 @@ rotate, store, or leak.
 > soon as you complete §2 and §4 for that environment — nothing in the workflows
 > needs changing.
 
-### Run the script, once per environment
+### Create each identity, once per environment
 
-```powershell
-cd scripts
+Run once per environment, changing `ENVIRONMENT` and `SUBSCRIPTION_ID` each time.
+Signed in to the Azure CLI as a user holding the roles in §1.
 
-$org  = '<github-organisation>'
-$repo = '<github-repository>'
+```bash
+ORG=<github-organisation>
+REPO=<github-repository>
+ENVIRONMENT=dev                        # then test, then prod
+SUBSCRIPTION_ID=<subscription-id>      # this environment's subscription
 
-.\New-GitHubOidcServicePrincipal.ps1 -Environment dev  -SubscriptionId <dev-subscription-id>  -GitHubOrg $org -GitHubRepo $repo
-.\New-GitHubOidcServicePrincipal.ps1 -Environment test -SubscriptionId <test-subscription-id> -GitHubOrg $org -GitHubRepo $repo
-.\New-GitHubOidcServicePrincipal.ps1 -Environment prod -SubscriptionId <prod-subscription-id> -GitHubOrg $org -GitHubRepo $repo
+APP_NAME="sp-bte-dbx-${ENVIRONMENT}-github"
+
+# 1. App registration and service principal. No client secret is created.
+APP_ID=$(az ad app create --display-name "$APP_NAME" --query appId -o tsv)
+az ad sp create --id "$APP_ID"
+
+# 2. One federated credential per GitHub Environment, so the same identity can
+#    be used by the plan job and the apply job and by nothing else.
+for GH_ENV in "${ENVIRONMENT}-plan" "${ENVIRONMENT}-apply"; do
+  az ad app federated-credential create --id "$APP_ID" --parameters "{
+    \"name\":      \"github-${GH_ENV}\",
+    \"issuer\":    \"https://token.actions.githubusercontent.com\",
+    \"subject\":   \"repo:${ORG}/${REPO}:environment:${GH_ENV}\",
+    \"audiences\": [\"api://AzureADTokenExchange\"]
+  }"
+done
+
+# 3. Roles at subscription scope - see the table below for why each is needed.
+SCOPE="/subscriptions/${SUBSCRIPTION_ID}"
+for ROLE in "Contributor" "User Access Administrator" "Storage Blob Data Contributor"; do
+  az role assignment create --assignee "$APP_ID" --role "$ROLE" --scope "$SCOPE"
+done
+
+# 4. The three values §4 needs for this environment.
+echo "AZURE_CLIENT_ID       = $APP_ID"
+echo "AZURE_TENANT_ID       = $(az account show --query tenantId -o tsv)"
+echo "AZURE_SUBSCRIPTION_ID = $SUBSCRIPTION_ID"
 ```
 
-`-GitHubOrg` and `-GitHubRepo` are required and must match the repository
-exactly — they form part of both federated credential subjects, and a mismatch
-produces an authentication failure at run time rather than an error here.
+Re-running is safe: `az ad app create` would create a second app registration, so
+if the app already exists, look up its id instead —
+`APP_ID=$(az ad app list --display-name "$APP_NAME" --query "[0].appId" -o tsv)` —
+and re-run only the steps you need. Federated credentials and role assignments
+are rejected as duplicates rather than doubled.
 
-Optional parameters:
-
-| Parameter | Default | Purpose |
-| --- | --- | --- |
-| `-NamePrefix` | `sp-bte-dbx` | App registration name prefix |
-| `-UseOwnerRole` | off | Assign `Owner` instead of the least-privilege split below |
-
-The script is **idempotent** — re-running reuses the existing app, service
-principal, federated credentials and role assignments rather than duplicating
-them. It prints the client ID, tenant ID and subscription ID you need in §4.
-
-### What it creates
+### What this creates
 
 | Item | Value |
 | --- | --- |
@@ -79,11 +98,21 @@ them. It prints the client ID, tenant ID and subscription ID you need in §4.
 | Issuer | `https://token.actions.githubusercontent.com` |
 | Audience | `api://AzureADTokenExchange` |
 
-> **Two subject formats.** Some organisations issue an *immutable* subject that
-> embeds numeric IDs — `repo:<org>@<orgId>/<repo>@<repoId>:environment:<env>`
-> — rather than the classic name-based one. The script registers **both**, so
-> the credentials work either way. If a run fails with `AADSTS700213`, the
-> subject format is the cause; re-running the script fixes it.
+The subject ties the credential to **one repository and one GitHub Environment**.
+A token issued for `dev-plan` cannot be used by `prod-apply`, by another
+repository, or from a workflow that does not declare that environment.
+
+> **If a run fails with `AADSTS700213`**, this organisation issues an *immutable*
+> subject that embeds numeric IDs rather than names. Add a second credential per
+> environment using that form:
+>
+> ```bash
+> ORG_ID=$(gh api "orgs/${ORG}" --jq .id)
+> REPO_ID=$(gh api "repos/${ORG}/${REPO}" --jq .id)
+> # subject: repo:${ORG}@${ORG_ID}/${REPO}@${REPO_ID}:environment:${GH_ENV}
+> ```
+>
+> Registering both forms is harmless and makes the setup work either way.
 
 ### Azure roles granted, at subscription scope
 
@@ -134,9 +163,9 @@ each read them.
 
 | Variable | Holds | Where the value comes from |
 | --- | --- | --- |
-| `AZURE_CLIENT_ID` | Service principal application ID | Printed by the script in §2 |
-| `AZURE_TENANT_ID` | Entra tenant ID | Printed by the script |
-| `AZURE_SUBSCRIPTION_ID` | Target subscription | Printed by the script |
+| `AZURE_CLIENT_ID` | Service principal application ID | Printed at the end of §2 |
+| `AZURE_TENANT_ID` | Entra tenant ID | Printed at the end of §2 |
+| `AZURE_SUBSCRIPTION_ID` | Target subscription | Printed at the end of §2 |
 | `TF_STATE_RESOURCE_GROUP` | Resource group holding the state storage account | Your naming standard |
 | `TF_STATE_STORAGE_ACCOUNT` | State storage account name | Your naming standard |
 | `TF_STATE_CONTAINER` | Blob container for state | e.g. `tfstate` |
@@ -184,8 +213,16 @@ Environment *variables* to Environment *secrets*:
 
 ## 5. Environment protection rules
 
-Set on the **`-apply`** environments only. The `-plan` environments stay open —
-planning changes nothing, and gating it would only slow reviews down.
+Two different rules, applied to different environments:
+
+| Rule | Where | Purpose |
+| --- | --- | --- |
+| **Required reviewers** | `-apply` only | Pause for approval before Azure changes |
+| **Deployment branches** | **all six** | Refuse runs from branches that may not deploy |
+
+Required reviewers belong on the `-apply` environments alone — planning changes
+nothing, and gating it would only slow reviews down. Deployment branch policies
+belong on **all six**, including `-plan`; see below for why.
 
 ### Required reviewers
 
@@ -215,12 +252,47 @@ gh api -X PUT repos/<org>/<repo>/environments/test-apply \
 
 ### Deployment branch policies
 
-On each `-apply` environment, set **Deployment branches** to *Selected branches*
-and add `main` and `hotfix/*`.
+Settings → Environments → pick one → **Deployment branches** → *Selected
+branches* → add the patterns below. Apply to **all six** environments:
 
-This duplicates the branch check inside the workflows on purpose. The workflow
-check lives in code and is reviewed through a pull request; the environment policy
-lives in repository settings. Either alone is a single point of failure.
+| Environment | Allowed branches |
+| --- | --- |
+| `dev-plan`, `test-plan`, `prod-plan` | `main`, `hotfix/*` |
+| `dev-apply`, `test-apply`, `prod-apply` | `main`, `hotfix/*` |
+
+Via the API:
+
+```bash
+REPO=<org>/<repo>
+for ENV in dev-plan dev-apply test-plan test-apply prod-plan prod-apply; do
+  gh api -X PUT "repos/$REPO/environments/$ENV"     -F "deployment_branch_policy[protected_branches]=false"     -F "deployment_branch_policy[custom_branch_policies]=true"
+  for BRANCH in main 'hotfix/*'; do
+    gh api -X POST "repos/$REPO/environments/$ENV/deployment-branch-policies"       -f "name=$BRANCH"
+  done
+done
+```
+
+**Do not skip the `-plan` environments.** They are the ones people forget, and
+without them a run started from an unapproved branch still signs in to Azure,
+takes the Terraform state lock for up to ten minutes and produces a full plan
+before anything refuses it. With the policy set, the job never starts.
+
+#### Why the workflows check this as well
+
+The reusable workflows also compare `github.ref` against an allow-list. That is
+deliberate duplication, for three reasons:
+
+1. **A branch policy cannot vary per workflow.** Deploy, destroy and bootstrap
+   all route through the same `<env>-apply` environment, so one policy governs
+   all three. Destroy is restricted to `main` while deploy also permits
+   `hotfix/*` — only the workflow can express that difference.
+2. **It fails earlier and more cheaply.** The `Check the run is allowed` job
+   stops a disallowed run in seconds, before any Azure sign-in.
+3. **It is reviewable.** The workflow check is code, changed through a pull
+   request and visible in git history. An environment policy is repository
+   settings, which an administrator can change silently.
+
+Either layer alone is a single point of failure. Keep both.
 
 ---
 
@@ -326,6 +398,12 @@ for e in dev-apply test-apply prod-apply; do
     --jq '[.protection_rules[] | select(.type=="required_reviewers") | .reviewers[].reviewer.login] | join(", ") // "none"'
 done
 
+echo "== deployment branch policies (expected on ALL six) =="
+for e in dev-plan dev-apply test-plan test-apply prod-plan prod-apply; do
+  printf '%-12s ' "$e"
+  gh api repos/$REPO/environments/$e/deployment-branch-policies     --jq '[.branch_policies[].name] | join(", ")' 2>/dev/null || echo "NONE SET"
+done
+
 echo "== branch protection on main =="
 gh api repos/$REPO/branches/main/protection \
   --jq '{checks: .required_status_checks.contexts,
@@ -334,5 +412,16 @@ gh api repos/$REPO/branches/main/protection \
          force_pushes: .allow_force_pushes.enabled}'
 ```
 
-Every one of the six environments should list all nine variables. Anything
-missing will surface as a workflow failure naming the variable.
+What to expect:
+
+| Check | Expected |
+| --- | --- |
+| Environments | all six present |
+| Variables | all nine on every environment you have configured so far |
+| Reviewers | on `test-apply` and `prod-apply` at minimum |
+| Deployment branch policies | `main, hotfix/*` on **all six** — a `NONE SET` here is the gap described in §5 |
+| Branch protection | required checks listed, `admins_included: true`, `force_pushes: false` |
+
+A missing variable surfaces at run time as a workflow failure naming it. A
+missing deployment branch policy surfaces as nothing at all, which is why it is
+worth asserting here.
