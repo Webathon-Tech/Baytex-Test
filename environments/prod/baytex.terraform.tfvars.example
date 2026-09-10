@@ -53,13 +53,19 @@ cisco_firewall_private_ip = "10.40.240.36"
 # Set false if Baytex creates both peering directions.
 create_spoke_to_hub_peering = false
 
-# Prefixes routed to cisco_firewall_private_ip.
+# Prefixes routed to cisco_firewall_private_ip. This route table carries no 0.0.0.0/0, so a destination not named here
+# leaves through the NAT Gateway to the internet rather than reaching on-premises.
 on_prem_routes = {
   azure_spokes = {
     address_prefix = "10.40.0.0/16"
   }
   baytex_onprem = {
     address_prefix = "172.19.64.0/18"
+  }
+  # btx-sql01.trimble.vpn sits on the vendor VPN, outside the corporate range above. Baytex source-NATs the flow to
+  # 172.23.227.82 before the tunnel, so their NAT policy must list this spoke's proxy subnet as a permitted source.
+  trimble_vendor = {
+    address_prefix = "172.23.178.197/32"
   }
 }
 
