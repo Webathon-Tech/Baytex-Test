@@ -43,9 +43,9 @@ hub_vnet_name             = "vnet-sbx-hub-cnc-001"
 hub_vnet_id               = "/subscriptions/6a3bb170-5159-4bff-860b-aa74fb762697/resourceGroups/rg-sbx-hub-cnc-001/providers/Microsoft.Network/virtualNetworks/vnet-sbx-hub-cnc-001"
 cisco_firewall_private_ip = "10.98.0.4"
 
-# True is possible here because the hub is in the same subscription as the spoke. Where the hub belongs to another
-# subscription the peering is usually created by whoever owns it, and this is set to false.
-create_spoke_to_hub_peering = true
+# The spoke side of the VNet peering is not created here. The hub is customer-owned, so both directions of the peering
+# are established by whoever owns it.
+create_spoke_to_hub_peering = false
 
 # Prefixes routed to cisco_firewall_private_ip rather than out through the NAT gateway.
 on_prem_routes = {
@@ -56,6 +56,8 @@ on_prem_routes = {
 
 # One Allow-SSH rule is created per CIDR on the proxy NSG. Empty creates none, which is the intended posture: the
 # proxy VMs are reachable through "az vm run-command invoke" without opening port 22.
+# Empty creates no SSH rule, which is the intended posture. Example if you need one:
+#   admin_ssh_source_cidrs = ["10.40.240.0/24"]
 admin_ssh_source_cidrs = []
 
 ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMhki1LbqhnxgL8qjn0rcCIy6b/7NYAW6AT1D+6NvlNJ vkp-platform"
@@ -113,10 +115,14 @@ workspace_default_storage_firewall_enabled  = true
 workspace_infrastructure_encryption_enabled = true
 
 # Optional creation-time catalog. null leaves Unity Catalog setup to whoever owns the data layer.
+# null leaves Unity Catalog setup to whoever owns the data layer. Example:
+#   default_catalog_initial_name = "main"
 default_catalog_initial_name = null
 
 enable_diagnostics           = true
 log_analytics_retention_days = 30
 
 # Email receivers on the platform action group. Empty creates the group with no receivers.
+# Empty creates the action group with no receivers. Example:
+#   alert_email_receivers = { cloud_operations = "cloud-operations@example.com" }
 alert_email_receivers = {}

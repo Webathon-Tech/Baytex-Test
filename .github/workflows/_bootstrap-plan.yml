@@ -246,27 +246,17 @@ jobs:
         run: |
           MODE="${{ steps.probe.outputs.mode }}"
           {
-            echo "### ${{ inputs.environment }} state backend: plan (mode \`$MODE\`)"
+            echo "### ${{ inputs.environment }} state backend - plan"
             echo ""
-            echo '```'
-            grep -E '^(Plan:|No changes)' plan.txt || tail -n 3 plan.txt
-            echo '```'
-            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Environment | \`${{ inputs.environment }}\` |"
+            echo "| Mode | \`$MODE\` |"
+            echo "| Result | \`$(grep -m1 -E '^(Plan:|No changes)' plan.txt || echo 'see log')\` |"
             if grep -qE 'must be replaced|will be destroyed' plan.txt; then
-              echo "> **Stop and read the plan.** This changes or removes the storage account"
-              echo "> that holds Terraform state for this environment. Approving it can destroy"
-              echo "> the state file. Confirm this is intended before approving."
-              echo ""
-              grep -E '^  # .*(must be replaced|will be destroyed)' plan.txt | sed 's/^/    /'
+                echo "| Replaces or destroys | YES - this changes the account holding the state for this environment. Do not approve without checking. |"
             else
-              echo "No replacements or destroys in this plan."
-            fi
-            if [ "$MODE" = "import" ]; then
-              echo ""
-              echo "> Mode \`import\`: the storage account exists but nothing tracks it. The"
-              echo "> apply job imports the resource group, account and container into state"
-              echo "> first, then applies. The plan above is pre-import, so it shows creates"
-              echo "> for resources that already exist - that is expected."
+              echo "| Replaces or destroys | none |"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 

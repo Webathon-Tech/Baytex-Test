@@ -62,6 +62,8 @@ on_prem_routes = {
 }
 
 # One Allow-SSH rule is created per CIDR on the proxy NSG. Empty creates none.
+# Empty creates no SSH rule, which is the intended posture. Example if you need one:
+#   admin_ssh_source_cidrs = ["10.40.240.0/24"]
 admin_ssh_source_cidrs = []
 
 ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIpC6AYv2TDM3+DFJJYLSy3hQZjIRMoFKkB0xtvf2PMx baytex-terraform"
@@ -130,7 +132,11 @@ on_prem_endpoints = {
 # subscription. Empty auto-approval means every connection request requires
 # manual approval.
 allow_all_subscriptions_pls_visibility = true
+# Subscriptions that may discover the Private Link Services. Example:
+#   pls_visibility_subscription_ids = ["00000000-0000-0000-0000-000000000000"]
 pls_visibility_subscription_ids        = []
+# Must be a subset of the visibility list, or Azure rejects the create. Example:
+#   pls_auto_approval_subscription_ids = ["00000000-0000-0000-0000-000000000000"]
 pls_auto_approval_subscription_ids     = []
 
 # Must be globally unique.
@@ -139,7 +145,11 @@ workspace_root_storage_account_name = "stbtedbxdevroot001"
 
 data_containers = ["managed", "external", "landing", "checkpoints"]
 
-# Empty creates the private endpoints without zone groups.
+# Left empty on purpose. Attaching a private endpoint to a DNS zone needs
+# Microsoft.Network/privateDnsZones/join/action ON THE ZONE, which Contributor on this subscription does not
+# grant when the zone lives in the hub subscription. Whoever owns the hub must grant the deployment service
+# principal Private DNS Zone Contributor on each zone before these can be set. Example once granted:
+#   blob_private_dns_zone_ids = ["/subscriptions/<hub-sub>/resourceGroups/<hub-rg>/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"]
 blob_private_dns_zone_ids = []
 dfs_private_dns_zone_ids  = []
 
@@ -149,6 +159,8 @@ workspace_default_storage_firewall_enabled  = true
 workspace_infrastructure_encryption_enabled = true
 
 # Optional creation-time default catalog name.
+# null leaves Unity Catalog setup to whoever owns the data layer. Example:
+#   default_catalog_initial_name = "main"
 default_catalog_initial_name = null
 
 enable_diagnostics           = true

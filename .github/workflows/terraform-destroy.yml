@@ -90,14 +90,13 @@ jobs:
           if [ "${{ inputs.confirm }}" != "$SELECTED" ]; then
             echo "::error::Confirmation '${{ inputs.confirm }}' does not match the selected environments '$SELECTED'. Nothing was destroyed."
             {
-              echo "### Run refused"
+              echo "### Destroy refused"
               echo ""
               echo "| | |"
               echo "| --- | --- |"
               echo "| Ticked | \`$SELECTED\` |"
               echo "| Typed | \`${{ inputs.confirm }}\` |"
-              echo ""
-              echo "Type the ticked environments exactly, in the order \`dev,test,prod\`, with no spaces."
+              echo "| Required | the ticked environments, comma-separated, in the order dev,test,prod |"
             } >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
@@ -110,9 +109,11 @@ jobs:
           {
             echo "### Destroy requested"
             echo ""
-            echo "Environments: \`$SELECTED\`"
-            echo ""
-            echo "A destroy plan is produced for each environment first. Read it before approving."
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Environments | \`$SELECTED\` |"
+            echo "| Branch | \`${{ github.ref_name }}\` |"
+            echo "| Before approving | read the destroy plan produced for each environment |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Environments are independent, so one failing does not abandon the others.
