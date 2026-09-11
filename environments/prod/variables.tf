@@ -110,7 +110,7 @@ variable "ssh_public_key" {
 
 variable "proxy_vm_size" {
   type    = string
-  default = "Standard_D4s_v3"
+  default = "Standard_D4s_v6"
 }
 
 variable "proxy_vm_private_ips" {

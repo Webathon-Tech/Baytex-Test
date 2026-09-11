@@ -12,6 +12,10 @@ locals {
 
   frontend_ips = [for endpoint in values(var.endpoints) : endpoint.frontend_ip]
 
+  # Sizes from the v6 generation on accept only NVMe disks. Earlier sizes are left to Azure's default of SCSI,
+  # which keeps their plans identical to a VM created before this setting existed.
+  disk_controller_type = can(regex("_v[6-9]$", var.proxy_vm_size)) ? "NVMe" : null
+
   haproxy_config = replace(templatefile("${path.module}/templates/haproxy.cfg.tftpl", {
     dns_servers = var.dns_servers
     endpoints   = var.endpoints
@@ -108,6 +112,7 @@ resource "azurerm_linux_virtual_machine" "proxy" {
   location                        = var.location
   resource_group_name             = var.resource_group_name
   size                            = var.proxy_vm_size
+  disk_controller_type            = local.disk_controller_type
   zone                            = each.value.zone
   admin_username                  = var.admin_username
   disable_password_authentication = true
@@ -138,7 +143,7 @@ resource "azurerm_linux_virtual_machine" "proxy" {
 
   source_image_reference {
     publisher = "Canonical"
-    offer     = "ubuntu-24_04-lts"
+    offer     = "ubuntu-26_04-lts"
     sku       = "server"
     version   = "latest"
   }

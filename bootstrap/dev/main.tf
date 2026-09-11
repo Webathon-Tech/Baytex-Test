@@ -12,7 +12,7 @@ resource "azurerm_storage_account" "state" {
   account_replication_type         = "GRS"
   account_kind                     = "StorageV2"
   min_tls_version                  = "TLS1_2"
-  public_network_access_enabled    = true
+  public_network_access            = "Enabled"
   allow_nested_items_to_be_public  = false
   cross_tenant_replication_enabled = false
   tags                             = var.tags
@@ -41,7 +41,7 @@ resource "azurerm_storage_account" "state" {
 # Created through azapi rather than azurerm_storage_container, which reaches the blob data plane and would need the
 # account key this account does not have.
 resource "azapi_resource" "state_container" {
-  type      = "Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01"
+  type      = "Microsoft.Storage/storageAccounts/blobServices/containers@2026-04-01"
   name      = var.container_name
   parent_id = "${azurerm_storage_account.state.id}/blobServices/default"
 

@@ -7,7 +7,7 @@ resource "azurerm_storage_account" "this" {
   account_replication_type          = "ZRS"
   is_hns_enabled                    = true
   min_tls_version                   = "TLS1_2"
-  public_network_access_enabled     = false
+  public_network_access             = "Disabled"
   shared_access_key_enabled         = false
   default_to_oauth_authentication   = true
   allow_nested_items_to_be_public   = false
@@ -37,7 +37,7 @@ resource "azurerm_storage_account" "this" {
 resource "azapi_resource" "container" {
   for_each = var.containers
 
-  type      = "Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01"
+  type      = "Microsoft.Storage/storageAccounts/blobServices/containers@2026-04-01"
   name      = each.value
   parent_id = "${azurerm_storage_account.this.id}/blobServices/default"
 

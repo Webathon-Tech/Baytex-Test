@@ -174,7 +174,7 @@ jobs:
 
           terraform import azurerm_resource_group.state   "$RG_ID" || echo "resource group already tracked"
           terraform import azurerm_storage_account.state  "$SA_ID" || echo "storage account already tracked"
-          terraform import azapi_resource.state_container "$CONTAINER_ID?api-version=2023-05-01" || echo "container already tracked"
+          terraform import azapi_resource.state_container "$CONTAINER_ID?api-version=2026-04-01" || echo "container already tracked"
 
           # The approved plan was built before the import and no longer matches state, so it is replaced here. The end
           # state is unchanged - the idempotency check below asserts the result converges.
