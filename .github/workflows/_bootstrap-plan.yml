@@ -245,16 +245,22 @@ jobs:
         if: env.SKIP != 'true'
         run: |
           MODE="${{ steps.probe.outputs.mode }}"
+          RESULT=$(grep -m1 -E '^(Plan:|No changes)' plan.txt || true)
+          if [ -z "$RESULT" ] && grep -q '^Changes to Outputs' plan.txt; then
+            RESULT="Output values only - no resource changes"
+          fi
+          RESULT=${RESULT:-See the job log}
+
           {
             echo "### ${{ inputs.environment }} state backend - plan"
             echo ""
-            echo "| | |"
+            echo "| Item | Value |"
             echo "| --- | --- |"
             echo "| Environment | \`${{ inputs.environment }}\` |"
             echo "| Mode | \`$MODE\` |"
-            echo "| Result | \`$(grep -m1 -E '^(Plan:|No changes)' plan.txt || echo 'see log')\` |"
+            echo "| Result | $RESULT |"
             if grep -qE 'must be replaced|will be destroyed' plan.txt; then
-                echo "| Replaces or destroys | YES - this changes the account holding the state for this environment. Do not approve without checking. |"
+              echo "| Replaces or destroys | **Yes** - this account holds the environment's state; read the plan first |"
             else
               echo "| Replaces or destroys | none |"
             fi

@@ -21,11 +21,11 @@ locals {
 
     workspace              = "dbw-${local.resource_name_prefix}"
     managed_resource_group = "rg-${var.organization}-${var.workload}-${var.environment}-dbx-managed-${var.region_short}-${var.instance}"
-    access_connector       = "ac-${local.resource_name_prefix}"
+    access_connector_root  = "ac-${var.organization}-${var.workload}-${var.environment}-root-${var.region_short}-${var.instance}"
+    access_connector_data  = "ac-${var.organization}-${var.workload}-${var.environment}-data-${var.region_short}-${var.instance}"
     ncc                    = "ncc-${local.resource_name_prefix}"
     log_analytics          = "log-${local.resource_name_prefix}"
     action_group           = "ag-${local.resource_name_prefix}"
-    diagnostic_setting     = "diag-${local.resource_name_prefix}"
   }
 
   tags = merge(

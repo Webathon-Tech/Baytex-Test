@@ -32,22 +32,21 @@ Each environment gets its own complete stack:
 - Environment resource groups following the naming convention
 - VNet with dedicated Databricks host and container subnets
 - Private Endpoint and HAProxy/Private Link Service subnets
-- NSGs, route table, NAT Gateway for internet egress
+- NSGs and two route tables: the Databricks subnets send on-premises traffic to the firewall and reach the internet
+  through a NAT Gateway; the proxy and private endpoint subnets send all traffic to the firewall
 - Optional spoke-side VNet peering to the existing Baytex hub
 
 **Databricks**
-- Premium Hybrid Azure Databricks workspace with VNet injection and no public IPs
-  for classic compute
-- Unity Catalog creation-time enablement, required for serverless capabilities
-- Firewall-protected Databricks-managed default storage using the environment
-  Access Connector
+- Premium Azure Databricks workspace with VNet injection and no public IPs for classic compute
+- A root Access Connector for the Databricks-managed default storage, attached when the storage firewall is
+  turned on
 - Network Connectivity Configuration (NCC), workspace binding, storage private
   endpoint rules and customer-managed Private Link Service rules
 
 **Data foundation**
 - ADLS Gen2 data storage account with `managed`, `external`, `landing` and
   `checkpoints` containers
-- Access Connector and the Azure RBAC it requires
+- A data Access Connector with the Azure RBAC Unity Catalog needs on the data storage account
 - Blob and DFS Private Endpoints
 
 **On-premises connectivity**
@@ -127,6 +126,7 @@ branch protection — is documented in [GITHUB-SETUP.md](GITHUB-SETUP.md).
 ├── modules/
 │   ├── spoke-network/
 │   ├── data-foundation/
+│   ├── databricks-workspace/
 │   ├── haproxy-tier/
 │   └── ncc/
 ├── baytex-bi-owned-unity-catalog-example/   # Separate Baytex BI reference/state
@@ -158,16 +158,17 @@ Full ownership matrix: [docs/architecture-and-boundaries.md](docs/architecture-a
 1. **No current-state clone.** Current Production informs the design, but legacy
    proxy VMs, existing names, permissive rules and unrelated resources are not
    copied.
-2. **Internet egress uses NAT Gateway.** Only approved on-premises prefixes are
-   routed to the existing Cisco firewall. A `0.0.0.0/0` firewall route should be
-   introduced only through an approved egress design.
+2. **Two route tables, matching the existing Baytex spokes.** The Databricks subnets route only the approved
+   on-premises prefixes to the Cisco firewall and reach the internet through the NAT Gateway, because forcing their
+   traffic through the firewall would mean allow-listing every Databricks control-plane endpoint there. The proxy and
+   private endpoint subnets send all traffic to the firewall.
 3. **Workspace front-end is public initially.** This preserves compatibility for
    user, Power BI and GitHub access while private front-end requirements are
    validated. Classic compute still has no public IPs, and data/storage
    connectivity is private.
-4. **Default workspace storage is firewalled.** The Azure Verified Module uses the
-   environment Access Connector to disallow public access to the Databricks-managed
-   default storage account.
+4. **The default storage firewall is off.** Each workspace has its own root Access Connector, attached only when
+   `workspace_default_storage_firewall_enabled` is set to `true`; Databricks then grants it access to the managed
+   default storage account itself.
 5. **Private Link Service visibility is fail-closed.** Terraform refuses to create
    the PLS objects until explicit visibility subscriptions are provided or the
    all-subscription exception is deliberately enabled.
@@ -176,7 +177,7 @@ Full ownership matrix: [docs/architecture-and-boundaries.md](docs/architecture-a
 7. **One NCC per environment.** All of an environment's storage and on-premises
    rules go in a single NCC, because one workspace can bind to only one NCC.
 8. **Unity Catalog remains Baytex BI-owned.** The platform output supplies the
-   metastore ID, workspace ID/URL, Access Connector and storage paths; Baytex BI
+   metastore ID, workspace ID/URL, data Access Connector and storage paths; Baytex BI
    completes the data-governance layer.
 
 ## Inputs that must be approved before deployment

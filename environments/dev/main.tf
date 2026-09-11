@@ -87,7 +87,7 @@ module "data_foundation" {
   location                   = var.location
   resource_group_name        = azurerm_resource_group.data.name
   storage_account_name       = var.data_storage_account_name
-  access_connector_name      = local.names.access_connector
+  access_connector_name      = local.names.access_connector_data
   private_endpoint_subnet_id = module.network.private_endpoint_subnet_id
   containers                 = var.data_containers
   blob_private_dns_zone_ids  = var.blob_private_dns_zone_ids
@@ -115,60 +115,23 @@ module "haproxy" {
 }
 
 module "databricks_workspace" {
-  source  = "Azure/avm-res-databricks-workspace/azurerm"
-  version = "0.5.0"
+  source = "../../modules/databricks-workspace"
 
-  # Required, and it has a known cost. The AVM module resolves the resource group with
-  # `data "azurerm_resource_group" "parent" { name = var.resource_group_name }` and derives the workspace's parent_id
-  # from it. That name is statically known, so without depends_on Terraform reads the data source during plan and a
-  # first run against empty state fails with:
-  #   Error: "Resource Group (... Name: "rg-<org>-<workload>-<env>-platform-<region>-<instance>")" was not found
-  # Passing resource_group_name from the resource is not enough to defer it; only depends_on is.
-  #
-  # The cost: depends_on marks every data source in the module unknown at plan time on EVERY run, so parent_id is
-  # always unknown and Terraform reports the workspace as needing replacement whenever anything in that block changes
-  # -- a tag edit included. Treat any plan that shows the workspace being replaced as suspect and read it before
-  # approving. Module 0.5.0 offers no input to supply the resource group id directly, which would remove the need for
-  # the data source entirely.
-  depends_on = [azurerm_resource_group.platform]
-
-  name                              = local.names.workspace
-  resource_group_name               = azurerm_resource_group.platform.name
   location                          = var.location
-  sku                               = "premium"
-  compute_mode                      = "Hybrid"
+  resource_group_name               = azurerm_resource_group.platform.name
+  name                              = local.names.workspace
   managed_resource_group_name       = local.names.managed_resource_group
+  root_storage_account_name         = var.workspace_root_storage_account_name
+  root_access_connector_name        = local.names.access_connector_root
+  virtual_network_id                = module.network.vnet_id
+  host_subnet_name                  = module.network.databricks_host_subnet_name
+  container_subnet_name             = module.network.databricks_container_subnet_name
+  host_nsg_association_id           = module.network.host_nsg_association_id
+  container_nsg_association_id      = module.network.container_nsg_association_id
   public_network_access_enabled     = var.workspace_public_network_access_enabled
   default_storage_firewall_enabled  = var.workspace_default_storage_firewall_enabled
-  access_connector_id               = var.workspace_default_storage_firewall_enabled ? module.data_foundation.access_connector_id : null
   infrastructure_encryption_enabled = var.workspace_infrastructure_encryption_enabled
-  enable_telemetry                  = false
   tags                              = local.tags
-
-  default_catalog = {
-    initial_type = "UnityCatalog"
-    initial_name = var.default_catalog_initial_name
-  }
-
-  custom_parameters = {
-    no_public_ip                                         = true
-    virtual_network_id                                   = module.network.vnet_id
-    public_subnet_name                                   = module.network.databricks_host_subnet_name
-    private_subnet_name                                  = module.network.databricks_container_subnet_name
-    public_subnet_network_security_group_association_id  = module.network.host_nsg_association_id
-    private_subnet_network_security_group_association_id = module.network.container_nsg_association_id
-    storage_account_name                                 = var.workspace_root_storage_account_name
-    storage_account_sku_name                             = "Standard_GRS"
-  }
-
-  diagnostic_settings = var.enable_diagnostics ? {
-    primary = {
-      name                  = local.names.diagnostic_setting
-      workspace_resource_id = azurerm_log_analytics_workspace.this.id
-      log_groups            = ["allLogs"]
-      metric_categories     = ["AllMetrics"]
-    }
-  } : {}
 }
 
 module "ncc" {
@@ -180,9 +143,21 @@ module "ncc" {
 
   name                  = local.names.ncc
   region                = var.location
-  workspace_id          = module.databricks_workspace.databricks_workspace_id
+  workspace_id          = module.databricks_workspace.workspace_id
   storage_account_id    = module.data_foundation.storage_account_id
   private_link_services = local.private_link_services_for_ncc
+}
+
+resource "azurerm_monitor_diagnostic_setting" "workspace" {
+  count = var.enable_diagnostics ? 1 : 0
+
+  name                       = "diag-${local.resource_name_prefix}-workspace"
+  target_resource_id         = module.databricks_workspace.id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.this.id
+
+  enabled_log {
+    category_group = "allLogs"
+  }
 }
 
 data "azurerm_monitor_diagnostic_categories" "data_storage" {

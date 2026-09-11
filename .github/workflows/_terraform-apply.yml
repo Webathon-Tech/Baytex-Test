@@ -199,36 +199,50 @@ jobs:
         if: always()
         run: terraform state list > state-after.txt 2>/dev/null || true
 
-      # A destroy that leaves resources behind is a silent problem: the next deploy collides on names that still exist.
-      # -detailed-exitcode returns 0 only when there is genuinely nothing left to do.
       - name: Publish the deployment summary
         if: inputs.operation == 'deploy' && success()
         run: |
+          out () { terraform output -raw "$1" 2>/dev/null || echo "-"; }
+          URL=$(out databricks_workspace_url)
+          WORKSPACE_ID=$(out databricks_workspace_id)
+          STORAGE=$(out data_storage_account_name)
+          NAT_IP=$(out nat_public_ip)
+
           {
             echo "### ${{ inputs.environment }} platform - deployed"
             echo ""
-            echo "| Output | Value |"
+            echo "| Item | Value |"
             echo "| --- | --- |"
-            for k in databricks_workspace_url data_storage_account_name nat_public_ip spoke_to_hub_peering_id; do
-              v=$(terraform output -raw "$k" 2>/dev/null || echo "-")
-              echo "| \`$k\` | \`$v\` |"
-            done
+            echo "| Workspace URL | $URL |"
+            echo "| Workspace ID | \`$WORKSPACE_ID\` |"
+            echo "| Data storage account | \`$STORAGE\` |"
+            echo "| NAT Gateway public IP | \`$NAT_IP\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # The hub side of the VNet peering is customer-owned and is not managed by this Terraform, so it survives the
-      # destroy pointing at a VNet that no longer exists. Left in place it blocks the peering from being recreated on
-      # the next deploy, so the command to remove it is reported here.
-      - name: Report the manual cleanup this workflow cannot perform
+      # Counted from the state lists taken either side of the destroy rather than from the apply log: after a retry the
+      # log's final line covers only the last attempt. grep -c prints 0 and exits 1 when nothing matches, so "|| true"
+      # (not "|| echo 0") keeps each count to a single number.
+      - name: Publish the teardown summary
         if: inputs.operation == 'destroy' && success()
         run: |
+          BEFORE=$(grep -c . state-before.txt 2>/dev/null || true)
+          AFTER=$(grep -c . state-after.txt 2>/dev/null || true)
+          BEFORE=${BEFORE:-0}
+          AFTER=${AFTER:-0}
+
           {
             echo "### ${{ inputs.environment }} platform - destroyed"
             echo ""
-            echo "| | |"
+            echo "| Item | Value |"
             echo "| --- | --- |"
             echo "| Environment | \`${{ inputs.environment }}\` |"
-            echo "| Resources destroyed | \`$(grep -c . state-before.txt 2>/dev/null || echo 0)\` |"
-            echo "| State backend | kept - Terraform Deploy Platform can rebuild without bootstrapping |"
+            if [ "$BEFORE" -eq 0 ]; then
+              echo "| Resources destroyed | Nothing to destroy - the state was already empty |"
+            else
+              echo "| Resources destroyed | $((BEFORE - AFTER)) of $BEFORE |"
+            fi
+            echo "| Resources remaining | $AFTER |"
+            echo "| State backend | Kept, so Deploy can rebuild this environment without bootstrapping again |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Record run metadata

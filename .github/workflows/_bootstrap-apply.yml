@@ -234,7 +234,7 @@ jobs:
           {
             echo "### ${{ inputs.environment }} state backend - ready"
             echo ""
-            echo "| | |"
+            echo "| Item | Value |"
             echo "| --- | --- |"
             echo "| Environment | \`${{ inputs.environment }}\` |"
             echo "| Mode applied | \`${{ steps.approved.outputs.mode }}\` |"

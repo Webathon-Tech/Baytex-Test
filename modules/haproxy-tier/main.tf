@@ -23,9 +23,9 @@ locals {
 
   configure_lb_ips_service = replace(templatefile("${path.module}/templates/lb-ips.service.tftpl", {}), "\r\n", "\n")
 
+  install_script = replace(templatefile("${path.module}/templates/install-packages.sh.tftpl", {}), "\r\n", "\n")
+
   cloud_init = yamlencode({
-    package_update = true
-    packages       = ["haproxy", "rsyslog", "netcat-openbsd"]
     write_files = [
       {
         path        = "/etc/haproxy/haproxy.cfg"
@@ -38,6 +38,12 @@ locals {
         permissions = "0755"
         owner       = "root:root"
         content     = local.configure_lb_ips_script
+      },
+      {
+        path        = "/usr/local/sbin/install-haproxy-packages.sh"
+        permissions = "0755"
+        owner       = "root:root"
+        content     = local.install_script
       },
       {
         path        = "/etc/systemd/system/baytex-lb-ips.service"
@@ -61,13 +67,16 @@ locals {
       ["sysctl", "--system"],
       ["systemctl", "daemon-reload"],
       ["systemctl", "enable", "--now", "baytex-lb-ips.service"],
+      # The proxy subnet reaches the internet only through the firewall, and that path exists only once the hub
+      # peering is in place, which happens after the first apply. A one-shot install would fail at first boot and
+      # never run again, so this script retries until the package mirrors answer; the steps below then configure
+      # HAProxy.
+      ["/usr/local/sbin/install-haproxy-packages.sh"],
       ["haproxy", "-c", "-f", "/etc/haproxy/haproxy.cfg"],
       ["systemctl", "enable", "haproxy"],
-      # Installing the haproxy package starts it immediately, before the
-      # frontend IPs exist. Those failures burn systemd's StartLimitBurst, and
-      # a plain "restart" is then refused with "Start request repeated too
-      # quickly" -- leaving the tier dead even though the config is valid.
-      # reset-failed clears that rate limiter so the restart below is honoured.
+      # The package starts HAProxy as soon as it is installed. If that start fails, systemd's StartLimitBurst
+      # refuses a plain restart with "Start request repeated too quickly"; reset-failed clears the limiter so the
+      # restart below is honoured.
       ["systemctl", "reset-failed", "haproxy"],
       ["systemctl", "restart", "haproxy"]
     ]

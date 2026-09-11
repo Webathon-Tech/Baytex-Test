@@ -47,7 +47,7 @@ Baytex BI attaches the workspace to the existing metastore and applies DEV-speci
 
 - Workspace login and SSO
 - Classic compute launch and no-public-IP validation
-- NAT egress
+- Egress: Databricks subnets through the NAT Gateway, proxy subnet through the firewall
 - DNS resolution
 - Storage Blob/DFS private access
 - NCC binding and all private endpoint rules established

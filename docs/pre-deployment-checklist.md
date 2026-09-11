@@ -13,7 +13,7 @@ Do not apply the DEV root until every mandatory item is complete.
 - [ ] Baytex BI accepts ownership of metastore assignment, catalogs, external locations, bindings, groups and grants
 - [ ] SQL/Oracle destination list approved; SQL6, Trimble/TMW and SQL03YYC disposition documented
 - [ ] Workspace public-front-end decision approved
-- [ ] Workspace default-storage firewall/Power BI Cloud Fetch validation plan approved
+- [ ] Workspace default-storage firewall decision recorded (off by default)
 - [ ] Private Link Service visibility decision approved
 
 ## Azure and Databricks prerequisites

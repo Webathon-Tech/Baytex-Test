@@ -3,7 +3,7 @@ databricks_account_id = "<DATABRICKS-ACCOUNT-ID>"
 metastore_id          = "<EXISTING-REGIONAL-METASTORE-ID>"
 workspace_id          = 1234567890123456
 workspace_url         = "https://adb-1234567890123456.7.azuredatabricks.net"
-access_connector_id   = "/subscriptions/e3a6598e-28b1-4d6a-8698-6683cd1d6995/resourceGroups/<RG>/providers/Microsoft.Databricks/accessConnectors/<ACCESS-CONNECTOR>"
+access_connector_id   = "/subscriptions/e3a6598e-28b1-4d6a-8698-6683cd1d6995/resourceGroups/<RG>/providers/Microsoft.Databricks/accessConnectors/<DATA-ACCESS-CONNECTOR>"
 storage_account_name  = "stbtedbxdevcnc001"
 
 storage_credential_name          = "sc_bte_dev"
