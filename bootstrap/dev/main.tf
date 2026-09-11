@@ -12,7 +12,7 @@ resource "azurerm_storage_account" "state" {
   account_replication_type         = "GRS"
   account_kind                     = "StorageV2"
   min_tls_version                  = "TLS1_2"
-  public_network_access_enabled    = true
+  public_network_access            = "Enabled"
   allow_nested_items_to_be_public  = false
   cross_tenant_replication_enabled = false
   tags                             = var.tags
