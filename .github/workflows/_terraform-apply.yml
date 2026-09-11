@@ -220,13 +220,14 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       # Counted from the state lists taken either side of the destroy rather than from the apply log: after a retry the
-      # log's final line covers only the last attempt. grep -c prints 0 and exits 1 when nothing matches, so "|| true"
-      # (not "|| echo 0") keeps each count to a single number.
+      # log's final line covers only the last attempt. Data sources are left out so the count matches Terraform's own.
+      # grep -c prints 0 and exits 1 when nothing matches, so "|| true" (not "|| echo 0") keeps each count to a
+      # single number.
       - name: Publish the teardown summary
         if: inputs.operation == 'destroy' && success()
         run: |
-          BEFORE=$(grep -c . state-before.txt 2>/dev/null || true)
-          AFTER=$(grep -c . state-after.txt 2>/dev/null || true)
+          BEFORE=$(grep -cvE '^$|(^|\.)data\.' state-before.txt 2>/dev/null || true)
+          AFTER=$(grep -cvE '^$|(^|\.)data\.' state-after.txt 2>/dev/null || true)
           BEFORE=${BEFORE:-0}
           AFTER=${AFTER:-0}
 
