@@ -61,3 +61,5 @@ resource "azurerm_role_assignment" "state_blob_data_contributor" {
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = each.value
 }
+
+# End-to-end check of the pull request path filter. Not for merge.
