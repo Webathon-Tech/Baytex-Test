@@ -11,13 +11,14 @@ variables, protection rules — see **[GITHUB-SETUP.md](GITHUB-SETUP.md)**.
 
 | Workflow | What it does | When it runs | Who starts it | Produces |
 | --- | --- | --- | --- | --- |
-| **Terraform Pull Request Checks** | Formats, validates, and plans all three environments. Never applies. | Automatically, on every pull request | Nobody — it is automatic | A plan per environment for the reviewer |
+| **Terraform Pull Request Checks** | Formats and validates every change, and plans the environments or state backends it touches. Never applies. | Automatically, on every pull request | Nobody — it is automatic | A plan per affected environment for the reviewer |
 | **Terraform Bootstrap State Backend** | Creates the Azure storage account that holds Terraform state | Manually, once per environment (and safe to re-run) | Platform engineer | The state backend, plus its configuration |
 | **Terraform Deploy Platform** | Builds or updates the Databricks platform | Manually, whenever a change is promoted | Platform engineer | The deployed environment, plus outputs |
 | **Terraform Destroy Platform** | Tears an environment down | Manually, rarely | Platform engineer | An empty environment (backend kept) |
+| **Terraform Unlock State** | Releases a state lock left behind by a cancelled or killed run | Manually, only after such a run | Platform engineer | The lock released, plus an audit record |
 
 There are also five workflows whose names begin with **`Reusable -`**. They are
-building blocks called by the four above. **Do not run them directly** — they
+building blocks called by the five above. **Do not run them directly** — they
 will not appear with a "Run workflow" button.
 
 ### The order things happen in
@@ -41,8 +42,8 @@ Every workflow that changes Azure is split into **two jobs in two different
 GitHub Environments**:
 
 ```
-   Plan dev deployment                Apply dev deployment
-   ───────────────────                ────────────────────
+   Plan dev platform                  Apply dev platform
+   ─────────────────                  ──────────────────
    GitHub Environment:                GitHub Environment:
        dev-plan                           dev-apply
                                           ▲
@@ -56,7 +57,7 @@ Four consequences worth understanding:
 
 **The approval gate has one home.** Attach required reviewers to `dev-apply`,
 `test-apply` or `prod-apply` and *every* workflow that changes that environment
-pauses — deploy, destroy **and** bootstrap. You do not configure it three times.
+pauses — deploy, destroy, bootstrap **and** unlock. You do not configure it four times.
 
 **What is approved is what runs.** The apply job applies a saved binary plan. It
 does not re-run `terraform plan` after approval, so nothing can change between
@@ -77,6 +78,7 @@ before it happens, in exactly the same way a deployment is.
 | Deploy | `main`, `hotfix/*` | Routine promotion, plus an emergency path |
 | Bootstrap | `main`, `hotfix/*` | It applies Terraform, so the same rule |
 | Destroy | **`main` only** | A teardown is never the urgent action a hotfix exists for |
+| Unlock | **`main` only** | A recovery runs from reviewed code, never from whichever branch is selected |
 
 Feature branches can never apply anything. This is checked twice — once in the
 `Check the run is allowed` job before Azure is touched, and again inside the
@@ -96,7 +98,7 @@ All manual workflows are started the same way:
 **Run this first.** Until it has completed for an environment, Deploy will refuse
 to run, because there is nowhere to keep Terraform state.
 
-| | |
+| Setting | Value |
 | --- | --- |
 | Inputs | `dev`, `test`, `prod` checkboxes — tick any combination |
 | Branch | `main` (or `hotfix/*`) |
@@ -107,8 +109,8 @@ to run, because there is nowhere to keep Terraform state.
 
 ```
 Check the run is allowed
-Plan dev bootstrap storage account   ← in dev-plan
-Apply dev state backend      ← in dev-apply, pauses here if reviewers are set
+Plan dev bootstrap storage account (state backend)    ← in dev-plan
+Apply dev bootstrap storage account (state backend)   ← in dev-apply, pauses here if reviewers are set
 ```
 
 **What the plan tells you.** The summary names a **mode**:
@@ -121,15 +123,15 @@ Apply dev state backend      ← in dev-apply, pauses here if reviewers are set
 
 > **Read the plan before approving this one.** The storage account it manages
 > holds the Terraform state for the whole environment. If the plan says
-> `must be replaced` or `will be destroyed`, the summary puts a warning at the
-> top. Approving that can destroy the state file. Stop and ask.
+> `must be replaced` or `will be destroyed`, the summary's **Replaces or destroys**
+> row says so. Approving that can destroy the state file. Stop and ask.
 
-**When it finishes** the summary prints the backend configuration and confirms
-that a re-run produces no changes.
+**When it finishes** the summary shows the storage account, container and state
+key that the platform workflows will use.
 
 ### 3.2 Deploy the platform
 
-| | |
+| Setting | Value |
 | --- | --- |
 | Inputs | `dev`, `test`, `prod` checkboxes |
 | Branch | `main` (or `hotfix/*` for emergencies) |
@@ -145,9 +147,9 @@ If dev fails, nothing after it runs.
 
 ```
 Check the run is allowed
-Plan dev deployment     →  Apply dev deployment      ← gate
-Plan test deployment    →  Apply test deployment     ← gate
-Plan prod deployment    →  Apply prod deployment     ← gate
+Plan dev platform     →  Apply dev platform      ← gate
+Plan test platform    →  Apply test platform     ← gate
+Plan prod platform    →  Apply prod platform     ← gate
 ```
 
 **Approving.** When a run reaches a gated apply job, GitHub shows
@@ -155,15 +157,19 @@ Plan prod deployment    →  Apply prod deployment     ← gate
 the job summary of the matching **Plan** job above, then **Approve and deploy**
 or **Reject**.
 
+The plan summary gives the result line and, for a deployment, a **Replacements**
+count. Anything other than `none` means a resource will be deleted and recreated;
+find out which, and why, before approving.
+
 > You cannot approve your own deployment in some configurations. If the button is
 > missing on a run you started, that is why — a second reviewer is needed.
 
-**When it finishes** the summary lists the workspace URL, the data storage
-account, the NAT public IP and the peering ID.
+**When it finishes** the summary lists the workspace URL and ID, the data storage
+account and the NAT Gateway public IP.
 
 ### 3.3 Destroy an environment
 
-| | |
+| Setting | Value |
 | --- | --- |
 | Inputs | `dev`, `test`, `prod` checkboxes, plus **`confirm`** |
 | Branch | **`main` only** |
@@ -187,12 +193,15 @@ mis-clicked checkbox cannot destroy an environment you did not mean to name.
   environment without bootstrapping again
 - The **hub VNet, firewall and on-premises systems** — this Terraform never
   owned them
-- The **hub side of the VNet peering** — customer-owned
+- The **VNet peering** — with `create_spoke_to_hub_peering = false`, Baytex
+  creates both directions and this Terraform never owns them
 
-That last one matters. It survives pointing at a VNet that no longer exists, and
-will block the peering from being recreated on the next deploy with
-`RemotePeeringIsDisconnected`. The apply job's summary prints the exact
-`az network vnet peering delete` command. Run it if the spoke is gone for good.
+After a spoke is destroyed, the hub-side peering Baytex created shows as
+`Disconnected`. Baytex deletes it and peers the new VNet once the next deploy has
+run; the `hub_side_peering_command` output has the command.
+
+**When it finishes** the summary shows how many resources were destroyed and
+confirms that none remain.
 
 ### 3.4 Pull request checks
 
@@ -243,23 +252,37 @@ which variables are missing.
 
 ### The state backend plans
 
-These run **only when the pull request changes** `bootstrap/**`,
-`.github/workflows/_bootstrap-*.yml` or `.github/workflows/terraform-bootstrap.yml`.
-On any other pull request they are skipped and the
-`Check whether the state backend changed` job says so — planning an unchanged root
-three more times would add minutes to every pull request and could only report
+These run **only when the pull request changes** `bootstrap/**`. On any other pull
+request they show as Skipped, as decided by `Detect changed areas`: a state backend
+plan depends only on those files and the `BOOTSTRAP_TFVARS` variable, so planning
+an unchanged root would add minutes to every pull request and could only report
 "No changes".
 
-This is the most important review on that root. The storage account it manages
-holds the Terraform state for **every** environment, so a change that forces
-replacement would destroy the state it is tracked in. Before this check existed
-that was only visible once somebody ran the bootstrap workflow by hand.
+This is the most important review on those roots. Each storage account holds the
+Terraform state for its environment, so a change that forces replacement would
+destroy the state it is tracked in.
 
 > If a state backend plan says `must be replaced` or `will be destroyed`, stop and
 > investigate before merging — not just before approving the bootstrap run.
 
 They are review-only: no binary plan is uploaded, so nothing a pull request
 produces can be applied.
+
+### 3.5 Release a stuck state lock
+
+| Setting | Value |
+| --- | --- |
+| Inputs | `environment`, `lock_id`, and `confirm` (the environment name again) |
+| Branch | **`main` only** |
+| Duration | About a minute |
+
+Use this only when a run was cancelled or killed mid-apply and a later run fails
+with `Error acquiring the state lock`. Copy the lock ID from that error. The
+unlock runs in the `<env>-apply` environment, so the reviewers who gate a
+deployment also gate a recovery.
+
+The lock ID is checked against the lock actually held, so a stale or mistyped ID
+releases nothing. The summary says whether the lock was released.
 
 ---
 
@@ -303,8 +326,8 @@ sees it before it applies — which a one-click rollback would not give you.
 ### Re-running after a failure
 
 Use **Re-run failed jobs** only when the cause was transient. If the code or the
-variables changed, start a fresh run: a re-run reuses the same `run_id`, and the
-apply job refuses any plan that did not come from its own run.
+variables changed, start a fresh run: a re-run reuses the plan the original run
+saved, so it cannot pick up anything that changed since.
 
 ### Two people at once
 
@@ -333,6 +356,7 @@ a failed apply is exactly the run somebody needs to reconstruct later.
 | Destroy apply | `evidence-destroy-<env>-<run>` | Plan, apply log, state before and after | **30 days** |
 | Bootstrap plan | `tfplan-bootstrap-<env>-<run>` | Binary plan, plan text, detected mode | 5 days |
 | Bootstrap apply | `evidence-bootstrap-<env>-<run>` | Plan, apply log, state list, backend config | **30 days** |
+| Unlock | `evidence-unlock-<env>-<run>` | Unlock log | 14 days |
 
 `tfplan-*` artefacts are working files handed from a plan job to its apply job.
 `evidence-*` artefacts are the record.
@@ -358,13 +382,12 @@ Download artefacts from the bottom of any run's summary page.
 | `Environment '<env>' is not configured. Missing: ...` | You asked to deploy, destroy or bootstrap an environment with no service principal | Create it and set the variables — [GITHUB-SETUP.md](GITHUB-SETUP.md) §2 and §4 |
 | A pull-request plan says `not configured yet` | Expected before that environment's service principal exists | Nothing. It starts planning once §2 and §4 are done |
 | `TFVARS is empty for <env>-plan` | The variable is missing on that environment | See [GITHUB-SETUP.md](GITHUB-SETUP.md) §4 |
-| `<field> mismatch - BOOTSTRAP_TFVARS says X, TF_STATE_* says Y` | The two descriptions of the backend disagree | Fix the variables so they name the same account |
-| `The plan came from run N, not this run` | An apply was fed a plan from a different run | Start a fresh run; do not re-run a single job |
-| Plan shows the workspace **must be replaced** | Expected noise, not necessarily real. The AVM module needs `depends_on` on the resource group so a first run works, which leaves the workspace's `parent_id` unknown at plan time on every run. Read the plan: if the only real change is small (a tag, say), the replacement line is an artefact. If it is not, stop |
-| `RemotePeeringIsDisconnected` on deploy | A stale hub-side peering from an earlier destroy | Delete the hub-side peering (command is in the destroy run's summary), then re-run |
+| Plan shows the workspace **must be replaced** | Real. The workspace is replaced only when a field that cannot change in place changes: its name, managed resource group, subnets, VNet, root storage account name or infrastructure encryption. Tags and other settings update in place | Find which field changed before approving |
+| Baytex's hub-side peering shows `Disconnected` | The spoke VNet was destroyed and rebuilt | Baytex deletes the old peering and peers the new VNet; the `hub_side_peering_command` output has the command |
 | Destroy log shows `cannot delete mws network connectivity config ... attached to one or more workspaces`, then succeeds | **Normal.** Unbinding the NCC and deleting it are separate Databricks calls, and the unbind is not immediately visible | Nothing. The apply retries automatically and typically completes on attempt 2. `apply.log` records each attempt |
 | Need to inspect a HAProxy VM | Port 22 is deliberately closed (`admin_ssh_source_cidrs = []`). Use `az vm run-command invoke -g <rg> -n <vm> --command-id RunShellScript --scripts "systemctl status haproxy"` — it runs as root over the Azure control plane and needs only Virtual Machine Contributor |
-| `Error acquiring the state lock` | Another run holds it | Wait — runs queue by design. If a run was killed mid-apply, the lock may need clearing manually |
+| HAProxy is not installed, or the load balancer probe is unhealthy, after a deploy | The proxy subnet reaches the internet only through the firewall, so the package install waits until the hub peering exists and the firewall allows the Ubuntu package mirrors. It retries every minute | Complete the peering and the firewall rule. Watch progress with `az vm run-command invoke -g <rg> -n <vm> --command-id RunShellScript --scripts "tail -n 20 /var/log/cloud-init-output.log"` |
+| `Error acquiring the state lock` | Another run holds it | Wait — runs queue by design. If a run was killed mid-apply, release it with **Terraform Unlock State** (§3.5) |
 | A run is queued behind another | Deploy and Destroy share a concurrency group | Expected. It will start when the other finishes |
 
 ---
@@ -379,6 +402,9 @@ Download artefacts from the bottom of any run's summary page.
 | Deploy | `dev` / `test` / `prod` | checkbox | Any combination; run in promotion order |
 | Destroy | `dev` / `test` / `prod` | checkbox | Any combination; independent of each other |
 | Destroy | `confirm` | text | Must equal the ticked list, e.g. `dev,prod` |
+| Unlock | `environment` | choice | `dev`, `test` or `prod` |
+| Unlock | `lock_id` | text | The lock ID from the failed run's error message |
+| Unlock | `confirm` | text | Must equal the selected environment |
 
 ### Workflow files
 

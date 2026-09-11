@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Retries until the package mirrors answer. --force-confold keeps the haproxy.cfg cloud-init has already written.
+export DEBIAN_FRONTEND=noninteractive
+until apt-get update && apt-get install -y -o Dpkg::Options::=--force-confold haproxy rsyslog netcat-openbsd; do
+  echo "Package install failed; retrying in 60 seconds."
+  sleep 60
+done

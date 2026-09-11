@@ -186,13 +186,13 @@ resource "azurerm_subnet_nat_gateway_association" "databricks_container" {
   nat_gateway_id = azurerm_nat_gateway.this.id
 }
 
-resource "azurerm_subnet_nat_gateway_association" "proxy" {
-  subnet_id      = azurerm_subnet.proxy.id
-  nat_gateway_id = azurerm_nat_gateway.this.id
-}
-
-resource "azurerm_route_table" "this" {
-  name                          = "rt-${var.name_prefix}"
+# Two route tables, matching how the Baytex hub routes its existing spokes. The Databricks subnets send only the
+# on-premises prefixes to the firewall and reach the internet through the NAT Gateway: sending everything through the
+# firewall would mean allow-listing every Databricks control-plane and artifact endpoint there. The proxy and private
+# endpoint subnets send all traffic to the firewall, which is also why the proxy subnet has no NAT Gateway - a
+# 0.0.0.0/0 route to an appliance takes precedence over one.
+resource "azurerm_route_table" "databricks" {
+  name                          = "rt-${var.name_prefix}-databricks"
   location                      = var.location
   resource_group_name           = var.resource_group_name
   bgp_route_propagation_enabled = true
@@ -204,25 +204,47 @@ resource "azurerm_route" "on_prem" {
 
   name                   = "route-${each.key}"
   resource_group_name    = var.resource_group_name
-  route_table_name       = azurerm_route_table.this.name
+  route_table_name       = azurerm_route_table.databricks.name
   address_prefix         = each.value.address_prefix
+  next_hop_type          = "VirtualAppliance"
+  next_hop_in_ip_address = var.cisco_firewall_private_ip
+}
+
+resource "azurerm_route_table" "default" {
+  name                          = "rt-${var.name_prefix}-default"
+  location                      = var.location
+  resource_group_name           = var.resource_group_name
+  bgp_route_propagation_enabled = true
+  tags                          = var.tags
+}
+
+resource "azurerm_route" "default_to_firewall" {
+  name                   = "route-default-to-firewall"
+  resource_group_name    = var.resource_group_name
+  route_table_name       = azurerm_route_table.default.name
+  address_prefix         = "0.0.0.0/0"
   next_hop_type          = "VirtualAppliance"
   next_hop_in_ip_address = var.cisco_firewall_private_ip
 }
 
 resource "azurerm_subnet_route_table_association" "databricks_host" {
   subnet_id      = azurerm_subnet.databricks_host.id
-  route_table_id = azurerm_route_table.this.id
+  route_table_id = azurerm_route_table.databricks.id
 }
 
 resource "azurerm_subnet_route_table_association" "databricks_container" {
   subnet_id      = azurerm_subnet.databricks_container.id
-  route_table_id = azurerm_route_table.this.id
+  route_table_id = azurerm_route_table.databricks.id
 }
 
 resource "azurerm_subnet_route_table_association" "proxy" {
   subnet_id      = azurerm_subnet.proxy.id
-  route_table_id = azurerm_route_table.this.id
+  route_table_id = azurerm_route_table.default.id
+}
+
+resource "azurerm_subnet_route_table_association" "private_endpoints" {
+  subnet_id      = azurerm_subnet.private_endpoints.id
+  route_table_id = azurerm_route_table.default.id
 }
 
 resource "azurerm_virtual_network_peering" "spoke_to_hub" {

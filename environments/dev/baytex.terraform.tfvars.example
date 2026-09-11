@@ -32,7 +32,7 @@ databricks_host_subnet_cidr      = "10.40.96.0/24"
 databricks_container_subnet_cidr = "10.40.97.0/24"
 private_endpoint_subnet_cidr     = "10.40.98.0/26"
 proxy_subnet_cidr                = "10.40.99.0/26"
-create_spoke_to_hub_peering      = false
+
 # Corporate DNS servers, in preference order. Applied to the VNet and to the
 # HAProxy resolver.
 dns_servers = [
@@ -50,8 +50,10 @@ hub_vnet_id               = "/subscriptions/557d1301-8d98-483e-ac69-4f23bf2cb2eb
 cisco_firewall_private_ip = "10.40.240.36"
 
 # Set false if Baytex creates both peering directions.
+create_spoke_to_hub_peering = false
 
-# Prefixes routed to cisco_firewall_private_ip.
+# Prefixes the Databricks subnets send to cisco_firewall_private_ip; the rest of their traffic leaves through the NAT
+# Gateway. The proxy and private endpoint subnets send all traffic to the firewall and need no entry here.
 on_prem_routes = {
   azure_spokes = {
     address_prefix = "10.40.0.0/16"
@@ -169,15 +171,11 @@ data_containers = ["managed", "external", "landing", "checkpoints"]
 blob_private_dns_zone_ids = []
 dfs_private_dns_zone_ids  = []
 
-# Workspace front-end is public. Classic compute has no public IPs.
+# Workspace front-end is public. Classic compute has no public IPs. The default storage firewall is off; turning it on
+# attaches the root Access Connector to the workspace.
 workspace_public_network_access_enabled     = true
-workspace_default_storage_firewall_enabled  = true
+workspace_default_storage_firewall_enabled  = false
 workspace_infrastructure_encryption_enabled = true
-
-# Optional creation-time default catalog name.
-# null leaves Unity Catalog setup to whoever owns the data layer. Example:
-#   default_catalog_initial_name = "main"
-default_catalog_initial_name = null
 
 enable_diagnostics           = true
 log_analytics_retention_days = 90

@@ -72,16 +72,17 @@ jobs:
             exit 1
           fi
           SELECTED=""
-          [ "${{ inputs.dev }}"  = "true" ] && SELECTED="$SELECTED dev"
-          [ "${{ inputs.test }}" = "true" ] && SELECTED="$SELECTED test"
-          [ "${{ inputs.prod }}" = "true" ] && SELECTED="$SELECTED prod"
-          echo "Selected environments:$SELECTED"
+          add () { if [ -z "$SELECTED" ]; then SELECTED="$1"; else SELECTED="$SELECTED,$1"; fi; }
+          [ "${{ inputs.dev }}"  = "true" ] && add dev
+          [ "${{ inputs.test }}" = "true" ] && add test
+          [ "${{ inputs.prod }}" = "true" ] && add prod
+          echo "Selected environments: $SELECTED"
           {
             echo "### Deployment requested"
             echo ""
-            echo "| | |"
+            echo "| Item | Value |"
             echo "| --- | --- |"
-            echo "| Environments |\`$SELECTED\` |"
+            echo "| Environments | \`$SELECTED\` |"
             echo "| Branch | \`${{ github.ref_name }}\` |"
             echo "| Promotion order | dev, then test, then prod |"
           } >> "$GITHUB_STEP_SUMMARY"

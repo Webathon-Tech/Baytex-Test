@@ -39,7 +39,7 @@ The platform code is intentionally parameterized. Do not treat the values in `te
 - Alert receivers
 - EDR/Arctic Wolf/Azure Monitor Agent onboarding owner
 - Exception approval for initially public workspace front-end, if retained
-- Confirmation that default Databricks storage firewall is enabled
+- Decision on the default Databricks storage firewall (off by default)
 
 ## Baytex BI handoff
 

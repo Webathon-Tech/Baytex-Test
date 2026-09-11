@@ -10,5 +10,6 @@ output "host_nsg_association_id" { value = azurerm_subnet_network_security_group
 output "container_nsg_association_id" { value = azurerm_subnet_network_security_group_association.databricks_container.id }
 output "nat_gateway_id" { value = azurerm_nat_gateway.this.id }
 output "nat_public_ip" { value = azurerm_public_ip.nat.ip_address }
-output "route_table_id" { value = azurerm_route_table.this.id }
+output "databricks_route_table_id" { value = azurerm_route_table.databricks.id }
+output "default_route_table_id" { value = azurerm_route_table.default.id }
 output "spoke_to_hub_peering_id" { value = try(azurerm_virtual_network_peering.spoke_to_hub[0].id, null) }

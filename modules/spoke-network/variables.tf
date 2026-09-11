@@ -15,7 +15,7 @@ variable "proxy_subnet_cidr" { type = string }
 variable "cisco_firewall_private_ip" { type = string }
 
 variable "on_prem_routes" {
-  description = "Named on-premises routes sent to the existing Cisco NVA."
+  description = "Prefixes the Databricks subnets route to the Cisco firewall; the other subnets route everything there."
   type = map(object({
     address_prefix = string
   }))

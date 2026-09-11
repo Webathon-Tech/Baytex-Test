@@ -77,7 +77,7 @@ jobs:
             {
               echo "### Unlock refused"
               echo ""
-              echo "| | |"
+              echo "| Item | Value |"
               echo "| --- | --- |"
               echo "| Selected | \`${{ inputs.environment }}\` |"
               echo "| Typed | \`$CONFIRM\` |"
@@ -89,7 +89,7 @@ jobs:
           {
             echo "### Unlock requested"
             echo ""
-            echo "| | |"
+            echo "| Item | Value |"
             echo "| --- | --- |"
             echo "| Environment | \`${{ inputs.environment }}\` |"
             echo "| Lock ID | \`${{ inputs.lock_id }}\` |"
@@ -185,13 +185,13 @@ jobs:
 
           if [ "$STATUS" -ne 0 ]; then
             {
-                echo "### State lock not released"
-                echo ""
-                echo "| | |"
-                echo "| --- | --- |"
-                echo "| Environment | \`${{ inputs.environment }}\` |"
-                echo "| Lock ID supplied | \`$LOCK_ID\` |"
-                echo "| Result | force-unlock failed - see the log |"
+              echo "### State lock not released"
+              echo ""
+              echo "| Item | Value |"
+              echo "| --- | --- |"
+              echo "| Environment | \`${{ inputs.environment }}\` |"
+              echo "| Lock ID supplied | \`$LOCK_ID\` |"
+              echo "| Result | force-unlock failed - see the job log |"
             } >> "$GITHUB_STEP_SUMMARY"
             exit "$STATUS"
           fi
@@ -199,7 +199,7 @@ jobs:
           {
             echo "### State lock released"
             echo ""
-            echo "| | |"
+            echo "| Item | Value |"
             echo "| --- | --- |"
             echo "| Environment | \`${{ inputs.environment }}\` |"
             echo "| State key | \`${{ vars.TF_STATE_KEY }}\` |"

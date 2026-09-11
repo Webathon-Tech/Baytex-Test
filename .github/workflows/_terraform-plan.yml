@@ -295,17 +295,32 @@ jobs:
         if: env.SKIP != 'true'
         run: terraform show -no-color tfplan > plan.txt
 
+      # Each value is resolved into a variable before it is written, so no table cell can ever contain a line break.
       - name: Publish the plan summary
         if: env.SKIP != 'true'
         run: |
+          RESULT=$(grep -m1 -E '^(Plan:|No changes)' plan.txt || true)
+          if [ -z "$RESULT" ] && grep -q '^Changes to Outputs' plan.txt; then
+            RESULT="Output values only - no resource changes"
+          fi
+          RESULT=${RESULT:-See the job log}
+
           {
             echo "### ${{ inputs.environment }} platform - ${{ inputs.operation }} plan"
             echo ""
-            echo "| | |"
+            echo "| Item | Value |"
             echo "| --- | --- |"
             echo "| Environment | \`${{ inputs.environment }}\` |"
-            echo "| Operation | \`${{ inputs.operation }}\` |"
-            echo "| Result | \`$(grep -m1 -E '^(Plan:|No changes)' plan.txt || echo 'see log')\` |"
+            echo "| Operation | ${{ inputs.operation }} |"
+            echo "| Result | $RESULT |"
+            if [ "${{ inputs.operation }}" = "deploy" ]; then
+              REPLACED=$(grep -c 'must be replaced' plan.txt || true)
+              if [ "${REPLACED:-0}" -eq 0 ]; then
+                echo "| Replacements | none |"
+              else
+                echo "| Replacements | $REPLACED - read the plan before approving |"
+              fi
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Record run metadata

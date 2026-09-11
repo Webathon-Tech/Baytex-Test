@@ -15,7 +15,7 @@ New DEV spoke in Data Non-Production subscription
   - New resource groups and naming
   - Dedicated VNet and Databricks subnets
   - New Databricks workspace
-  - New data storage and Access Connector
+  - New data storage and two Access Connectors (workspace root, data)
   - New DEV NCC
   - New two-node HAProxy/ILB/PLS tier
   - New Terraform state and pipeline
@@ -28,7 +28,7 @@ New DEV spoke in Data Non-Production subscription
 - Spoke-side peering
 - Azure Databricks workspace and Azure platform settings
 - ADLS Gen2 data foundation
-- Access Connector and required Azure RBAC
+- Access Connectors and required Azure RBAC
 - Private endpoints in the DEV VNet
 - HAProxy VMs, Load Balancer, and Private Link Services
 - Databricks NCC and private endpoint rules

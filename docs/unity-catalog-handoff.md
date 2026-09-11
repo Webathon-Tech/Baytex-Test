@@ -7,14 +7,14 @@ The AMTRA platform deployment creates Azure resources only and emits a `unity_ca
 - Existing Databricks account ID supplied as input
 - Existing regional metastore ID supplied as input
 - New DEV workspace ID, URL, and ARM resource ID
-- DEV Access Connector ID and principal ID
+- DEV data Access Connector ID and principal ID
 - DEV ADLS Gen2 account ID/name
 - Managed, external, landing, and checkpoint container URLs
 
 ## Baytex BI completes
 
 1. Confirm the new DEV workspace is assigned to the existing Canada Central metastore.
-2. Create an environment-specific storage credential using the DEV Access Connector.
+2. Create an environment-specific storage credential using the DEV data Access Connector.
 3. Create separate managed and general-purpose external locations.
 4. Create the DEV catalog and schemas.
 5. Set securables to isolated mode and apply explicit workspace bindings.

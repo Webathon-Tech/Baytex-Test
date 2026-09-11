@@ -95,7 +95,7 @@ variable "on_prem_routes" {
   type = map(object({
     address_prefix = string
   }))
-  description = "Approved on-premises CIDRs routed to the Cisco firewall."
+  description = "Prefixes the Databricks subnets route to the Cisco firewall; the other subnets route everything there."
 }
 
 variable "admin_ssh_source_cidrs" {
@@ -209,21 +209,14 @@ variable "workspace_public_network_access_enabled" {
 
 variable "workspace_default_storage_firewall_enabled" {
   type        = bool
-  default     = true
-  description = "Disallow public access to the Databricks-managed default storage account. Uses the environment Access Connector."
+  default     = false
+  description = "Firewall the Databricks-managed default storage; attaches the root Access Connector to the workspace."
 }
 
 variable "workspace_infrastructure_encryption_enabled" {
   type        = bool
   default     = true
   description = "Enable the second layer of infrastructure encryption on the Databricks-managed storage account. Creation-time setting."
-}
-
-variable "default_catalog_initial_name" {
-  type        = string
-  default     = null
-  nullable    = true
-  description = "Optional creation-time default catalog name. Baytex BI still owns metastore assignment, catalogs, bindings, groups, and grants."
 }
 
 variable "log_analytics_retention_days" {

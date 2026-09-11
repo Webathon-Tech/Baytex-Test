@@ -5,7 +5,7 @@ This folder is a **reference implementation only**. It is intentionally separate
 It demonstrates Option B:
 
 - Assign the new DEV workspace to the **existing regional metastore**.
-- Create an environment-specific storage credential backed by the AMTRA-created Access Connector.
+- Create an environment-specific storage credential backed by the AMTRA-created data Access Connector (the `data_access_connector_id` platform output).
 - Create separate managed and external storage locations.
 - Create an environment-specific catalog and schemas.
 - Isolate the catalog, external locations, and storage credential to approved workspaces.
