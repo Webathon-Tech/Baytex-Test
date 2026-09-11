@@ -37,7 +37,7 @@ resource "azurerm_storage_account" "this" {
 resource "azapi_resource" "container" {
   for_each = var.containers
 
-  type      = "Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01"
+  type      = "Microsoft.Storage/storageAccounts/blobServices/containers@2026-04-01"
   name      = each.value
   parent_id = "${azurerm_storage_account.this.id}/blobServices/default"
 

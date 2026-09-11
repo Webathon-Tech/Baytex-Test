@@ -37,7 +37,7 @@ Apply the reviewed saved plan. Save the apply transcript and final outputs.
 
 ## Gate 5 — Private Link approvals
 
-Databricks-created endpoints will be pending. Approve only the endpoints whose names and target resources match the DEV deployment outputs.
+Databricks creates a private endpoint for every NCC rule from its own subscriptions, so each connection arrives as Pending and serverless compute cannot use it until it is approved. After every deploy, approve one connection on each Private Link Service and two on the data storage account (blob and dfs). Approve only connections whose private endpoint name matches an `endpoint_name` in the `ncc_private_endpoint_rules` output; reject anything else.
 
 ## Gate 6 — Baytex BI handoff
 

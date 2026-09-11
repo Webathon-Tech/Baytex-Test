@@ -41,7 +41,7 @@ resource "azurerm_storage_account" "state" {
 # Created through azapi rather than azurerm_storage_container, which reaches the blob data plane and would need the
 # account key this account does not have.
 resource "azapi_resource" "state_container" {
-  type      = "Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01"
+  type      = "Microsoft.Storage/storageAccounts/blobServices/containers@2026-04-01"
   name      = var.container_name
   parent_id = "${azurerm_storage_account.state.id}/blobServices/default"
 

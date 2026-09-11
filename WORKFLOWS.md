@@ -387,6 +387,7 @@ Download artefacts from the bottom of any run's summary page.
 | Destroy log shows `cannot delete mws network connectivity config ... attached to one or more workspaces`, then succeeds | **Normal.** Unbinding the NCC and deleting it are separate Databricks calls, and the unbind is not immediately visible | Nothing. The apply retries automatically and typically completes on attempt 2. `apply.log` records each attempt |
 | Need to inspect a HAProxy VM | Port 22 is deliberately closed (`admin_ssh_source_cidrs = []`). Use `az vm run-command invoke -g <rg> -n <vm> --command-id RunShellScript --scripts "systemctl status haproxy"` — it runs as root over the Azure control plane and needs only Virtual Machine Contributor |
 | HAProxy is not installed, or the load balancer probe is unhealthy, after a deploy | The proxy subnet reaches the internet only through the firewall, so the package install waits until the hub peering exists and the firewall allows the Ubuntu package mirrors. It retries every minute | Complete the peering and the firewall rule. Watch progress with `az vm run-command invoke -g <rg> -n <vm> --command-id RunShellScript --scripts "tail -n 20 /var/log/cloud-init-output.log"` |
+| Serverless compute cannot resolve or reach an on-premises name, or the data lake | The Databricks private endpoint connections are still Pending. Databricks creates them from its own subscriptions, so they are never auto-approved | Approve them as described in [docs/deployment-runbook.md](docs/deployment-runbook.md) Gate 5 |
 | `Error acquiring the state lock` | Another run holds it | Wait — runs queue by design. If a run was killed mid-apply, release it with **Terraform Unlock State** (§3.5) |
 | A run is queued behind another | Deploy and Destroy share a concurrency group | Expected. It will start when the other finishes |
 
@@ -437,7 +438,11 @@ Six GitHub Environments, two per Azure environment:
 
 | Component | Version |
 | --- | --- |
-| Terraform | 1.16.1 |
+| Terraform | 1.16.2 |
+| `hashicorp/azurerm` provider | 5.5 |
+| `Azure/azapi` provider | 2.12 |
+| `databricks/databricks` provider | 1.131 |
+| HAProxy VM image | Ubuntu 26.04 LTS |
 | `actions/checkout` | v7 |
 | `actions/upload-artifact` | v7 |
 | `actions/download-artifact` | v8 |
