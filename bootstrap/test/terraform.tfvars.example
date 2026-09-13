@@ -1,25 +1,38 @@
-# Terraform state backend for the test environment. The whole of this file is held in the BOOTSTRAP_TFVARS variable on
-# the test-plan and test-apply GitHub Environments; the workflow writes it to disk at run time.
+# Values for the test Terraform state backend.
+# The whole of this file is held in the BOOTSTRAP_TFVARS variable on the test-plan and test-apply GitHub Environments, and the workflow writes it to disk as terraform.tfvars at run time.
+# Values for Baytex's own subscriptions are kept in baytex.terraform.tfvars.example alongside this file.
 
-# The Entra tenant and the subscription that will hold test state. Each environment may use its own subscription.
+# ----------------------------------------------------------------------------------------------------------------------
+# Subscription
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Entra tenant and the subscription that holds test state. Each environment can use its own subscription.
 tenant_id       = "be945e7a-2e17-4b44-926f-512e85873eec"
 subscription_id = "6a3bb170-5159-4bff-860b-aa74fb762697"
 location        = "canadacentral"
 
-# These three must match TF_STATE_RESOURCE_GROUP, TF_STATE_STORAGE_ACCOUNT and TF_STATE_CONTAINER on the same GitHub
-# Environment. If they disagree the workflow creates one storage account and then stores its state in another.
-# The storage account name is globally unique across all of Azure, so change the organisation prefix before reusing it.
+# ----------------------------------------------------------------------------------------------------------------------
+# State storage
+# ----------------------------------------------------------------------------------------------------------------------
+
+# These three must match TF_STATE_RESOURCE_GROUP, TF_STATE_STORAGE_ACCOUNT and TF_STATE_CONTAINER on the same GitHub Environment.
+# The storage account name is globally unique across Azure.
 resource_group_name  = "rg-vkp-dbx-test-tfstate-cnc-001"
 storage_account_name = "stvkpdbxtesttfcnc001"
 container_name       = "tfstate"
 
-# Tags applied to the resource group and the storage account.
+# Tags applied to the resource group and storage account.
 tags = {
   Application = "AzureDatabricks"
   Environment = "Test"
   ManagedBy   = "Terraform"
 }
 
-# Object IDs, not application IDs. The deployment service principal already holds Storage Blob Data Contributor at
-# subscription scope, so this is only for a human operator who needs to read state directly.
+# ----------------------------------------------------------------------------------------------------------------------
+# Access
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Object IDs, not application IDs, of operators who need direct access to state.
+# The deployment service principal already holds Storage Blob Data Contributor at subscription scope. Example:
+#   state_blob_data_contributor_principal_ids = ["00000000-0000-0000-0000-000000000000"]
 state_blob_data_contributor_principal_ids = []

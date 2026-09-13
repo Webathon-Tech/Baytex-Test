@@ -1,3 +1,8 @@
+# ----------------------------------------------------------------------------------------------------------------------
+# Terraform and provider versions
+# Provider lock files are not committed, so every run installs the newest release these constraints allow.
+# ----------------------------------------------------------------------------------------------------------------------
+
 terraform {
   required_version = ">= 1.16.0, < 2.0.0"
 

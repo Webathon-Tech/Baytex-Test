@@ -1,128 +1,369 @@
+# ----------------------------------------------------------------------------------------------------------------------
+# Input variables
+# Sections follow the order of main.tf, and every terraform.tfvars.example lists its values in the same order.
+# ----------------------------------------------------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Subscription and Databricks account
+# ----------------------------------------------------------------------------------------------------------------------
+
 variable "tenant_id" {
+  description = "Microsoft Entra tenant ID that holds the subscription and the Databricks account."
   type        = string
-  description = "Baytex Microsoft Entra tenant ID."
+
+  validation {
+    condition     = can(regex("(?i)^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$", var.tenant_id))
+    error_message = "tenant_id must be a GUID."
+  }
 }
 
 variable "subscription_id" {
+  description = "Azure subscription this environment deploys into."
   type        = string
-  description = "DEV Azure subscription ID."
+
+  validation {
+    condition     = can(regex("(?i)^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$", var.subscription_id))
+    error_message = "subscription_id must be a GUID."
+  }
 }
 
 variable "databricks_account_id" {
+  description = "Azure Databricks account ID, shown in the account console."
   type        = string
-  description = "Existing Baytex Azure Databricks account ID."
+
+  validation {
+    condition     = can(regex("(?i)^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$", var.databricks_account_id))
+    error_message = "databricks_account_id must be a GUID."
+  }
 }
 
 variable "existing_metastore_id" {
+  description = "ID of the existing regional Unity Catalog metastore. It is reported in the unity_catalog_handoff output; Baytex BI owns the metastore assignment."
   type        = string
-  description = "Existing regional Unity Catalog metastore ID. Baytex BI owns the assignment and Unity Catalog objects."
+
+  validation {
+    condition     = can(regex("(?i)^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$", var.existing_metastore_id))
+    error_message = "existing_metastore_id must be a GUID."
+  }
 }
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Naming
+# Resource names are composed as <type>-<organization>-<workload>-<environment>-<purpose>-<region_short>-<instance>.
+# ----------------------------------------------------------------------------------------------------------------------
+
 variable "location" {
-  type    = string
-  default = "canadacentral"
+  description = "Azure region for every resource."
+  type        = string
+  default     = "canadacentral"
 }
 
 variable "organization" {
-  type    = string
-  default = "bte"
+  description = "Organisation code used in every resource name."
+  type        = string
+  default     = "bte"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]+$", var.organization))
+    error_message = "organization must contain only lowercase letters and digits."
+  }
 }
 
 variable "workload" {
-  type    = string
-  default = "dbx"
+  description = "Workload code used in every resource name."
+  type        = string
+  default     = "dbx"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]+$", var.workload))
+    error_message = "workload must contain only lowercase letters and digits."
+  }
 }
 
 variable "environment" {
-  type    = string
-  default = "dev"
+  description = "Environment code used in resource names and tags."
+  type        = string
+  default     = "dev"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]+$", var.environment))
+    error_message = "environment must contain only lowercase letters and digits."
+  }
 }
 
 variable "region_short" {
-  type    = string
-  default = "cnc"
+  description = "Short region code used in every resource name."
+  type        = string
+  default     = "cnc"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]+$", var.region_short))
+    error_message = "region_short must contain only lowercase letters and digits."
+  }
 }
 
 variable "instance" {
-  type    = string
-  default = "001"
+  description = "Three-digit instance number used in every resource name."
+  type        = string
+  default     = "001"
+
+  validation {
+    condition     = can(regex("^[0-9]{3}$", var.instance))
+    error_message = "instance must be three digits, for example 001."
+  }
 }
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Tags
+# ----------------------------------------------------------------------------------------------------------------------
+
 variable "owner" {
-  type    = string
-  default = "Baytex Infrastructure"
+  description = "Value of the Owner tag."
+  type        = string
+  default     = "Baytex Infrastructure"
 }
 
 variable "cost_centre" {
-  type    = string
-  default = "TO-BE-CONFIRMED"
+  description = "Value of the CostCentre tag."
+  type        = string
+  default     = "TO-BE-CONFIRMED"
 }
 
 variable "data_classification" {
-  type    = string
-  default = "Internal"
+  description = "Value of the DataClassification tag."
+  type        = string
+  default     = "Internal"
 }
 
 variable "additional_tags" {
-  type    = map(string)
-  default = {}
+  description = "Extra tags merged over the standard tags."
+  type        = map(string)
+  default     = {}
 }
 
-variable "vnet_cidr" { type = string }
-variable "databricks_host_subnet_cidr" { type = string }
-variable "databricks_container_subnet_cidr" { type = string }
-variable "private_endpoint_subnet_cidr" { type = string }
-variable "proxy_subnet_cidr" { type = string }
+# ----------------------------------------------------------------------------------------------------------------------
+# Spoke network
+# ----------------------------------------------------------------------------------------------------------------------
+
+variable "vnet_cidr" {
+  description = "Address space of the spoke VNet."
+  type        = string
+
+  validation {
+    condition     = can(regex("^([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$", var.vnet_cidr)) && can(cidrhost(var.vnet_cidr, 0))
+    error_message = "vnet_cidr must be an IPv4 CIDR, for example 10.40.96.0/20."
+  }
+}
+
+variable "databricks_host_subnet_cidr" {
+  description = "Address prefix of the Databricks host (public) subnet. Must be inside vnet_cidr."
+  type        = string
+
+  validation {
+    condition     = try(tonumber(split("/", var.databricks_host_subnet_cidr)[1]) >= tonumber(split("/", var.vnet_cidr)[1]) && cidrhost("${cidrhost(var.databricks_host_subnet_cidr, 0)}/${split("/", var.vnet_cidr)[1]}", 0) == cidrhost(var.vnet_cidr, 0), false)
+    error_message = "databricks_host_subnet_cidr must be an IPv4 CIDR inside vnet_cidr."
+  }
+}
+
+variable "databricks_container_subnet_cidr" {
+  description = "Address prefix of the Databricks container (private) subnet. Must be inside vnet_cidr."
+  type        = string
+
+  validation {
+    condition     = try(tonumber(split("/", var.databricks_container_subnet_cidr)[1]) >= tonumber(split("/", var.vnet_cidr)[1]) && cidrhost("${cidrhost(var.databricks_container_subnet_cidr, 0)}/${split("/", var.vnet_cidr)[1]}", 0) == cidrhost(var.vnet_cidr, 0), false)
+    error_message = "databricks_container_subnet_cidr must be an IPv4 CIDR inside vnet_cidr."
+  }
+}
+
+variable "private_endpoint_subnet_cidr" {
+  description = "Address prefix of the private endpoint subnet. Must be inside vnet_cidr."
+  type        = string
+
+  validation {
+    condition     = try(tonumber(split("/", var.private_endpoint_subnet_cidr)[1]) >= tonumber(split("/", var.vnet_cidr)[1]) && cidrhost("${cidrhost(var.private_endpoint_subnet_cidr, 0)}/${split("/", var.vnet_cidr)[1]}", 0) == cidrhost(var.vnet_cidr, 0), false)
+    error_message = "private_endpoint_subnet_cidr must be an IPv4 CIDR inside vnet_cidr."
+  }
+}
+
+variable "proxy_subnet_cidr" {
+  description = "Address prefix of the proxy subnet, which holds the HAProxy VMs, load balancer frontends and Private Link Service NAT IPs. Must be inside vnet_cidr."
+  type        = string
+
+  validation {
+    condition     = try(tonumber(split("/", var.proxy_subnet_cidr)[1]) >= tonumber(split("/", var.vnet_cidr)[1]) && cidrhost("${cidrhost(var.proxy_subnet_cidr, 0)}/${split("/", var.vnet_cidr)[1]}", 0) == cidrhost(var.vnet_cidr, 0), false)
+    error_message = "proxy_subnet_cidr must be an IPv4 CIDR inside vnet_cidr."
+  }
+}
 
 variable "dns_servers" {
+  description = "DNS servers, in preference order, assigned to the VNet and used by the HAProxy resolver."
   type        = list(string)
-  description = "Corporate DNS servers used by the DEV VNet and HAProxy resolver."
+
+  validation {
+    condition     = length(var.dns_servers) > 0 && alltrue([for ip in var.dns_servers : can(regex("^([0-9]{1,3}\\.){3}[0-9]{1,3}$", ip)) && can(cidrhost("${ip}/32", 0))])
+    error_message = "dns_servers must contain at least one IPv4 address."
+  }
 }
 
-variable "hub_subscription_id" { type = string }
-variable "hub_resource_group_name" { type = string }
-variable "hub_vnet_name" { type = string }
-variable "hub_vnet_id" { type = string }
-variable "cisco_firewall_private_ip" { type = string }
+# ----------------------------------------------------------------------------------------------------------------------
+# Hub peering and routing
+# ----------------------------------------------------------------------------------------------------------------------
+
+variable "hub_vnet_id" {
+  description = "Resource ID of the hub VNet. Required when either peering flag is true. The hub subscription, resource group and VNet name are read from it."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.hub_vnet_id == null || can(regex("(?i)^/subscriptions/[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}/resourceGroups/[^/]+/providers/Microsoft\\.Network/virtualNetworks/[^/]+$", var.hub_vnet_id))
+    error_message = "hub_vnet_id must be a VNet resource ID: /subscriptions/<subscription>/resourceGroups/<resource group>/providers/Microsoft.Network/virtualNetworks/<name>."
+  }
+
+  validation {
+    condition     = var.hub_vnet_id != null || !(var.create_spoke_to_hub_peering || var.create_hub_to_spoke_peering)
+    error_message = "hub_vnet_id is required when create_spoke_to_hub_peering or create_hub_to_spoke_peering is true."
+  }
+}
 
 variable "create_spoke_to_hub_peering" {
+  description = "Create the spoke-side peering, from the spoke VNet to the hub VNet. When the hub is in another subscription, the deployment identity needs Network Contributor on the hub VNet."
   type        = bool
-  default     = true
-  description = "Create only the DEV spoke-to-existing-hub peering. The hub-side peering remains Baytex-owned."
+  default     = false
+}
+
+variable "create_hub_to_spoke_peering" {
+  description = "Create the hub-side peering, from the hub VNet to the spoke VNet, in the hub subscription. The deployment identity needs Network Contributor on the hub VNet."
+  type        = bool
+  default     = false
+}
+
+variable "cisco_firewall_private_ip" {
+  description = "Private IP of the hub firewall, used as the next hop by both route tables."
+  type        = string
+
+  validation {
+    condition     = can(regex("^([0-9]{1,3}\\.){3}[0-9]{1,3}$", var.cisco_firewall_private_ip)) && can(cidrhost("${var.cisco_firewall_private_ip}/32", 0))
+    error_message = "cisco_firewall_private_ip must be an IPv4 address."
+  }
 }
 
 variable "on_prem_routes" {
+  description = "Prefixes the Databricks subnets send to the firewall, keyed by route name. The proxy and private endpoint subnets send all traffic to the firewall regardless of this map."
   type = map(object({
     address_prefix = string
   }))
-  description = "Prefixes the Databricks subnets route to the Cisco firewall; the other subnets route everything there."
+
+  validation {
+    condition     = alltrue([for route in values(var.on_prem_routes) : can(regex("^([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$", route.address_prefix)) && can(cidrhost(route.address_prefix, 0))])
+    error_message = "Every on_prem_routes address_prefix must be an IPv4 CIDR."
+  }
+
+  validation {
+    condition     = !contains([for route in values(var.on_prem_routes) : route.address_prefix], "0.0.0.0/0")
+    error_message = "on_prem_routes must not contain 0.0.0.0/0, because the Databricks subnets reach the internet through the NAT Gateway."
+  }
 }
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Data foundation
+# ----------------------------------------------------------------------------------------------------------------------
+
+variable "data_storage_account_name" {
+  description = "Globally unique name of the ADLS Gen2 data storage account."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9]{3,24}$", var.data_storage_account_name))
+    error_message = "data_storage_account_name must be 3-24 lowercase alphanumeric characters."
+  }
+}
+
+variable "data_containers" {
+  description = "Containers created in the data storage account."
+  type        = set(string)
+  default     = ["managed", "external", "landing", "checkpoints"]
+
+  validation {
+    condition     = alltrue([for name in var.data_containers : can(regex("^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])$", name)) && !strcontains(name, "--")])
+    error_message = "Container names must be 3-63 characters of lowercase letters, digits and single hyphens, starting and ending with a letter or digit."
+  }
+}
+
+variable "blob_private_dns_zone_ids" {
+  description = "Resource IDs of privatelink.blob.core.windows.net zones the blob private endpoint registers in. Leave empty to create no DNS zone group. Zones in another subscription need Private DNS Zone Contributor for the deployment identity."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for id in var.blob_private_dns_zone_ids : can(regex("(?i)^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.Network/privateDnsZones/privatelink\\.blob\\.core\\.windows\\.net$", id))])
+    error_message = "Every blob_private_dns_zone_ids entry must be the resource ID of a privatelink.blob.core.windows.net Private DNS zone."
+  }
+}
+
+variable "dfs_private_dns_zone_ids" {
+  description = "Resource IDs of privatelink.dfs.core.windows.net zones the dfs private endpoint registers in. Leave empty to create no DNS zone group. Zones in another subscription need Private DNS Zone Contributor for the deployment identity."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for id in var.dfs_private_dns_zone_ids : can(regex("(?i)^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.Network/privateDnsZones/privatelink\\.dfs\\.core\\.windows\\.net$", id))])
+    error_message = "Every dfs_private_dns_zone_ids entry must be the resource ID of a privatelink.dfs.core.windows.net Private DNS zone."
+  }
+}
+
+# ----------------------------------------------------------------------------------------------------------------------
+# HAProxy tier
+# ----------------------------------------------------------------------------------------------------------------------
+
 variable "admin_ssh_source_cidrs" {
-  type    = list(string)
-  default = []
+  description = "CIDRs allowed to SSH to the HAProxy VMs. An empty list creates no SSH rule, and the VMs remain reachable through az vm run-command."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for cidr in var.admin_ssh_source_cidrs : can(regex("^([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$", cidr)) && can(cidrhost(cidr, 0))])
+    error_message = "Every admin_ssh_source_cidrs entry must be an IPv4 CIDR."
+  }
 }
 
 variable "ssh_public_key" {
+  description = "SSH public key for the azureadmin user on the HAProxy VMs. Password authentication is disabled."
   type        = string
-  description = "Approved SSH public key for the HAProxy VMs."
+
+  validation {
+    condition     = can(regex("^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)) ", var.ssh_public_key))
+    error_message = "ssh_public_key must be an OpenSSH public key starting with ssh-ed25519, ssh-rsa or ecdsa-sha2-nistp256/384/521."
+  }
 }
 
 variable "proxy_vm_size" {
-  type    = string
-  default = "Standard_D4s_v6"
+  description = "Azure VM size of both HAProxy VMs."
+  type        = string
+  default     = "Standard_D4s_v6"
+
+  validation {
+    condition     = can(regex("^Standard_", var.proxy_vm_size))
+    error_message = "proxy_vm_size must be an Azure VM size name, for example Standard_D4s_v6."
+  }
 }
 
 variable "proxy_vm_private_ips" {
-  type = list(string)
+  description = "Static private IPs of the two HAProxy VMs, in zone 1 and zone 2 order. Both must be inside proxy_subnet_cidr."
+  type        = list(string)
 
   validation {
-    condition     = length(var.proxy_vm_private_ips) == 2
-    error_message = "Exactly two HAProxy VM private IPs are required."
+    condition     = length(var.proxy_vm_private_ips) == 2 && length(distinct(var.proxy_vm_private_ips)) == 2
+    error_message = "Exactly two different HAProxy VM private IPs are required."
+  }
+
+  validation {
+    condition     = alltrue([for ip in var.proxy_vm_private_ips : try(can(regex("^([0-9]{1,3}\\.){3}[0-9]{1,3}$", ip)) && cidrhost("${ip}/${split("/", var.proxy_subnet_cidr)[1]}", 0) == cidrhost(var.proxy_subnet_cidr, 0), false)])
+    error_message = "Every proxy_vm_private_ips entry must be an IPv4 address inside proxy_subnet_cidr."
   }
 }
 
 variable "on_prem_endpoints" {
+  description = "On-premises destinations, keyed by a short name. Each gets a load balancer frontend on frontend_ip, a Private Link Service with its NAT IP on pls_nat_ip, and an HAProxy listener on listen_port that forwards to target_fqdn:target_port. domain_name is the name serverless compute uses to reach the destination."
   type = map(object({
     frontend_ip = string
     pls_nat_ip  = string
@@ -133,6 +374,11 @@ variable "on_prem_endpoints" {
   }))
 
   validation {
+    condition     = alltrue([for key in keys(var.on_prem_endpoints) : can(regex("^[a-z0-9_-]+$", key))])
+    error_message = "on_prem_endpoints keys must contain only lowercase letters, digits, hyphens and underscores."
+  }
+
+  validation {
     condition = alltrue([
       for endpoint in values(var.on_prem_endpoints) :
       endpoint.listen_port >= 1 && endpoint.listen_port <= 65535 &&
@@ -140,24 +386,51 @@ variable "on_prem_endpoints" {
     ])
     error_message = "All endpoint ports must be between 1 and 65535."
   }
+
+  validation {
+    condition = alltrue(flatten([
+      for endpoint in values(var.on_prem_endpoints) : [
+        for ip in [endpoint.frontend_ip, endpoint.pls_nat_ip] :
+        try(can(regex("^([0-9]{1,3}\\.){3}[0-9]{1,3}$", ip)) && cidrhost("${ip}/${split("/", var.proxy_subnet_cidr)[1]}", 0) == cidrhost(var.proxy_subnet_cidr, 0), false)
+      ]
+    ]))
+    error_message = "Every frontend_ip and pls_nat_ip must be an IPv4 address inside proxy_subnet_cidr."
+  }
+
+  validation {
+    condition = length(distinct(concat(
+      var.proxy_vm_private_ips,
+      flatten([for endpoint in values(var.on_prem_endpoints) : [endpoint.frontend_ip, endpoint.pls_nat_ip]])
+    ))) == length(var.proxy_vm_private_ips) + 2 * length(var.on_prem_endpoints)
+    error_message = "Every frontend_ip, pls_nat_ip and proxy_vm_private_ips address must be different."
+  }
 }
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Private Link Service access
+# ----------------------------------------------------------------------------------------------------------------------
+
 variable "allow_all_subscriptions_pls_visibility" {
+  description = "Allow any subscription that knows a Private Link Service alias to request a connection. Requests still require approval unless auto-approved. Explicit pls_visibility_subscription_ids are preferred."
   type        = bool
   default     = false
-  description = "Explicit exception that allows any subscription with the PLS alias to request a connection. Requests still require approval unless auto-approved. Prefer explicit visibility_subscription_ids."
 }
 
 variable "pls_visibility_subscription_ids" {
+  description = "Subscriptions allowed to discover the Private Link Services. Required unless allow_all_subscriptions_pls_visibility is true."
   type        = list(string)
   default     = []
-  description = "Subscription IDs allowed to discover each DEV Private Link Service. Required unless allow_all_subscriptions_pls_visibility is true."
+
+  validation {
+    condition     = alltrue([for id in var.pls_visibility_subscription_ids : can(regex("(?i)^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$", id))])
+    error_message = "Every pls_visibility_subscription_ids entry must be a subscription GUID."
+  }
 }
 
 variable "pls_auto_approval_subscription_ids" {
+  description = "Subscriptions whose private endpoint connections to the Private Link Services are approved automatically. Must be a subset of pls_visibility_subscription_ids. An empty list means every connection is approved manually."
   type        = list(string)
   default     = []
-  description = "Subset of visibility_subscription_ids whose Private Endpoint requests are automatically approved. Manual approval is safer for initial deployment."
 
   validation {
     condition = length(setsubtract(
@@ -168,69 +441,71 @@ variable "pls_auto_approval_subscription_ids" {
   }
 }
 
-variable "data_storage_account_name" {
-  type = string
-
-  validation {
-    condition     = can(regex("^[a-z0-9]{3,24}$", var.data_storage_account_name))
-    error_message = "data_storage_account_name must be 3-24 lowercase alphanumeric characters."
-  }
-}
+# ----------------------------------------------------------------------------------------------------------------------
+# Databricks workspace
+# ----------------------------------------------------------------------------------------------------------------------
 
 variable "workspace_root_storage_account_name" {
-  type = string
+  description = "Globally unique name of the root (DBFS) storage account Databricks creates in the managed resource group. Set when the workspace is created."
+  type        = string
 
   validation {
     condition     = can(regex("^[a-z0-9]{3,24}$", var.workspace_root_storage_account_name))
     error_message = "workspace_root_storage_account_name must be 3-24 lowercase alphanumeric characters."
   }
-}
 
-variable "data_containers" {
-  type    = set(string)
-  default = ["managed", "external", "landing", "checkpoints"]
-}
-
-variable "blob_private_dns_zone_ids" {
-  type    = set(string)
-  default = []
-}
-
-variable "dfs_private_dns_zone_ids" {
-  type    = set(string)
-  default = []
+  validation {
+    condition     = var.workspace_root_storage_account_name != var.data_storage_account_name
+    error_message = "workspace_root_storage_account_name must differ from data_storage_account_name."
+  }
 }
 
 variable "workspace_public_network_access_enabled" {
+  description = "Allow users, Power BI and GitHub to reach the workspace front end from public networks. Classic compute has no public IPs either way."
   type        = bool
   default     = true
-  description = "Initial compatibility setting for user/Power BI/GitHub access. Tighten only after private front-end connectivity is designed and tested."
 }
 
 variable "workspace_default_storage_firewall_enabled" {
+  description = "Firewall the Databricks-managed root storage account. When true, the root Access Connector is created and attached to the workspace."
   type        = bool
   default     = false
-  description = "Firewall the Databricks-managed default storage; attaches the root Access Connector to the workspace."
 }
 
 variable "workspace_infrastructure_encryption_enabled" {
+  description = "Enable a second layer of infrastructure encryption on the root storage account. Set when the workspace is created."
   type        = bool
   default     = true
-  description = "Enable the second layer of infrastructure encryption on the Databricks-managed storage account. Creation-time setting."
 }
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Operations
+# ----------------------------------------------------------------------------------------------------------------------
+
 variable "log_analytics_retention_days" {
-  type    = number
-  default = 90
+  description = "Retention period of the Log Analytics workspace, in days."
+  type        = number
+  default     = 90
+
+  validation {
+    condition     = var.log_analytics_retention_days >= 30 && var.log_analytics_retention_days <= 730
+    error_message = "log_analytics_retention_days must be between 30 and 730."
+  }
 }
 
 variable "enable_diagnostics" {
-  type    = bool
-  default = true
+  description = "Send diagnostic logs and metrics from the workspace, data storage account, load balancer and NAT Gateway to Log Analytics."
+  type        = bool
+  default     = true
 }
 
 variable "alert_email_receivers" {
+  description = "Email receivers on the platform action group, as a map of receiver name to email address. An empty map creates no action group."
   type        = map(string)
   default     = {}
-  description = "Map of receiver name to email address."
+
+  validation {
+    condition     = alltrue([for address in values(var.alert_email_receivers) : can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", address))])
+    error_message = "Every alert_email_receivers value must be an email address."
+  }
 }

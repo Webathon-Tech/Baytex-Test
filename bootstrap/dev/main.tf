@@ -1,8 +1,22 @@
+# ----------------------------------------------------------------------------------------------------------------------
+# State backend root
+# Creates the storage account and container that hold this environment's platform Terraform state.
+# The dev, test and prod bootstrap roots hold identical .tf files, and each environment's values come from its terraform.tfvars.
+# ----------------------------------------------------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Resource group
+# ----------------------------------------------------------------------------------------------------------------------
+
 resource "azurerm_resource_group" "state" {
   name     = var.resource_group_name
   location = var.location
   tags     = var.tags
 }
+
+# ----------------------------------------------------------------------------------------------------------------------
+# State storage account
+# ----------------------------------------------------------------------------------------------------------------------
 
 resource "azurerm_storage_account" "state" {
   name                             = var.storage_account_name
@@ -17,14 +31,13 @@ resource "azurerm_storage_account" "state" {
   cross_tenant_replication_enabled = false
   tags                             = var.tags
 
-  # Entra-only. Every path to this account authenticates as the service principal through its Storage Blob Data
-  # Contributor role, so there is no account key to leak or rotate. This works only because versions.tf sets
-  # storage_use_azuread = true; removing one without the other breaks the root.
+  # Microsoft Entra ID authentication only.
+  # Every caller authenticates with a Storage Blob Data role, so there is no account key to leak or rotate.
+  # This requires storage_use_azuread = true in versions.tf; the two settings must change together.
   shared_access_key_enabled       = false
   default_to_oauth_authentication = true
 
-  # Versioning and both soft-delete windows exist so a corrupted or accidentally deleted state file can be recovered.
-  # This account holds the only record of what the platform consists of.
+  # Versioning and 30-day soft delete let a corrupted or deleted state file be recovered.
   blob_properties {
     versioning_enabled = true
 
@@ -38,8 +51,7 @@ resource "azurerm_storage_account" "state" {
   }
 }
 
-# Created through azapi rather than azurerm_storage_container, which reaches the blob data plane and would need the
-# account key this account does not have.
+# Created through the Azure Resource Manager API rather than azurerm_storage_container, so no account key or data-plane access is needed.
 resource "azapi_resource" "state_container" {
   type      = "Microsoft.Storage/storageAccounts/blobServices/containers@2026-04-01"
   name      = var.container_name
@@ -52,8 +64,12 @@ resource "azapi_resource" "state_container" {
   }
 }
 
-# Optional. The deployment service principal already holds this role at subscription scope; this is for anyone else who
-# needs to read state directly, such as a platform operator investigating a failed run.
+# ----------------------------------------------------------------------------------------------------------------------
+# Optional operator access
+# ----------------------------------------------------------------------------------------------------------------------
+
+# The deployment service principal already holds Storage Blob Data Contributor at subscription scope.
+# These assignments are for anyone else who needs to read state directly, such as an operator investigating a failed run.
 resource "azurerm_role_assignment" "state_blob_data_contributor" {
   for_each = var.state_blob_data_contributor_principal_ids
 

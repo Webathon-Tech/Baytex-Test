@@ -1,9 +1,11 @@
 locals {
+  # --------------------------------------------------------------------------------------------------------------------
+  # Naming
+  # --------------------------------------------------------------------------------------------------------------------
+
   resource_name_prefix = "${var.organization}-${var.workload}-${var.environment}-${var.region_short}-${var.instance}"
 
-  # Azure caps action group short_name at 12 characters, so it cannot use the
-  # full resource_name_prefix. Derived from workload+environment and truncated
-  # so DEV/TEST/PROD each get a distinct, valid value with no code change.
+  # Azure limits an action group short name to 12 characters, so it is built from the workload and environment only.
   action_group_short_name = substr("${var.workload}${var.environment}", 0, 12)
 
   names = {
@@ -28,6 +30,10 @@ locals {
     action_group           = "ag-${local.resource_name_prefix}"
   }
 
+  # --------------------------------------------------------------------------------------------------------------------
+  # Tags
+  # --------------------------------------------------------------------------------------------------------------------
+
   tags = merge(
     {
       Application        = "AzureDatabricks"
@@ -42,6 +48,23 @@ locals {
     var.additional_tags
   )
 
+  # --------------------------------------------------------------------------------------------------------------------
+  # Hub VNet
+  # --------------------------------------------------------------------------------------------------------------------
+
+  # Parts of hub_vnet_id, which has the form /subscriptions/<subscription>/resourceGroups/<resource group>/providers/Microsoft.Network/virtualNetworks/<name>.
+  # Each value is null when hub_vnet_id is not set.
+  hub_vnet = {
+    subscription_id     = try(split("/", var.hub_vnet_id)[2], null)
+    resource_group_name = try(split("/", var.hub_vnet_id)[4], null)
+    name                = try(split("/", var.hub_vnet_id)[8], null)
+  }
+
+  # --------------------------------------------------------------------------------------------------------------------
+  # On-premises connectivity
+  # --------------------------------------------------------------------------------------------------------------------
+
+  # The NCC module needs only the ID and domain names of each Private Link Service.
   private_link_services_for_ncc = {
     for key, value in module.haproxy.private_link_services : key => {
       id           = value.id
@@ -49,15 +72,17 @@ locals {
     }
   }
 
+  # One proxy NSG rule is created per distinct listener port.
   listener_ports = toset([for endpoint in values(var.on_prem_endpoints) : endpoint.listen_port])
 
+  # Destination matrix reported in the firewall_handoff output.
   endpoint_matrix = {
     for key, endpoint in var.on_prem_endpoints : key => {
       domain_name = endpoint.domain_name
       target_fqdn = endpoint.target_fqdn
       target_port = endpoint.target_port
       listen_port = endpoint.listen_port
-      access_from = ["DEV serverless through NCC/PLS", "DEV classic compute through VNet/UDR"]
+      access_from = ["${upper(var.environment)} serverless through NCC/PLS", "${upper(var.environment)} classic compute through VNet/UDR"]
     }
   }
 }

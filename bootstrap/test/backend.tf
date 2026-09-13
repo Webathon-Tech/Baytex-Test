@@ -1,7 +1,10 @@
-# Deliberately empty. This root creates the very storage account it later stores its own state in, so on a first run
-# there is no backend to point at. The workflow runs it with local state, applies, then re-runs
-# "terraform init -migrate-state" with these values supplied through -backend-config. Every later run inits straight
-# against the remote backend.
+# ----------------------------------------------------------------------------------------------------------------------
+# State backend
+# Left empty because this root creates the storage account that later holds its own state.
+# On the first run the workflow applies with local state, then runs "terraform init -migrate-state" with -backend-config values that point at the new account.
+# Every later run initialises directly against that remote backend.
+# ----------------------------------------------------------------------------------------------------------------------
+
 terraform {
   backend "azurerm" {}
 }

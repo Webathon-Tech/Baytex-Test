@@ -35,11 +35,17 @@ $selected = [ordered]@{
     DataAccessConnectorId = $outputs.data_access_connector_id.value
     RootAccessConnectorId = $outputs.root_access_connector_id.value
     ContainerUrls      = $outputs.container_urls.value
+    SpokeToHubPeeringId = $outputs.spoke_to_hub_peering_id.value
+    HubToSpokePeeringId = $outputs.hub_to_spoke_peering_id.value
     FirewallHandoff    = $outputs.firewall_handoff.value
     UnityCatalogHandoff = $outputs.unity_catalog_handoff.value
 }
 
 $selected | ConvertTo-Json -Depth 20 | Set-Content -Path (Join-Path $OutputDirectory 'dev-platform-handoff.json') -Encoding utf8
-$outputs.hub_side_peering_command.value | Set-Content -Path (Join-Path $OutputDirectory 'hub-side-peering-command.ps1') -Encoding utf8
+
+# The command is null when Terraform manages the hub-side peering or hub_vnet_id is not set.
+if ($outputs.hub_side_peering_command.value) {
+    $outputs.hub_side_peering_command.value | Set-Content -Path (Join-Path $OutputDirectory 'hub-side-peering-command.ps1') -Encoding utf8
+}
 
 Write-Host "Handoff package written to $OutputDirectory" -ForegroundColor Green

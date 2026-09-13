@@ -1,15 +1,63 @@
-output "storage_account_id" { value = azurerm_storage_account.this.id }
-output "storage_account_name" { value = azurerm_storage_account.this.name }
-output "storage_account_dfs_endpoint" { value = azurerm_storage_account.this.primary_dfs_endpoint }
-output "access_connector_id" { value = azurerm_databricks_access_connector.this.id }
-output "access_connector_principal_id" { value = azurerm_databricks_access_connector.this.identity[0].principal_id }
-output "blob_private_endpoint_id" { value = azurerm_private_endpoint.blob.id }
-output "dfs_private_endpoint_id" { value = azurerm_private_endpoint.dfs.id }
-output "container_names" { value = sort(tolist(var.containers)) }
+# ----------------------------------------------------------------------------------------------------------------------
+# Storage account
+# ----------------------------------------------------------------------------------------------------------------------
+
+output "storage_account_id" {
+  description = "Resource ID of the data storage account."
+  value       = azurerm_storage_account.this.id
+}
+
+output "storage_account_name" {
+  description = "Name of the data storage account."
+  value       = azurerm_storage_account.this.name
+}
+
+output "storage_account_dfs_endpoint" {
+  description = "Primary dfs endpoint of the data storage account."
+  value       = azurerm_storage_account.this.primary_dfs_endpoint
+}
+
+output "blob_service_id" {
+  description = "Resource ID of the blob service, the target of the blob diagnostic setting."
+  value       = "${azurerm_storage_account.this.id}/blobServices/default"
+}
+
+output "container_names" {
+  description = "Names of the containers in the data storage account, sorted."
+  value       = sort(tolist(var.containers))
+}
+
 output "container_urls" {
+  description = "abfss:// URL of each container, keyed by container name."
   value = {
     for container in var.containers : container => "abfss://${container}@${azurerm_storage_account.this.name}.dfs.core.windows.net/"
   }
 }
 
-output "blob_service_id" { value = "${azurerm_storage_account.this.id}/blobServices/default" }
+# ----------------------------------------------------------------------------------------------------------------------
+# Data Access Connector
+# ----------------------------------------------------------------------------------------------------------------------
+
+output "access_connector_id" {
+  description = "Resource ID of the data Access Connector."
+  value       = azurerm_databricks_access_connector.this.id
+}
+
+output "access_connector_principal_id" {
+  description = "Principal ID of the data Access Connector's managed identity."
+  value       = azurerm_databricks_access_connector.this.identity[0].principal_id
+}
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Private endpoints
+# ----------------------------------------------------------------------------------------------------------------------
+
+output "blob_private_endpoint_id" {
+  description = "Resource ID of the blob private endpoint."
+  value       = azurerm_private_endpoint.blob.id
+}
+
+output "dfs_private_endpoint_id" {
+  description = "Resource ID of the dfs private endpoint."
+  value       = azurerm_private_endpoint.dfs.id
+}

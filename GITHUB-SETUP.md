@@ -16,6 +16,7 @@ For how to *run* the pipelines once this is done, see
 | **Global Administrator** in the Entra tenant (or Application Administrator **and** User Access Administrator) | Creating the app registrations and assigning roles |
 | **Owner** or **User Access Administrator** on each target subscription | Granting the service principals their roles |
 | **Databricks Account Admin** | Adding each service principal to the Databricks account console |
+| **Owner** or **User Access Administrator** on the hub VNet and Private DNS zones | Only for the optional hub-subscription roles in §2 |
 | **Admin** on the GitHub repository | Creating environments, variables and protection rules |
 | **Azure CLI** (`az`), signed in | Creating the app registrations, credentials and role assignments |
 | **GitHub CLI** (`gh`), signed in | Setting environments, variables and protection rules |
@@ -122,8 +123,40 @@ repository, or from a workflow that does not declare that environment.
 | **User Access Administrator** | Assign the workspace's own roles to managed identities |
 | **Storage Blob Data Contributor** | Read and write the Terraform state blobs — the backend authenticates as the service principal (`use_azuread_auth=true`), never with an account key |
 
-`-UseOwnerRole` collapses the first two into `Owner`. The default split is the
-least privilege that still works.
+Owner can replace the first two roles. The split above is the least privilege
+that still works.
+
+### Optional roles in the hub subscription
+
+The roles above cover the environment's own subscription only. Two integrations
+act on resources in the Baytex hub subscription, and each needs one more role.
+Grant them only for the integrations Terraform should manage. Without them, leave
+the matching tfvars at their defaults, and Terraform makes no calls to the hub
+subscription.
+
+| Integration | tfvars | Role | Scope |
+| --- | --- | --- | --- |
+| VNet peering, in either direction | `hub_vnet_id`, with `create_spoke_to_hub_peering` and `create_hub_to_spoke_peering` set to `true` | Network Contributor | The hub VNet |
+| Private DNS registration of the storage private endpoints | `blob_private_dns_zone_ids` and `dfs_private_dns_zone_ids` | Private DNS Zone Contributor | Each `privatelink` zone, or the resource group or subscription that holds them |
+
+Terraform addresses the hub VNet and zones by their full resource IDs, so the
+service principal needs these roles only, not any other access to the hub
+subscription. Run the assignments as someone with Owner or User Access
+Administrator on those scopes:
+
+```bash
+HUB_VNET_ID=<hub-vnet-resource-id>
+BLOB_ZONE_ID=<privatelink.blob.core.windows.net-zone-resource-id>
+DFS_ZONE_ID=<privatelink.dfs.core.windows.net-zone-resource-id>
+
+az role assignment create --assignee "$APP_ID" --role "Network Contributor" --scope "$HUB_VNET_ID"
+for ZONE_ID in "$BLOB_ZONE_ID" "$DFS_ZONE_ID"; do
+  az role assignment create --assignee "$APP_ID" --role "Private DNS Zone Contributor" --scope "$ZONE_ID"
+done
+```
+
+Then set the values in the environment's `TFVARS` and deploy. A new role
+assignment can take a few minutes to take effect.
 
 ### Databricks account console
 
@@ -181,10 +214,14 @@ and the workflow writes it to disk at run time. This is what lets one set of
 git** — no CIDRs, no resource names, no hostnames.
 
 `BOOTSTRAP_TFVARS` does the same for `bootstrap/<env>`. It must name the **same**
-resource group, storage account and container as the `TF_STATE_*` variables — the
-bootstrap workflow cross-checks them and refuses to run if they disagree, because
-otherwise it would create one storage account and store its state in a different
-one.
+resource group, storage account and container as the `TF_STATE_*` variables. If
+they disagree, the bootstrap workflow creates one storage account and stores its
+state in a different one.
+
+Every `terraform.tfvars.example` lists its values in the section order of the
+root's `variables.tf`, with a comment on what each controls, and is the content
+to paste into the variable. The `baytex.terraform.tfvars.example` beside it holds
+the values for Baytex's subscriptions.
 
 ### ⚠️ Variables vs secrets
 
@@ -370,6 +407,8 @@ JSON
 - [ ] Confirm required reviewers are set on `test-apply` and `prod-apply`
 - [ ] Confirm **Include administrators** is enabled on the `main` rule
 - [ ] Confirm each service principal still holds **Account admin** in Databricks
+- [ ] Where Terraform manages the hub peering or Private DNS registration, confirm
+      each service principal holds the hub roles in §2
 - [ ] Re-point the required status check names if any job was renamed
 
 ---

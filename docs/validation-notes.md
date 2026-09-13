@@ -1,24 +1,24 @@
 # Validation Notes
 
-## Checks completed in the authoring environment
+## Automated checks
 
-- Reviewed the generated repository structure and environment ownership boundaries.
-- Parsed both GitHub Actions workflow files as YAML.
-- Ran static delimiter, quoted-string, comment, and heredoc checks across all Terraform files.
-- Confirmed that the AMTRA platform root contains no Terraform import blocks and no existing Production subscription resource IDs.
-- Confirmed that existing shared infrastructure is represented only as input/reference data.
+Every pull request runs **Terraform Pull Request Checks** ([WORKFLOWS.md](../WORKFLOWS.md) §3.4):
+
+- `terraform fmt -check` and `terraform validate` across every deployed root
+- A parity report for the three environment roots and the three bootstrap roots
+- A plan of each affected environment, using the values in its `TFVARS` variable
+
+Input rules in `environments/<env>/variables.tf` reject malformed values at plan time, before any resource is touched. They cover GUID formats, subnet CIDRs inside the VNet, proxy VM, frontend and NAT addresses inside the proxy subnet and never reused, hub VNet and Private DNS zone resource IDs, a hub VNet ID whenever a peering flag is `true`, and a Databricks route table without `0.0.0.0/0`.
 
 ## Checks that must run in Baytex before approval
-
-The authoring environment could not reach the Terraform Registry, Azure, or the Baytex Databricks account. The following are therefore mandatory in the Baytex repository/runner:
 
 1. `terraform fmt -check -recursive`
 2. `terraform init` against the DEV backend
 3. `terraform validate`
-4. Provider and module lock-file review
+4. Provider version review
 5. `terraform plan` using approved DEV inputs
 6. IaC security/policy scan
-7. Review that the plan creates only new DEV resources and the approved additive spoke peering
-8. Private Link/NCC, Power BI, classic compute, serverless, HAProxy failover, DNS, firewall, and on-premises connectivity validation
+7. Review that the plan creates only new DEV resources and, where enabled, the VNet peerings and Private DNS zone groups
+8. Private Link/NCC, Power BI, classic compute, serverless, HAProxy failover, DNS, firewall, peering and on-premises connectivity validation
 
 Do not apply the example variable values without Baytex approval.

@@ -53,8 +53,8 @@ jobs:
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
       ARM_USE_AZUREAD: "true"
-      # The NCC private endpoint rule resource sits behind a provider feature flag. Without this the resource type is
-      # unknown and the plan fails.
+      # Runs the NCC private endpoint rules on the Databricks provider's plugin framework implementation, the same
+      # setting the apply job uses.
       DATABRICKS_TF_ENABLED_PF_RESOURCES: databricks_mws_ncc_private_endpoint_rule
 
     steps:

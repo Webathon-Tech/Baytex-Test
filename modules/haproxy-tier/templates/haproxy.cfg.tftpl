@@ -1,3 +1,6 @@
+# HAProxy configuration, rendered by Terraform and written by cloud-init.
+# One TCP frontend and backend per on-premises destination, plus an HTTP health frontend on port 8404 for the load balancer probe.
+
 global
     log /dev/log local0
     log /dev/log local1 notice

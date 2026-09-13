@@ -5,9 +5,8 @@ name: Terraform Unlock State
 # A cancelled deploy or destroy stops the process while it still holds the lease on the state blob. Terraform never gets
 # to release it, so every later run queues on that lease and fails once its -lock-timeout expires.
 #
-# This is the only supported way to clear it. Nobody holds write access to the state account directly - the deployment
-# service principal does, and it is reached through this workflow, so a recovery is approved and evidenced like every
-# other change.
+# A lock held by a pipeline run is cleared here, so the recovery is approved and evidenced like every other change. A lock
+# left by a run from a workstation is released by that user with terraform force-unlock, as described in LOCAL-RUNS.md.
 #
 # The lock ID is a required input and is NOT discovered automatically. The failed run prints it:
 #

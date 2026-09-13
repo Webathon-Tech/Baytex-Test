@@ -1,10 +1,24 @@
+# ----------------------------------------------------------------------------------------------------------------------
+# NCC
+# ----------------------------------------------------------------------------------------------------------------------
+
 output "network_connectivity_config_id" {
-  value = databricks_mws_network_connectivity_config.this.network_connectivity_config_id
+  description = "ID of the Network Connectivity Configuration."
+  value       = databricks_mws_network_connectivity_config.this.network_connectivity_config_id
 }
 
-output "binding_id" { value = databricks_mws_ncc_binding.workspace.id }
+output "binding_id" {
+  description = "ID of the binding between the NCC and the workspace."
+  value       = databricks_mws_ncc_binding.workspace.id
+}
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Private endpoint rules
+# ----------------------------------------------------------------------------------------------------------------------
+
+# endpoint_name is the name of the private endpoint Databricks creates, which is what to match when approving connections on the target resources.
 output "private_endpoint_rules" {
+  description = "Rule ID, private endpoint name and connection state of every private endpoint rule, keyed by rule name."
   value = merge(
     {
       storage_blob = {

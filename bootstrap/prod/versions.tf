@@ -1,3 +1,8 @@
+# ----------------------------------------------------------------------------------------------------------------------
+# Terraform and provider versions
+# Provider lock files are not committed, so every run installs the newest release these constraints allow.
+# ----------------------------------------------------------------------------------------------------------------------
+
 terraform {
   required_version = ">= 1.16.0, < 2.0.0"
 
@@ -13,19 +18,20 @@ terraform {
   }
 }
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Providers
+# ----------------------------------------------------------------------------------------------------------------------
+
 provider "azurerm" {
   features {}
 
   subscription_id = var.subscription_id
   tenant_id       = var.tenant_id
 
-  # "extended" registers the resource providers this platform needs, skipping any already registered. At "none" a
-  # subscription that has never hosted these services fails mid-apply with MissingSubscriptionRegistration.
+  # "extended" registers the resource providers this root needs and skips any that are already registered.
   resource_provider_registrations = "extended"
 
-  # Required, because the storage account this root creates sets shared_access_key_enabled = false. To manage a storage
-  # account's data-plane settings the provider builds a data-plane client, and by default it does that by calling
-  # ListKeys, which returns 403 KeyBasedAuthenticationNotPermitted on a keyless account. This routes those calls through
-  # Entra instead, using the service principal's Storage Blob Data Contributor role.
+  # Required because the state storage account has shared key access disabled.
+  # The provider manages data-plane settings, such as blob versioning, through Microsoft Entra ID with the Storage Blob Data Contributor role instead of an account key.
   storage_use_azuread = true
 }
