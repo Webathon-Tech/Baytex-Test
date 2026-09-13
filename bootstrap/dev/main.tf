@@ -75,5 +75,6 @@ resource "azurerm_role_assignment" "state_blob_data_contributor" {
 
   scope                = azurerm_storage_account.state.id
   role_definition_name = "Storage Blob Data Contributor"
+  description          = "Direct operator access to the Terraform state in ${var.storage_account_name}, granted through state_blob_data_contributor_principal_ids in the bootstrap root."
   principal_id         = each.value
 }
