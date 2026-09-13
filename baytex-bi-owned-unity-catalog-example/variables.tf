@@ -101,7 +101,7 @@ variable "external_location_owner" {
 # ----------------------------------------------------------------------------------------------------------------------
 
 variable "schemas" {
-  description = "Schemas created in the catalog, keyed by schema name. A schema without an owner is owned by catalog_owner."
+  description = "Schemas created in the catalog, keyed by schema name. A schema without a comment gets a default comment, and a schema without an owner is owned by catalog_owner."
   type = map(object({
     comment = optional(string)
     owner   = optional(string)

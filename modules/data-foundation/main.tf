@@ -80,16 +80,18 @@ resource "azurerm_databricks_access_connector" "this" {
 # The same four roles Databricks grants the connector it attaches to a workspace's own storage account.
 # Storage Blob Data Contributor is what a Unity Catalog storage credential needs.
 # The other three let Databricks set up file events, a storage queue and an Event Grid subscription, for Auto Loader.
+# Each key is the role name and each value is the description shown on the role assignment in Azure.
 resource "azurerm_role_assignment" "access_connector_storage" {
-  for_each = toset([
-    "Storage Blob Data Contributor",
-    "Storage Account Contributor",
-    "Storage Queue Data Contributor",
-    "EventGrid EventSubscription Contributor",
-  ])
+  for_each = {
+    "Storage Blob Data Contributor"           = "Lets Access Connector ${var.access_connector_name} read and write data in ${var.storage_account_name} for the Unity Catalog storage credential."
+    "Storage Account Contributor"             = "Lets Access Connector ${var.access_connector_name} configure file events on ${var.storage_account_name} for Databricks Auto Loader."
+    "Storage Queue Data Contributor"          = "Lets Access Connector ${var.access_connector_name} create and read the file event queues on ${var.storage_account_name} for Databricks Auto Loader."
+    "EventGrid EventSubscription Contributor" = "Lets Access Connector ${var.access_connector_name} create the Event Grid subscriptions on ${var.storage_account_name} for Databricks Auto Loader."
+  }
 
   scope                            = azurerm_storage_account.this.id
-  role_definition_name             = each.value
+  role_definition_name             = each.key
+  description                      = each.value
   principal_id                     = azurerm_databricks_access_connector.this.identity[0].principal_id
   skip_service_principal_aad_check = true
 }

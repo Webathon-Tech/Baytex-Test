@@ -71,8 +71,8 @@ Full design, traffic flows and resource inventory: [docs/architecture-and-bounda
 ```
 
 The three environment roots hold identical `.tf` files, and each environment's values come from its GitHub
-Environment rather than from git. Every Terraform file is divided into commented sections, and every variable and
-output carries a description.
+Environment rather than from git. Every Terraform file is divided into commented sections, every variable and output
+carries a description, and every resource that supports a description or comment in Azure or Databricks has one.
 
 ## Getting started
 

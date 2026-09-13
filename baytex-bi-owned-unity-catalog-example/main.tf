@@ -25,7 +25,7 @@ resource "databricks_storage_credential" "dev" {
 
   name           = var.storage_credential_name
   owner          = var.storage_credential_owner
-  comment        = "Baytex DEV storage credential using the environment Access Connector."
+  comment        = "Storage credential for the ${var.catalog_name} catalog, backed by the platform data Access Connector on storage account ${var.storage_account_name}."
   isolation_mode = "ISOLATION_MODE_ISOLATED"
 
   azure_managed_identity {
@@ -43,7 +43,7 @@ resource "databricks_external_location" "managed" {
   url             = "abfss://${var.managed_container_name}@${var.storage_account_name}.dfs.core.windows.net/"
   credential_name = databricks_storage_credential.dev.name
   owner           = var.external_location_owner
-  comment         = "Baytex DEV managed catalog storage location."
+  comment         = "Managed storage for the ${var.catalog_name} catalog, in the ${var.managed_container_name} container of storage account ${var.storage_account_name}."
   isolation_mode  = "ISOLATION_MODE_ISOLATED"
   read_only       = false
   skip_validation = false
@@ -57,7 +57,7 @@ resource "databricks_external_location" "external" {
   url             = "abfss://${var.external_container_name}@${var.storage_account_name}.dfs.core.windows.net/"
   credential_name = databricks_storage_credential.dev.name
   owner           = var.external_location_owner
-  comment         = "Baytex DEV general-purpose external location."
+  comment         = "General-purpose external tables and files for the ${var.catalog_name} catalog, in the ${var.external_container_name} container of storage account ${var.storage_account_name}."
   isolation_mode  = "ISOLATION_MODE_ISOLATED"
   read_only       = false
   skip_validation = false
@@ -74,19 +74,19 @@ resource "databricks_catalog" "dev" {
   name           = var.catalog_name
   storage_root   = "${databricks_external_location.managed.url}catalogs/${var.catalog_name}"
   owner          = var.catalog_owner
-  comment        = "Baytex DEV environment-specific catalog."
+  comment        = "Environment catalog owned by ${var.catalog_owner}, with managed storage under external location ${var.managed_external_location_name}."
   isolation_mode = "ISOLATED"
   force_destroy  = false
 }
 
-# A schema without its own owner is owned by the catalog owner.
+# A schema without its own comment gets a default one, and a schema without its own owner is owned by the catalog owner.
 resource "databricks_schema" "this" {
   provider = databricks.workspace
   for_each = var.schemas
 
   catalog_name = databricks_catalog.dev.name
   name         = each.key
-  comment      = try(each.value.comment, null)
+  comment      = coalesce(try(each.value.comment, null), "Schema ${each.key} in the ${var.catalog_name} catalog.")
   owner        = coalesce(try(each.value.owner, null), var.catalog_owner)
 }
 
