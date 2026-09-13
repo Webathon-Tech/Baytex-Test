@@ -1,49 +1,53 @@
-# DEV Pre-Deployment Checklist
+# Pre-Deployment Checklist
 
-Do not apply the DEV root until every mandatory item is complete.
+Complete this checklist for each environment before its first apply. Items marked for the first environment only need
+to be completed once.
 
 ## Baytex approvals
 
-- [ ] DEV CIDRs approved by IPAM/networking
-- [ ] VNet peering ownership decided: Terraform-managed (both peering flags `true`, Network Contributor on the hub VNet granted) or Baytex-managed (change ticket confirmed)
-- [ ] Cisco firewall source/destination/port matrix approved
-- [ ] On-premises return routes approved
-- [ ] Corporate DNS server list and Private DNS zone ownership confirmed
+- [ ] Environment address space and subnet CIDRs approved by Baytex networking
+- [ ] VNet peering ownership decided: Terraform-managed (both peering flags `true` and Network Contributor on the hub
+      VNet granted) or Baytex-managed (change scheduled)
+- [ ] Cisco firewall source, destination and port matrix approved
+- [ ] On-premises return routes to the environment's address space approved
+- [ ] Corporate DNS server list confirmed
 - [ ] Private DNS registration decided: zone IDs set with Private DNS Zone Contributor granted, or a manual DNS change
 - [ ] Existing regional Unity Catalog metastore ID confirmed
-- [ ] Baytex BI accepts ownership of metastore assignment, catalogs, external locations, bindings, groups and grants
-- [ ] SQL/Oracle destination list approved; SQL6, Trimble/TMW and SQL03YYC disposition documented
-- [ ] Workspace public-front-end decision approved
-- [ ] Workspace default-storage firewall decision recorded (off by default; the root Access Connector exists only when it is on)
-- [ ] Private Link Service visibility decision approved
+- [ ] Baytex BI accepts ownership of the metastore assignment, catalogs, external locations, bindings, groups and grants
+- [ ] On-premises destination list approved, including each destination's domain name, port and address
+- [ ] Workspace public front-end access approved
+- [ ] Default storage firewall decision recorded; when it is enabled, the root Access Connector is created
+- [ ] Private Link Service visibility and connection approval model approved
 
 ## Azure and Databricks prerequisites
 
-- [ ] Resource providers registered in the DEV subscription, or the deployment identity allowed to register them (Terraform registers the set it needs)
-- [ ] GitHub OIDC service principal created and federated to the repository/environment
-- [ ] OIDC principal has required Azure roles, including state data-plane access
-- [ ] OIDC principal holds the hub-subscription roles for every integration enabled in tfvars
-- [ ] OIDC principal exists in the Databricks account with NCC permissions
-- [ ] Terraform backend created and tested
+- [ ] Environment subscription available
+- [ ] Deployment service principal created with federated credentials for `<env>-plan` and `<env>-apply`
+- [ ] Service principal holds Contributor, User Access Administrator and Storage Blob Data Contributor on the
+      environment subscription
+- [ ] Service principal holds the hub-subscription roles for every integration enabled in `TFVARS`
+- [ ] Service principal added to the Databricks account with the Account Admin role
+- [ ] GitHub Environments, variables and protection rules configured ([GitHub setup](github-setup.md))
+- [ ] State backend bootstrapped
 - [ ] Approved HAProxy SSH public key and administration path provided
 
 ## Quality gates
 
-- [ ] `terraform fmt -check -recursive` passes
-- [ ] `terraform init` succeeds using Entra ID authentication
-- [ ] `terraform validate` passes
-- [ ] Plan contains only new DEV resources and, where enabled, the VNet peerings and Private DNS zone groups
-- [ ] No import blocks or references to existing Prod resource IDs except approved shared dependencies
-- [ ] Security/IaC scan passes
-- [ ] Plan reviewed by AMTRA architecture, Baytex Infrastructure and Security
+- [ ] `Validate Terraform code` passes on the pull request
+- [ ] The plan contains only resources for this environment and, where enabled, the VNet peerings and Private DNS zone
+      groups
+- [ ] No imports of, or references to, existing production resources other than approved shared dependencies
+- [ ] Settings fixed at creation reviewed ([Configuration reference](configuration-reference.md#settings-fixed-at-creation))
+- [ ] Security and infrastructure-as-code scan passes
+- [ ] Plan reviewed by AMTRA architecture, Baytex Infrastructure and Baytex Security
 
 ## Post-apply acceptance
 
-- [ ] NCC rules become `ESTABLISHED` after expected endpoint approval
-- [ ] VNet peering shows `Connected` on both the spoke and hub VNets
-- [ ] Classic compute launches without public IPs
-- [ ] Serverless and classic compute reach approved on-premises targets
+- [ ] NCC private endpoint connections approved and every rule `ESTABLISHED`
+- [ ] VNet peering `Connected` on both the spoke and hub VNets
+- [ ] Classic compute starts without public IP addresses
+- [ ] Serverless and classic compute reach every approved on-premises destination
 - [ ] HAProxy service and VM failover tested in both directions
-- [ ] Blob/DFS private access and Unity Catalog storage validation pass
-- [ ] GitHub federated deployment and representative workload validation pass
-- [ ] Diagnostics arrive in Log Analytics
+- [ ] Private data storage access and Unity Catalog storage validation pass
+- [ ] Pipeline deployment and representative workload validation pass
+- [ ] Diagnostic logs arrive in Log Analytics
