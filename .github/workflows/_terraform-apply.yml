@@ -108,7 +108,7 @@ jobs:
           need TF_STATE_CONTAINER       "${STATE_CONTAINER:-}"
 
           if [ -n "$MISSING" ]; then
-            echo "::error::Environment '${{ inputs.environment }}' is not configured. Missing:$MISSING. Create its service principal and set these variables on the ${{ inputs.environment }}-plan and ${{ inputs.environment }}-apply GitHub Environments - see docs/github-setup.md."
+            echo "::error::Environment '${{ inputs.environment }}' is not configured. Missing:$MISSING. Create its service principal and set these variables on the ${{ inputs.environment }}-plan and ${{ inputs.environment }}-apply GitHub Environments."
             exit 1
           fi
           echo "Environment ${{ inputs.environment }} is configured."
@@ -133,7 +133,7 @@ jobs:
           # TFVARS: ${{ secrets.TFVARS }}
           TFVARS: ${{ vars.TFVARS }}
         run: |
-          test -n "$TFVARS" || { echo "::error::TFVARS is empty for ${{ inputs.environment }}-apply. Set it on that GitHub Environment - see docs/github-setup.md."; exit 1; }
+          test -n "$TFVARS" || { echo "::error::TFVARS is empty for ${{ inputs.environment }}-apply. Set it on that GitHub Environment."; exit 1; }
           printf '%s\n' "$TFVARS" > terraform.tfvars
 
       # Downloaded before init on purpose: the artefact carries the .terraform.lock.hcl the reviewer saw, so init

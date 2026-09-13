@@ -154,16 +154,18 @@ grants the deployment service principal one role. Without them, Terraform makes 
 
 ## Documentation
 
-| Document | Purpose |
-| --- | --- |
-| [Architecture and boundaries](docs/architecture-and-boundaries.md) | Design, network layout, traffic flows, resource inventory and ownership |
-| [Configuration reference](docs/configuration-reference.md) | Configuration model, naming, tags, every input and output |
-| [Required inputs](docs/required-inputs.md) | Decisions and values to collect before planning |
-| [GitHub setup](docs/github-setup.md) | Identities, GitHub Environments, variables, protection rules |
-| [Pre-deployment checklist](docs/pre-deployment-checklist.md) | Sign-off before an environment's first apply |
-| [Deployment runbook](docs/deployment-runbook.md) | Gated procedure for deploying an environment |
-| [Workflows](docs/workflows.md) | Running, approving and troubleshooting the pipelines |
-| [Local runs](docs/local-runs.md) | Planning and applying from a workstation |
-| [Firewall and DNS handoff](docs/firewall-and-dns-handoff.md) | Changes Baytex Infrastructure completes |
-| [Unity Catalog handoff](docs/unity-catalog-handoff.md) | Changes Baytex BI completes |
-| [Validation and acceptance](docs/validation-notes.md) | Automated checks and acceptance criteria |
+All documentation lives in [`docs/`](docs/README.md), grouped by the stage in which it is used.
+
+| Stage | Document | Purpose |
+| --- | --- | --- |
+| Understand | [Architecture and boundaries](docs/architecture-and-boundaries.md) | Design, network layout, traffic flows, resource inventory and ownership |
+| Understand | [Configuration reference](docs/configuration-reference.md) | Configuration model, naming, tags, every input and output |
+| Prepare | [Required inputs](docs/required-inputs.md) | Decisions and values to collect before planning |
+| Prepare | [GitHub setup](docs/github-setup.md) | Identities, GitHub Environments, variables, protection rules |
+| Prepare | [Pre-deployment checklist](docs/pre-deployment-checklist.md) | Sign-off before an environment's first apply |
+| Deploy and operate | [Deployment runbook](docs/deployment-runbook.md) | Gated procedure for deploying and promoting an environment |
+| Deploy and operate | [Workflows](docs/workflows.md) | Running, approving and troubleshooting the pipelines |
+| Deploy and operate | [Local runs](docs/local-runs.md) | Planning and applying from a workstation |
+| Hand off and accept | [Firewall and DNS handoff](docs/firewall-and-dns-handoff.md) | Changes Baytex Infrastructure completes |
+| Hand off and accept | [Unity Catalog handoff](docs/unity-catalog-handoff.md) | Changes Baytex BI completes |
+| Hand off and accept | [Validation and acceptance](docs/validation-notes.md) | Automated checks and acceptance criteria |
