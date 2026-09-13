@@ -1,24 +1,51 @@
-# Validation Notes
+# Validation and Acceptance
+
+How the platform is checked automatically on every change, and the criteria each environment must meet before it is
+accepted. A successful `terraform apply` is not acceptance.
 
 ## Automated checks
 
-Every pull request runs **Terraform Pull Request Checks** ([WORKFLOWS.md](../WORKFLOWS.md) §3.4):
+Every pull request runs **Terraform Pull Request Checks** ([Workflows](workflows.md#34-pull-request-checks)):
 
-- `terraform fmt -check` and `terraform validate` across every deployed root
+- `terraform fmt -check` and `terraform validate` across every environment and bootstrap root
 - A parity report for the three environment roots and the three bootstrap roots
 - A plan of each affected environment, using the values in its `TFVARS` variable
 
-Input rules in `environments/<env>/variables.tf` reject malformed values at plan time, before any resource is touched. They cover GUID formats, subnet CIDRs inside the VNet, proxy VM, frontend and NAT addresses inside the proxy subnet and never reused, hub VNet and Private DNS zone resource IDs, a hub VNet ID whenever a peering flag is `true`, and a Databricks route table without `0.0.0.0/0`.
+Input rules in `variables.tf` reject malformed values when a plan is created, before any resource is touched
+([Configuration reference](configuration-reference.md#input-validation)).
 
-## Checks that must run in Baytex before approval
+Every deploy then plans before it applies, the apply uses the reviewed plan, and the evidence bundle records the plan,
+apply log, outputs and state list.
 
-1. `terraform fmt -check -recursive`
-2. `terraform init` against the DEV backend
-3. `terraform validate`
-4. Provider version review
-5. `terraform plan` using approved DEV inputs
-6. IaC security/policy scan
-7. Review that the plan creates only new DEV resources and, where enabled, the VNet peerings and Private DNS zone groups
-8. Private Link/NCC, Power BI, classic compute, serverless, HAProxy failover, DNS, firewall, peering and on-premises connectivity validation
+## Checks before the first apply
 
-Do not apply the example variable values without Baytex approval.
+1. The pull request checks pass for the change.
+2. The plan uses the approved inputs for the environment.
+3. The plan creates only resources for this environment and, where enabled, the VNet peerings and Private DNS zone
+   groups.
+4. The provider versions installed by the run are reviewed.
+5. The infrastructure-as-code security and policy scan passes.
+6. The [pre-deployment checklist](pre-deployment-checklist.md) is complete.
+
+## Acceptance criteria
+
+| Area | Criterion |
+| --- | --- |
+| Workspace | Users sign in with single sign-on; Power BI and GitHub reach the workspace |
+| Classic compute | Clusters start with no public IP addresses |
+| Egress | Databricks subnets leave through the NAT Gateway public IP; the proxy subnet leaves through the firewall |
+| Peering | The peering is `Connected` on both the spoke and the hub VNet |
+| DNS | On-premises names and the storage private endpoint names resolve to private addresses |
+| Data storage | Blob and dfs access works privately from classic and serverless compute, and is refused from public networks |
+| NCC | The workspace is bound and every private endpoint rule is `ESTABLISHED` |
+| On-premises connectivity | Serverless and classic compute connect to every approved SQL Server and Oracle destination |
+| Resilience | Connections survive stopping HAProxy, and stopping each VM, in turn |
+| Pipelines | A deploy runs through GitHub OIDC with the approval gate and evidence bundle |
+| Monitoring | Diagnostic logs and metrics arrive in Log Analytics |
+| Unity Catalog | Baytex BI's storage credential, external locations and catalog work from the workspace |
+| Workload | A representative Baytex BI workload runs end to end |
+
+`scripts/Test-BaytexDevConnectivity.ps1` tests DNS resolution and TCP connectivity from the HAProxy VMs to each
+destination and records the results as JSON.
+
+Do not apply example values without Baytex approval.

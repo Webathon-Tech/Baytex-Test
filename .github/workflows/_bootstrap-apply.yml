@@ -91,7 +91,7 @@ jobs:
           need TF_STATE_CONTAINER       "${STATE_CONTAINER:-}"
 
           if [ -n "$MISSING" ]; then
-            echo "::error::Environment '${{ inputs.environment }}' is not configured. Missing:$MISSING. Create its service principal and set these variables on the ${{ inputs.environment }}-plan and ${{ inputs.environment }}-apply GitHub Environments - see GITHUB-SETUP.md."
+            echo "::error::Environment '${{ inputs.environment }}' is not configured. Missing:$MISSING. Create its service principal and set these variables on the ${{ inputs.environment }}-plan and ${{ inputs.environment }}-apply GitHub Environments - see docs/github-setup.md."
             exit 1
           fi
           echo "Environment ${{ inputs.environment }} is configured."
@@ -116,7 +116,7 @@ jobs:
           # BOOTSTRAP_TFVARS: ${{ secrets.BOOTSTRAP_TFVARS }}
           BOOTSTRAP_TFVARS: ${{ vars.BOOTSTRAP_TFVARS }}
         run: |
-          test -n "$BOOTSTRAP_TFVARS" || { echo "::error::BOOTSTRAP_TFVARS is empty for ${{ inputs.environment }}. Set it on that GitHub Environment - see GITHUB-SETUP.md."; exit 1; }
+          test -n "$BOOTSTRAP_TFVARS" || { echo "::error::BOOTSTRAP_TFVARS is empty for ${{ inputs.environment }}. Set it on that GitHub Environment - see docs/github-setup.md."; exit 1; }
           printf '%s\n' "$BOOTSTRAP_TFVARS" > terraform.tfvars
           terraform fmt terraform.tfvars
 

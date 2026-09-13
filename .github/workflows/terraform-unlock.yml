@@ -6,7 +6,7 @@ name: Terraform Unlock State
 # to release it, so every later run queues on that lease and fails once its -lock-timeout expires.
 #
 # A lock held by a pipeline run is cleared here, so the recovery is approved and evidenced like every other change. A lock
-# left by a run from a workstation is released by that user with terraform force-unlock, as described in LOCAL-RUNS.md.
+# left by a run from a workstation is released by that user with terraform force-unlock, as described in docs/local-runs.md.
 #
 # The lock ID is a required input and is NOT discovered automatically. The failed run prints it:
 #
@@ -140,7 +140,7 @@ jobs:
           need TF_STATE_KEY             "${STATE_KEY:-}"
 
           if [ -n "$MISSING" ]; then
-            echo "::error::Environment '${{ inputs.environment }}' is not configured. Missing:$MISSING. See GITHUB-SETUP.md."
+            echo "::error::Environment '${{ inputs.environment }}' is not configured. Missing:$MISSING. See docs/github-setup.md."
             exit 1
           fi
           echo "Environment ${{ inputs.environment }} is configured."

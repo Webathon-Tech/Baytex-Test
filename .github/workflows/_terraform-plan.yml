@@ -98,7 +98,7 @@ jobs:
           fi
 
           if [ "${{ inputs.save_plan }}" = "true" ]; then
-            echo "::error::Environment '${{ inputs.environment }}' is not configured. Missing:$MISSING. Create its service principal and set these variables on the ${{ inputs.environment }}-plan and ${{ inputs.environment }}-apply GitHub Environments - see GITHUB-SETUP.md."
+            echo "::error::Environment '${{ inputs.environment }}' is not configured. Missing:$MISSING. Create its service principal and set these variables on the ${{ inputs.environment }}-plan and ${{ inputs.environment }}-apply GitHub Environments - see docs/github-setup.md."
             exit 1
           fi
 
@@ -196,7 +196,7 @@ jobs:
           # TFVARS: ${{ secrets.TFVARS }}
           TFVARS: ${{ vars.TFVARS }}
         run: |
-          test -n "$TFVARS" || { echo "::error::TFVARS is empty for ${{ inputs.environment }}-plan. Set it on that GitHub Environment - see GITHUB-SETUP.md."; exit 1; }
+          test -n "$TFVARS" || { echo "::error::TFVARS is empty for ${{ inputs.environment }}-plan. Set it on that GitHub Environment - see docs/github-setup.md."; exit 1; }
           printf '%s\n' "$TFVARS" > terraform.tfvars
 
       # use_azuread_auth makes the backend authenticate as the signed-in service principal via its Storage Blob Data
