@@ -1,6 +1,6 @@
 # Required inputs before DEV deployment
 
-The platform code is intentionally parameterized. Do not treat the values in `terraform.tfvars.example` as approved production inputs.
+The platform code is intentionally parameterized. Do not treat the values in `terraform.tfvars.example` as approved production inputs. Every example lists its values in the section order of `variables.tf`, and `variables.tf` rejects malformed values at plan time.
 
 ## Azure and Databricks
 
@@ -17,13 +17,13 @@ The platform code is intentionally parameterized. Do not treat the values in `te
 - Approved Private Endpoint subnet CIDR
 - Approved HAProxy/PLS subnet CIDR
 - Existing hub VNet resource ID
-- Decision on whether AMTRA creates the spoke-side peering or Baytex creates both directions
+- Decision on which peering directions Terraform creates (`create_spoke_to_hub_peering`, `create_hub_to_spoke_peering`), and for any Terraform-managed direction, Network Contributor on the hub VNet for the deployment identity
 - Cisco firewall private IP
 - All on-premises route CIDRs
 - Exact SQL/Oracle destination FQDN/IP/port matrix
 - On-premises return-route owner and change ticket
 - Corporate DNS servers
-- Central Blob/DFS Private DNS zone IDs, or an approved manual DNS handoff
+- Central Blob/DFS Private DNS zone IDs with Private DNS Zone Contributor for the deployment identity, or an approved manual DNS handoff
 
 ## Private Link Service/NCC
 

@@ -1,21 +1,28 @@
-# BAYTEX DELIVERY VALUES for the test environment.
+# Values for the test environment in Baytex's subscriptions.
+# To use them, place the whole of this file in the TFVARS variable on the test-plan and test-apply GitHub Environments.
+# Values follow the section order of variables.tf.
 #
-# This is the configuration intended for Baytex's own subscriptions. It is kept alongside terraform.tfvars.example,
-# which holds the values this repository is tested with, so the two never have to be reconstructed from memory.
-#
-# To deliver: copy the whole of this file into the BAYTEX_TFVARS content for test, or paste it over
-# terraform.tfvars.example in the Baytex repository.
+# Target subscription: SUB-BTE-CAN-DATA-TEST.
+# Open items: cost_centre is provisional, and the address plan awaits IPAM sign-off.
 
-# Test environment values. subscription_id pending. cost_centre is provisional.
-# IPAM sign-off pending.
+# ----------------------------------------------------------------------------------------------------------------------
+# Subscription and Databricks account
+# ----------------------------------------------------------------------------------------------------------------------
 
+# Baytex Entra tenant and the subscription this environment deploys into.
 tenant_id       = "9a6302b1-6a51-4f41-ad6b-ad23218c074d"
-subscription_id = "<BAYTEX-TEST-SUBSCRIPTION-ID>"
+subscription_id = "bfef19b8-0ffb-46b0-b654-53f1c1cc8a5b"
 
 # From the Baytex Databricks account console.
+# The metastore is the existing regional one; the platform reports it in the unity_catalog_handoff output and does not assign it.
 databricks_account_id = "1ff56ce7-99f9-4d29-b2d7-5da177c5f55b"
 existing_metastore_id = "858890e3-8d95-42c7-922e-4107a0055500"
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Naming
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Every resource name is composed as <type>-<organization>-<workload>-<environment>-<purpose>-<region_short>-<instance>.
 location     = "canadacentral"
 organization = "bte"
 workload     = "dbx"
@@ -23,19 +30,30 @@ environment  = "test"
 region_short = "cnc"
 instance     = "001"
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Tags
+# ----------------------------------------------------------------------------------------------------------------------
+
 owner               = "Baytex Infrastructure"
 cost_centre         = "BTX-DBX-TEST"
 data_classification = "Internal"
 
-# Spoke address space.
+# Extra tags merged over the standard tags. Example:
+#   additional_tags = { Department = "BI" }
+additional_tags = {}
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Spoke network
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Each environment uses its own /20 from the Baytex Azure range.
 vnet_cidr                        = "10.40.112.0/20"
 databricks_host_subnet_cidr      = "10.40.112.0/24"
 databricks_container_subnet_cidr = "10.40.113.0/24"
 private_endpoint_subnet_cidr     = "10.40.114.0/26"
 proxy_subnet_cidr                = "10.40.115.0/26"
 
-# Corporate DNS servers, in preference order. Applied to the VNet and to the
-# HAProxy resolver.
+# Corporate DNS servers, in preference order, for the VNet and the HAProxy resolver.
 dns_servers = [
   "10.40.128.5",
   "10.40.128.6",
@@ -44,17 +62,25 @@ dns_servers = [
   "172.19.96.124"
 ]
 
-hub_subscription_id       = "557d1301-8d98-483e-ac69-4f23bf2cb2eb"
-hub_resource_group_name   = "rg-network-bte-hub-cnc-02"
-hub_vnet_name             = "vnet-bte-hub-cnc-02"
-hub_vnet_id               = "/subscriptions/557d1301-8d98-483e-ac69-4f23bf2cb2eb/resourceGroups/rg-network-bte-hub-cnc-02/providers/Microsoft.Network/virtualNetworks/vnet-bte-hub-cnc-02"
+# ----------------------------------------------------------------------------------------------------------------------
+# Hub peering and routing
+# ----------------------------------------------------------------------------------------------------------------------
+
+# The Baytex hub VNet. Its subscription, resource group and name are read from this ID.
+hub_vnet_id = "/subscriptions/557d1301-8d98-483e-ac69-4f23bf2cb2eb/resourceGroups/rg-network-bte-hub-cnc-02/providers/Microsoft.Network/virtualNetworks/vnet-bte-hub-cnc-02"
+
+# VNet peering with the hub, one flag per direction.
+# create_spoke_to_hub_peering creates the peering on the spoke VNet, and create_hub_to_spoke_peering creates the peering on the hub VNet.
+# Set both to true once the deployment service principal holds Network Contributor on the hub VNet.
+# While both are false, Terraform makes no calls to the hub subscription, and the hub_side_peering_command output gives the command for the hub owner.
+create_spoke_to_hub_peering = false
+create_hub_to_spoke_peering = false
+
+# The Cisco firewall, next hop for both route tables.
 cisco_firewall_private_ip = "10.40.240.36"
 
-# Set false if Baytex creates both peering directions.
-create_spoke_to_hub_peering = false
-
-# Prefixes the Databricks subnets send to cisco_firewall_private_ip; the rest of their traffic leaves through the NAT
-# Gateway. The proxy and private endpoint subnets send all traffic to the firewall and need no entry here.
+# Prefixes the Databricks subnets send to the firewall; the rest of their traffic leaves through the NAT Gateway.
+# The proxy and private endpoint subnets send all traffic to the firewall and need no entry here.
 on_prem_routes = {
   azure_spokes = {
     address_prefix = "10.40.0.0/16"
@@ -64,22 +90,44 @@ on_prem_routes = {
   }
 }
 
-# One Allow-SSH rule is created per CIDR on the proxy NSG. Empty creates none.
-# Empty creates no SSH rule, which is the intended posture. Example if you need one:
+# ----------------------------------------------------------------------------------------------------------------------
+# Data foundation
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Globally unique across Azure.
+data_storage_account_name = "stbtedbxtestcnc001"
+
+data_containers = ["managed", "external", "landing", "checkpoints"]
+
+# Private DNS zones in the hub subscription that the blob and dfs private endpoints register in.
+# Set both once the deployment service principal holds Private DNS Zone Contributor on the two zones.
+# While they are empty, the private endpoints are created without DNS zone groups. Example:
+#   blob_private_dns_zone_ids = ["/subscriptions/<hub-subscription-id>/resourceGroups/<dns-zone-resource-group>/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"]
+#   dfs_private_dns_zone_ids  = ["/subscriptions/<hub-subscription-id>/resourceGroups/<dns-zone-resource-group>/providers/Microsoft.Network/privateDnsZones/privatelink.dfs.core.windows.net"]
+blob_private_dns_zone_ids = []
+dfs_private_dns_zone_ids  = []
+
+# ----------------------------------------------------------------------------------------------------------------------
+# HAProxy tier
+# ----------------------------------------------------------------------------------------------------------------------
+
+# One Allow-SSH rule per CIDR on the proxy NSG.
+# Empty creates none, and the VMs remain reachable through az vm run-command. Example:
 #   admin_ssh_source_cidrs = ["10.40.240.0/24"]
 admin_ssh_source_cidrs = []
 
 ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIpC6AYv2TDM3+DFJJYLSy3hQZjIRMoFKkB0xtvf2PMx baytex-terraform"
 
+# Both VM IPs must be inside proxy_subnet_cidr.
 proxy_vm_size = "Standard_D4s_v3"
 proxy_vm_private_ips = [
   "10.40.115.5",
   "10.40.115.6"
 ]
 
-# On-premises destinations. SQL03YYC and Trimble/TMW are not configured.
-# target_fqdn is resolved at run time by the HAProxy baytex_dns resolver.
-# Trailing comments are the confirmed IP addresses.
+# One load balancer frontend, Private Link Service and HAProxy listener per destination.
+# frontend_ip and pls_nat_ip must be inside proxy_subnet_cidr and different from every other address in this section.
+# HAProxy resolves target_fqdn at run time through dns_servers; the trailing comments give each destination's confirmed IP address.
 on_prem_endpoints = {
   sqlbidb01yyc = {
     frontend_ip = "10.40.115.11"
@@ -147,40 +195,44 @@ on_prem_endpoints = {
   }
 }
 
-# allow_all = true makes the Private Link Services discoverable by any
-# subscription. Empty auto-approval means every connection request requires
-# manual approval.
+# ----------------------------------------------------------------------------------------------------------------------
+# Private Link Service access
+# ----------------------------------------------------------------------------------------------------------------------
+
+# All-subscription visibility lets the Databricks serverless subscriptions request connections, and an empty auto-approval list means every connection is approved manually.
 allow_all_subscriptions_pls_visibility = true
+
 # Subscriptions that may discover the Private Link Services. Example:
 #   pls_visibility_subscription_ids = ["00000000-0000-0000-0000-000000000000"]
-pls_visibility_subscription_ids        = []
-# Must be a subset of the visibility list, or Azure rejects the create. Example:
-#   pls_auto_approval_subscription_ids = ["00000000-0000-0000-0000-000000000000"]
-pls_auto_approval_subscription_ids     = []
+pls_visibility_subscription_ids = []
 
-# Must be globally unique.
-data_storage_account_name           = "stbtedbxtestcnc001"
+# Must be a subset of the visibility list. Example:
+#   pls_auto_approval_subscription_ids = ["00000000-0000-0000-0000-000000000000"]
+pls_auto_approval_subscription_ids = []
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Databricks workspace
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Globally unique across Azure, and set only when the workspace is created.
 workspace_root_storage_account_name = "stbtedbxtestroot001"
 
-data_containers = ["managed", "external", "landing", "checkpoints"]
+# The front end stays reachable for users, Power BI and GitHub. Classic compute has no public IPs either way.
+workspace_public_network_access_enabled = true
 
-# Left empty on purpose. Attaching a private endpoint to a DNS zone needs
-# Microsoft.Network/privateDnsZones/join/action ON THE ZONE, which Contributor on this subscription does not
-# grant when the zone lives in the hub subscription. Whoever owns the hub must grant the deployment service
-# principal Private DNS Zone Contributor on each zone before these can be set. Example once granted:
-#   blob_private_dns_zone_ids = ["/subscriptions/<hub-sub>/resourceGroups/<hub-rg>/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"]
-blob_private_dns_zone_ids = []
-dfs_private_dns_zone_ids  = []
+# When true, the root Access Connector is created and attached to the workspace.
+workspace_default_storage_firewall_enabled = false
 
-# Workspace front-end is public. Classic compute has no public IPs. The default storage firewall is off; turning it on
-# attaches the root Access Connector to the workspace.
-workspace_public_network_access_enabled     = true
-workspace_default_storage_firewall_enabled  = false
+# Set only when the workspace is created.
 workspace_infrastructure_encryption_enabled = true
 
-enable_diagnostics           = true
-log_analytics_retention_days = 90
+# ----------------------------------------------------------------------------------------------------------------------
+# Operations
+# ----------------------------------------------------------------------------------------------------------------------
 
-alert_email_receivers = {
-  # cloud_operations = "cloud-operations@baytexenergy.com"
-}
+log_analytics_retention_days = 90
+enable_diagnostics           = true
+
+# Receiver name to email address. Empty creates no action group. Example:
+#   alert_email_receivers = { cloud_operations = "cloud-operations@baytexenergy.com" }
+alert_email_receivers = {}

@@ -1,3 +1,14 @@
+# ----------------------------------------------------------------------------------------------------------------------
+# Data foundation module
+# Creates the ADLS Gen2 data storage account and its containers, the data Access Connector with its storage roles, and the blob and dfs private endpoints.
+# ----------------------------------------------------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Data storage account
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Public network access is disabled, so the account is reached through its private endpoints in the spoke and through the private endpoint rules of the Databricks NCC.
+# Shared key access is disabled, so every caller authenticates with Microsoft Entra ID.
 resource "azurerm_storage_account" "this" {
   name                              = var.storage_account_name
   resource_group_name               = var.resource_group_name
@@ -15,6 +26,7 @@ resource "azurerm_storage_account" "this" {
   infrastructure_encryption_enabled = true
   tags                              = var.tags
 
+  # Deleted blobs and containers can be restored for 30 days.
   blob_properties {
     versioning_enabled  = false
     change_feed_enabled = false
@@ -34,6 +46,7 @@ resource "azurerm_storage_account" "this" {
   }
 }
 
+# Containers are created through the Azure Resource Manager API, so Terraform needs no data-plane access to the storage account.
 resource "azapi_resource" "container" {
   for_each = var.containers
 
@@ -48,6 +61,11 @@ resource "azapi_resource" "container" {
   }
 }
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Data Access Connector
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Managed identity that Baytex BI uses for the Unity Catalog storage credential on this storage account.
 resource "azurerm_databricks_access_connector" "this" {
   name                = var.access_connector_name
   resource_group_name = var.resource_group_name
@@ -59,9 +77,9 @@ resource "azurerm_databricks_access_connector" "this" {
   }
 }
 
-# The same four roles Databricks grants the connector it attaches to a workspace's own storage account. Storage Blob
-# Data Contributor is what a Unity Catalog storage credential needs; the other three let Databricks set up file events
-# (a storage queue and an Event Grid subscription) for Auto Loader.
+# The same four roles Databricks grants the connector it attaches to a workspace's own storage account.
+# Storage Blob Data Contributor is what a Unity Catalog storage credential needs.
+# The other three let Databricks set up file events, a storage queue and an Event Grid subscription, for Auto Loader.
 resource "azurerm_role_assignment" "access_connector_storage" {
   for_each = toset([
     "Storage Blob Data Contributor",
@@ -76,6 +94,17 @@ resource "azurerm_role_assignment" "access_connector_storage" {
   skip_service_principal_aad_check = true
 }
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Private endpoints
+# ----------------------------------------------------------------------------------------------------------------------
+
+# One private endpoint per storage sub-resource, placed in the spoke private endpoint subnet.
+# The endpoints are in the same subscription as the storage account, so their connections are approved automatically.
+#
+# Private DNS registration is optional.
+# When zone IDs are supplied, each endpoint gets a DNS zone group and Azure writes its A record into those Private DNS zones.
+# The zones can be in another subscription, such as the hub, as long as the deployment identity holds Private DNS Zone Contributor on each zone.
+# When the list is empty, no zone group is created and DNS records for the endpoint are managed outside Terraform.
 resource "azurerm_private_endpoint" "blob" {
   name                = "pe-${var.storage_account_name}-blob"
   location            = var.location

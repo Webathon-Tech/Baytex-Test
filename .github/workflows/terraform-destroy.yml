@@ -6,10 +6,10 @@ name: Terraform Destroy Platform
 # rebuilt with Terraform Deploy Platform without bootstrapping again - and the state account holds the very state file
 # this run writes to, so destroying it from here would be self-defeating.
 #
-# Not destroyed, because this Terraform never owned them:
+# Not destroyed, because this Terraform does not own them:
 #   - the hub VNet, firewall and on-premises systems
-#   - the HUB SIDE of the VNet peering, which is customer-owned
-# The apply job reports the exact command for the hub-side peering.
+#   - a hub-side VNet peering created outside Terraform, when create_hub_to_spoke_peering is false
+# Peerings Terraform created, in either direction, are destroyed with the environment.
 #
 # Two guards before anything is touched:
 #   1. main only. Deploys may run from a hotfix branch; a teardown may not.

@@ -1,20 +1,51 @@
-# Populate these from the AMTRA platform outputs and the existing Baytex Databricks account.
+# Example values for the Baytex BI Unity Catalog reference.
+# Copy to terraform.tfvars and replace every placeholder. Values follow the section order of variables.tf.
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Databricks account and workspace
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Existing Baytex Databricks account and regional metastore.
 databricks_account_id = "<DATABRICKS-ACCOUNT-ID>"
 metastore_id          = "<EXISTING-REGIONAL-METASTORE-ID>"
-workspace_id          = 1234567890123456
-workspace_url         = "https://adb-1234567890123456.7.azuredatabricks.net"
-access_connector_id   = "/subscriptions/e3a6598e-28b1-4d6a-8698-6683cd1d6995/resourceGroups/<RG>/providers/Microsoft.Databricks/accessConnectors/<DATA-ACCESS-CONNECTOR>"
-storage_account_name  = "stbtedbxdevcnc001"
 
-storage_credential_name          = "sc_bte_dev"
-managed_external_location_name   = "el_bte_dev_managed"
-external_location_name           = "el_bte_dev_external"
-catalog_name                     = "bte_dev"
+# Platform outputs: databricks_workspace_id and databricks_workspace_url.
+workspace_id  = 1234567890123456
+workspace_url = "https://adb-1234567890123456.7.azuredatabricks.net"
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Platform storage
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Platform outputs: data_access_connector_id and data_storage_account_name.
+access_connector_id  = "/subscriptions/e3a6598e-28b1-4d6a-8698-6683cd1d6995/resourceGroups/<RG>/providers/Microsoft.Databricks/accessConnectors/<DATA-ACCESS-CONNECTOR>"
+storage_account_name = "stbtedbxdevcnc001"
+
+# Containers created by the platform that back the two external locations.
+managed_container_name  = "managed"
+external_container_name = "external"
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Unity Catalog object names
+# ----------------------------------------------------------------------------------------------------------------------
+
+storage_credential_name        = "sc_bte_dev"
+managed_external_location_name = "el_bte_dev_managed"
+external_location_name         = "el_bte_dev_external"
+catalog_name                   = "bte_dev"
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Ownership
+# ----------------------------------------------------------------------------------------------------------------------
 
 # Existing account-level groups. Do not use individual users.
 catalog_owner            = "BTE-Databricks-DEV-Admins"
 storage_credential_owner = "BTE-Databricks-Platform-Admins"
 external_location_owner  = "BTE-Databricks-Platform-Admins"
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Schemas
+# ----------------------------------------------------------------------------------------------------------------------
 
 schemas = {
   landing = {
@@ -27,7 +58,11 @@ schemas = {
   }
 }
 
-# Keep catalog grants at the catalog level. Apply table/volume privileges at schema/object level.
+# ----------------------------------------------------------------------------------------------------------------------
+# Grants
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Keep catalog grants at the catalog level, and grant table and volume privileges at schema or object level.
 catalog_grants = {
   "BTE-Databricks-DEV-Engineers" = ["USE_CATALOG", "CREATE_SCHEMA"]
   "BTE-Databricks-DEV-Readers"   = ["USE_CATALOG"]
@@ -44,8 +79,8 @@ schema_grants = {
   }
 }
 
+# The owner already controls the managed location. Add grants only after Baytex BI confirms the privilege model.
 managed_external_location_grants = {}
-# The owner already controls this location. Add grants only after Baytex BI confirms the required privilege model.
 
 external_location_grants = {
   "BTE-Databricks-DEV-Engineers" = ["CREATE_EXTERNAL_TABLE", "READ_FILES", "WRITE_FILES"]
@@ -55,8 +90,12 @@ storage_credential_grants = {
   "BTE-Databricks-Platform-Admins" = ["CREATE_EXTERNAL_LOCATION"]
 }
 
-# The current DEV workspace is automatically bound when isolated resources are created.
-# Add later Test/Prod workspace IDs only after Baytex BI explicitly approves cross-environment access.
+# ----------------------------------------------------------------------------------------------------------------------
+# Additional workspace bindings
+# ----------------------------------------------------------------------------------------------------------------------
+
+# The current workspace is always bound.
+# Add test or prod workspace IDs only after Baytex BI approves cross-environment access.
 additional_catalog_workspace_bindings            = {}
 additional_external_location_workspace_bindings  = {}
 additional_storage_credential_workspace_bindings = {}

@@ -7,29 +7,30 @@ Existing Baytex Hub / Connectivity Subscription
   Existing hub VNet
   Existing Cisco Firepower
   Existing VPN and on-premises routes
-  Existing corporate DNS
+  Existing corporate DNS and central Private DNS zones
                 |
         additive integration only
                 |
-New DEV spoke in Data Non-Production subscription
+New spoke per environment (DEV in Data Non-Production)
   - New resource groups and naming
   - Dedicated VNet and Databricks subnets
   - New Databricks workspace
-  - New data storage and two Access Connectors (workspace root, data)
-  - New DEV NCC
+  - New data storage and data Access Connector
+  - Root Access Connector, when the default storage firewall is enabled
+  - New NCC
   - New two-node HAProxy/ILB/PLS tier
   - New Terraform state and pipeline
 ```
 
 ## AMTRA Terraform ownership
 
-- DEV resource groups
-- DEV VNet, subnets, NSGs, route tables, NAT Gateway
-- Spoke-side peering
+- Environment resource groups
+- VNet, subnets, NSGs, route tables, NAT Gateway
+- VNet peering with the hub, for each direction enabled in tfvars
 - Azure Databricks workspace and Azure platform settings
 - ADLS Gen2 data foundation
 - Access Connectors and required Azure RBAC
-- Private endpoints in the DEV VNet
+- Private endpoints in the spoke VNet, and their Private DNS zone groups when zone IDs are supplied
 - HAProxy VMs, Load Balancer, and Private Link Services
 - Databricks NCC and private endpoint rules
 - Log Analytics and platform diagnostics
@@ -37,14 +38,26 @@ New DEV spoke in Data Non-Production subscription
 
 ## Baytex Infrastructure ownership
 
-- Existing hub VNet and hub-side peering
+- Existing hub VNet, and the hub-side peering when `create_hub_to_spoke_peering` is `false`
 - Cisco Firepower and its policy/rules
 - Existing VPN and on-premises connectivity
 - On-premises return routes
-- Corporate DNS and central Private DNS zones
-- Provider registration and subscription governance
+- Corporate DNS and central Private DNS zones, including their VNet links
+- Role assignments in the hub subscription for the deployment service principal, when Terraform manages the peering or Private DNS registration
+- Subscription governance
 - Endpoint security/monitoring agent onboarding
 - Production change control and operational approvals
+
+## Hub-subscription integration
+
+Two integrations with the hub subscription are optional and are enabled in tfvars. Each needs one role for the deployment service principal, granted by Baytex Infrastructure:
+
+| Integration | tfvars | Role and scope |
+| --- | --- | --- |
+| VNet peering, in either direction | `hub_vnet_id`, `create_spoke_to_hub_peering`, `create_hub_to_spoke_peering` | Network Contributor on the hub VNet |
+| Private DNS registration of the storage private endpoints | `blob_private_dns_zone_ids`, `dfs_private_dns_zone_ids` | Private DNS Zone Contributor on each zone |
+
+With both peering flags `false` and both zone lists empty, Terraform makes no calls to the hub subscription and needs no role there. The grant commands are in [GITHUB-SETUP.md](../GITHUB-SETUP.md) §2.
 
 ## Baytex BI ownership
 

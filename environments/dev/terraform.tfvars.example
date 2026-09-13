@@ -1,20 +1,26 @@
-# Values this repository is TESTED with: an isolated sandbox subscription under the "vkp" prefix, so nothing here can
-# collide with Baytex's globally unique resource names. For the configuration intended for Baytex, see
-# baytex.terraform.tfvars.example alongside this file.
-#
-# The whole of this file is held in the TFVARS variable on the dev-plan and dev-apply GitHub Environments; the
-# workflow writes it to disk at run time, which is why no environment-specific value is committed to git.
+# Values for the dev environment.
+# The whole of this file is held in the TFVARS variable on the dev-plan and dev-apply GitHub Environments, and the workflows write it to disk as terraform.tfvars at run time.
+# Values for Baytex's own subscriptions are kept in baytex.terraform.tfvars.example alongside this file.
+# Values follow the section order of variables.tf.
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Subscription and Databricks account
+# ----------------------------------------------------------------------------------------------------------------------
 
 # Entra tenant and the subscription this environment deploys into.
 tenant_id       = "be945e7a-2e17-4b44-926f-512e85873eec"
 subscription_id = "6a3bb170-5159-4bff-860b-aa74fb762697"
 
-# From the Databricks account console. The metastore is the existing regional one; the platform binds to it rather than
-# creating its own.
+# From the Databricks account console.
+# The metastore is the existing regional one; the platform reports it in the unity_catalog_handoff output and does not assign it.
 databricks_account_id = "e198df6c-3932-4959-847b-5257ea8dec5a"
 existing_metastore_id = "9bf4d8e9-c078-4730-a533-51d10f5c44d6"
 
-# These five compose every resource name: rg-<organization>-<workload>-<environment>-<purpose>-<region_short>-<instance>
+# ----------------------------------------------------------------------------------------------------------------------
+# Naming
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Every resource name is composed as <type>-<organization>-<workload>-<environment>-<purpose>-<region_short>-<instance>.
 location     = "canadacentral"
 organization = "vkp"
 workload     = "dbx"
@@ -22,55 +28,92 @@ environment  = "dev"
 region_short = "cnc"
 instance     = "001"
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Tags
+# ----------------------------------------------------------------------------------------------------------------------
+
 owner               = "Platform Engineering"
 cost_centre         = "VKP-DBX-DEV"
 data_classification = "Internal"
 
-# Spoke address space. Each environment takes a separate /20 so the three can coexist and peer to the same hub.
+# Extra tags merged over the standard tags. Example:
+#   additional_tags = { Department = "BI" }
+additional_tags = {}
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Spoke network
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Each environment uses its own /20, so all three can peer with the same hub without overlapping.
 vnet_cidr                        = "10.99.0.0/20"
 databricks_host_subnet_cidr      = "10.99.0.0/24"
 databricks_container_subnet_cidr = "10.99.1.0/24"
 private_endpoint_subnet_cidr     = "10.99.2.0/26"
 proxy_subnet_cidr                = "10.99.2.64/26"
 
-# Azure-provided DNS. A real deployment points at corporate resolvers instead.
+# DNS servers for the VNet and the HAProxy resolver. 168.63.129.16 is Azure-provided DNS.
 dns_servers = ["168.63.129.16"]
 
-# The hub this spoke peers to and routes through.
-hub_subscription_id       = "6a3bb170-5159-4bff-860b-aa74fb762697"
-hub_resource_group_name   = "rg-sbx-hub-cnc-001"
-hub_vnet_name             = "vnet-sbx-hub-cnc-001"
-hub_vnet_id               = "/subscriptions/6a3bb170-5159-4bff-860b-aa74fb762697/resourceGroups/rg-sbx-hub-cnc-001/providers/Microsoft.Network/virtualNetworks/vnet-sbx-hub-cnc-001"
+# ----------------------------------------------------------------------------------------------------------------------
+# Hub peering and routing
+# ----------------------------------------------------------------------------------------------------------------------
+
+# The hub VNet. Its subscription, resource group and name are read from this ID.
+hub_vnet_id = "/subscriptions/6a3bb170-5159-4bff-860b-aa74fb762697/resourceGroups/rg-sbx-hub-cnc-001/providers/Microsoft.Network/virtualNetworks/vnet-sbx-hub-cnc-001"
+
+# VNet peering with the hub, one flag per direction.
+# create_spoke_to_hub_peering creates the peering on the spoke VNet, and create_hub_to_spoke_peering creates the peering on the hub VNet.
+# When the hub is in another subscription, both need Network Contributor on the hub VNet for the deployment service principal.
+# While both are false, Terraform makes no calls to the hub subscription, and the hub_side_peering_command output gives the command for the hub owner.
+create_spoke_to_hub_peering = false
+create_hub_to_spoke_peering = false
+
+# Next hop for both route tables.
 cisco_firewall_private_ip = "10.98.0.4"
 
-# The spoke side of the VNet peering is not created here. The hub is customer-owned, so both directions of the peering
-# are established by whoever owns it.
-create_spoke_to_hub_peering = false
-
-# Prefixes the Databricks subnets send to cisco_firewall_private_ip; the rest of their traffic leaves through the NAT
-# Gateway. The proxy and private endpoint subnets send all traffic to the firewall and need no entry here.
+# Prefixes the Databricks subnets send to the firewall; the rest of their traffic leaves through the NAT Gateway.
+# The proxy and private endpoint subnets send all traffic to the firewall and need no entry here.
 on_prem_routes = {
   onprem_sim = {
     address_prefix = "10.98.1.0/24"
   }
 }
 
-# One Allow-SSH rule is created per CIDR on the proxy NSG. Empty creates none, which is the intended posture: the
-# proxy VMs are reachable through "az vm run-command invoke" without opening port 22.
-# Empty creates no SSH rule, which is the intended posture. Example if you need one:
+# ----------------------------------------------------------------------------------------------------------------------
+# Data foundation
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Globally unique across Azure.
+data_storage_account_name = "stvkpdbxdevcnc001"
+
+data_containers = ["managed", "external", "landing", "checkpoints"]
+
+# Private DNS zones the blob and dfs private endpoints register in.
+# When the zones are in another subscription, the deployment service principal needs Private DNS Zone Contributor on each zone.
+# Leave both empty to create the private endpoints without DNS zone groups.
+blob_private_dns_zone_ids = ["/subscriptions/6a3bb170-5159-4bff-860b-aa74fb762697/resourceGroups/rg-sbx-hub-cnc-001/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"]
+dfs_private_dns_zone_ids  = ["/subscriptions/6a3bb170-5159-4bff-860b-aa74fb762697/resourceGroups/rg-sbx-hub-cnc-001/providers/Microsoft.Network/privateDnsZones/privatelink.dfs.core.windows.net"]
+
+# ----------------------------------------------------------------------------------------------------------------------
+# HAProxy tier
+# ----------------------------------------------------------------------------------------------------------------------
+
+# One Allow-SSH rule per CIDR on the proxy NSG.
+# Empty creates none, and the VMs remain reachable through az vm run-command. Example:
 #   admin_ssh_source_cidrs = ["10.40.240.0/24"]
 admin_ssh_source_cidrs = []
 
 ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMhki1LbqhnxgL8qjn0rcCIy6b/7NYAW6AT1D+6NvlNJ vkp-platform"
 
+# Both VM IPs must be inside proxy_subnet_cidr.
 proxy_vm_size = "Standard_D4s_v6"
 proxy_vm_private_ips = [
   "10.99.2.70",
   "10.99.2.71"
 ]
 
-# One HAProxy frontend and one Private Link Service per destination. frontend_ip and pls_nat_ip must both sit inside
-# proxy_subnet_cidr and must not collide with proxy_vm_private_ips.
+# One load balancer frontend, Private Link Service and HAProxy listener per destination.
+# frontend_ip and pls_nat_ip must be inside proxy_subnet_cidr and different from every other address in this section.
 on_prem_endpoints = {
   sqlsim = {
     frontend_ip = "10.99.2.75"
@@ -90,35 +133,38 @@ on_prem_endpoints = {
   }
 }
 
-# Azure requires the auto-approval list to be a SUBSET of the visibility list. allow_all = true maps to an empty
-# visibility list, and pairing that with a non-empty auto-approval list is rejected at create time with
-# InvalidCorrelationBetweenAutoApprovalAndVisibility. To auto-approve connections from a subscription, that
-# subscription has to appear in both lists.
+# ----------------------------------------------------------------------------------------------------------------------
+# Private Link Service access
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Auto-approval subscriptions must also be in the visibility list, and all-subscription visibility cannot be combined with auto-approval.
 allow_all_subscriptions_pls_visibility = false
 pls_visibility_subscription_ids        = ["6a3bb170-5159-4bff-860b-aa74fb762697"]
 pls_auto_approval_subscription_ids     = ["6a3bb170-5159-4bff-860b-aa74fb762697"]
 
-# Both must be globally unique across all of Azure. The organisation prefix is what keeps them from colliding.
-data_storage_account_name           = "stvkpdbxdevcnc001"
+# ----------------------------------------------------------------------------------------------------------------------
+# Databricks workspace
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Globally unique across Azure, and set only when the workspace is created.
 workspace_root_storage_account_name = "stvkpdbxdevroot001"
 
-data_containers = ["managed", "external", "landing", "checkpoints"]
+# The front end stays reachable for users, Power BI and GitHub. Classic compute has no public IPs either way.
+workspace_public_network_access_enabled = true
 
-# Private DNS zones the blob and dfs private endpoints register into. Creating a zone group needs write access on the
-# zone, so where the zones live in another subscription the owner grants it or these are left empty.
-blob_private_dns_zone_ids = ["/subscriptions/6a3bb170-5159-4bff-860b-aa74fb762697/resourceGroups/rg-sbx-hub-cnc-001/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"]
-dfs_private_dns_zone_ids  = ["/subscriptions/6a3bb170-5159-4bff-860b-aa74fb762697/resourceGroups/rg-sbx-hub-cnc-001/providers/Microsoft.Network/privateDnsZones/privatelink.dfs.core.windows.net"]
+# When true, the root Access Connector is created and attached to the workspace.
+workspace_default_storage_firewall_enabled = false
 
-# The workspace front end stays public so users, Power BI and GitHub can reach it. Classic compute still has no public
-# IPs. The default storage firewall is off; turning it on attaches the root Access Connector to the workspace.
-workspace_public_network_access_enabled     = true
-workspace_default_storage_firewall_enabled  = false
+# Set only when the workspace is created.
 workspace_infrastructure_encryption_enabled = true
 
-enable_diagnostics           = true
-log_analytics_retention_days = 30
+# ----------------------------------------------------------------------------------------------------------------------
+# Operations
+# ----------------------------------------------------------------------------------------------------------------------
 
-# Email receivers on the platform action group. Empty creates the group with no receivers.
-# Empty creates the action group with no receivers. Example:
+log_analytics_retention_days = 30
+enable_diagnostics           = true
+
+# Receiver name to email address. Empty creates no action group. Example:
 #   alert_email_receivers = { cloud_operations = "cloud-operations@example.com" }
 alert_email_receivers = {}

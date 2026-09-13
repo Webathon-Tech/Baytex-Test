@@ -1,4 +1,11 @@
+# ----------------------------------------------------------------------------------------------------------------------
+# HAProxy tier module
+# Two HAProxy VMs in separate availability zones behind an internal Standard Load Balancer, with one frontend and one Private Link Service per on-premises destination.
+# Databricks serverless compute reaches each destination through its Private Link Service, and HAProxy forwards the connection to the on-premises host.
+# ----------------------------------------------------------------------------------------------------------------------
+
 locals {
+  # One VM per availability zone, each with a static private IP.
   proxy_nodes = {
     "01" = {
       private_ip = var.proxy_vm_private_ips[0]
@@ -12,10 +19,12 @@ locals {
 
   frontend_ips = [for endpoint in values(var.endpoints) : endpoint.frontend_ip]
 
-  # Sizes from the v6 generation on accept only NVMe disks. Earlier sizes are left to Azure's default of SCSI,
-  # which keeps their plans identical to a VM created before this setting existed.
+  # VM sizes from the v6 generation onwards support only NVMe disk controllers.
+  # Earlier sizes keep Azure's default SCSI controller.
   disk_controller_type = can(regex("_v[6-9]$", var.proxy_vm_size)) ? "NVMe" : null
 
+  # Rendered configuration files.
+  # Line endings are normalised to LF so the files work on Linux regardless of the operating system that runs Terraform.
   haproxy_config = replace(templatefile("${path.module}/templates/haproxy.cfg.tftpl", {
     dns_servers = var.dns_servers
     endpoints   = var.endpoints
@@ -29,6 +38,8 @@ locals {
 
   install_script = replace(templatefile("${path.module}/templates/install-packages.sh.tftpl", {}), "\r\n", "\n")
 
+  # cloud-init document passed to both VMs as custom data.
+  # Any change to it replaces the VMs, because custom data can be set only when a VM is created.
   cloud_init = yamlencode({
     write_files = [
       {
@@ -56,10 +67,8 @@ locals {
         content     = local.configure_lb_ips_service
       },
       {
-        # The load balancer frontend IPs are floating-IP (DSR) addresses that
-        # only become local once baytex-lb-ips.service adds them to dummy0.
-        # Allowing non-local bind lets HAProxy start regardless of that
-        # ordering, instead of dying with "Cannot assign requested address".
+        # The load balancer uses floating IP, so the frontend IPs become local only after baytex-lb-ips.service adds them to the dummy0 interface.
+        # Non-local bind lets HAProxy start and bind those addresses regardless of which service starts first.
         path        = "/etc/sysctl.d/99-haproxy-nonlocal-bind.conf"
         permissions = "0644"
         owner       = "root:root"
@@ -67,26 +76,28 @@ locals {
       }
     ]
     runcmd = [
-      # Apply non-local bind before HAProxy is (re)started.
+      # Apply non-local bind before HAProxy starts.
       ["sysctl", "--system"],
       ["systemctl", "daemon-reload"],
       ["systemctl", "enable", "--now", "baytex-lb-ips.service"],
-      # The proxy subnet reaches the internet only through the firewall, and that path exists only once the hub
-      # peering is in place, which happens after the first apply. A one-shot install would fail at first boot and
-      # never run again, so this script retries until the package mirrors answer; the steps below then configure
-      # HAProxy.
+      # The proxy subnet reaches the package mirrors only through the firewall.
+      # The install script retries every minute until the mirrors answer, so the VMs finish configuring as soon as that path is open.
       ["/usr/local/sbin/install-haproxy-packages.sh"],
       ["haproxy", "-c", "-f", "/etc/haproxy/haproxy.cfg"],
       ["systemctl", "enable", "haproxy"],
-      # The package starts HAProxy as soon as it is installed. If that start fails, systemd's StartLimitBurst
-      # refuses a plain restart with "Start request repeated too quickly"; reset-failed clears the limiter so the
-      # restart below is honoured.
+      # The package starts HAProxy as soon as it is installed.
+      # reset-failed clears systemd's start limit from that first start, so the restart below always runs with the final configuration.
       ["systemctl", "reset-failed", "haproxy"],
       ["systemctl", "restart", "haproxy"]
     ]
   })
 }
 
+# ----------------------------------------------------------------------------------------------------------------------
+# HAProxy virtual machines
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Accelerated networking is enabled and each NIC has a static private IP from proxy_vm_private_ips.
 resource "azurerm_network_interface" "proxy" {
   for_each = local.proxy_nodes
 
@@ -104,6 +115,7 @@ resource "azurerm_network_interface" "proxy" {
   }
 }
 
+# Ubuntu LTS on Trusted Launch (secure boot and vTPM), SSH key authentication only, and platform-managed patching.
 resource "azurerm_linux_virtual_machine" "proxy" {
   for_each = local.proxy_nodes
 
@@ -148,9 +160,15 @@ resource "azurerm_linux_virtual_machine" "proxy" {
     version   = "latest"
   }
 
+  # Boot diagnostics use a Microsoft-managed storage account.
   boot_diagnostics {}
 }
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Internal load balancer
+# ----------------------------------------------------------------------------------------------------------------------
+
+# One static frontend IP per on-premises destination.
 resource "azurerm_lb" "this" {
   name                = "lb-${var.name_prefix}-proxy"
   location            = var.location
@@ -182,6 +200,7 @@ resource "azurerm_network_interface_backend_address_pool_association" "proxy" {
   backend_address_pool_id = azurerm_lb_backend_address_pool.this.id
 }
 
+# Probes the HAProxy health frontend, so a VM leaves the pool as soon as HAProxy stops answering.
 resource "azurerm_lb_probe" "haproxy" {
   name                = "probe-haproxy-8404"
   loadbalancer_id     = azurerm_lb.this.id
@@ -192,6 +211,8 @@ resource "azurerm_lb_probe" "haproxy" {
   probe_threshold     = 1
 }
 
+# Floating IP keeps the frontend IP as the destination address, so each HAProxy frontend binds to its own frontend IP and port.
+# Outbound SNAT is disabled because the load balancer carries no outbound traffic.
 resource "azurerm_lb_rule" "endpoint" {
   for_each = var.endpoints
 
@@ -209,6 +230,12 @@ resource "azurerm_lb_rule" "endpoint" {
   load_distribution              = "Default"
 }
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Private Link Services
+# ----------------------------------------------------------------------------------------------------------------------
+
+# One Private Link Service per destination, on that destination's load balancer frontend.
+# The Databricks NCC creates a private endpoint to each one, and the connection must be approved unless its subscription is in auto_approval_subscription_ids.
 resource "azurerm_private_link_service" "endpoint" {
   for_each = var.endpoints
 
@@ -232,11 +259,13 @@ resource "azurerm_private_link_service" "endpoint" {
   }
 
   lifecycle {
+    # Visibility must be restricted to named subscriptions unless all-subscription visibility is explicitly enabled.
     precondition {
       condition     = var.allow_all_subscriptions_visibility || length(var.visibility_subscription_ids) > 0
       error_message = "Provide explicit visibility_subscription_ids or set allow_all_subscriptions_visibility=true as an approved exception."
     }
 
+    # Azure accepts auto-approval only for subscriptions that are also in the visibility list.
     precondition {
       condition = var.allow_all_subscriptions_visibility || length(setsubtract(
         toset(var.auto_approval_subscription_ids),

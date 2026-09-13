@@ -1,3 +1,5 @@
+# Backend settings for initialising the test platform root by hand: terraform init -backend-config=backend.hcl
+# Copy to backend.hcl, which is gitignored, and match the TF_STATE_* variables on the test-plan GitHub Environment.
 resource_group_name  = "rg-bte-dbx-test-tfstate-cnc-001"
 storage_account_name = "stbtedbxtesttfcnc001"
 container_name       = "tfstate"

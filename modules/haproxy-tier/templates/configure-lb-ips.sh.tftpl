@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Adds each load balancer frontend IP to the dummy0 interface, so the VM accepts floating-IP traffic addressed to those IPs.
 set -euo pipefail
 
 if ! ip link show dummy0 >/dev/null 2>&1; then

@@ -1,3 +1,13 @@
+# ----------------------------------------------------------------------------------------------------------------------
+# Baytex BI Unity Catalog reference
+# Attaches a platform workspace to the existing metastore and creates its storage credential, external locations, catalog, schemas, workspace bindings and grants.
+# It uses its own Terraform state and is not called by the platform roots.
+# ----------------------------------------------------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Metastore assignment
+# ----------------------------------------------------------------------------------------------------------------------
+
 resource "databricks_metastore_assignment" "dev" {
   provider = databricks.account
 
@@ -5,6 +15,11 @@ resource "databricks_metastore_assignment" "dev" {
   workspace_id = var.workspace_id
 }
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Storage credential and external locations
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Backed by the data Access Connector the platform creates, which already holds Storage Blob Data Contributor on the data storage account.
 resource "databricks_storage_credential" "dev" {
   provider = databricks.workspace
 
@@ -20,6 +35,7 @@ resource "databricks_storage_credential" "dev" {
   depends_on = [databricks_metastore_assignment.dev]
 }
 
+# Holds the managed storage of the catalog.
 resource "databricks_external_location" "managed" {
   provider = databricks.workspace
 
@@ -33,6 +49,7 @@ resource "databricks_external_location" "managed" {
   skip_validation = false
 }
 
+# General-purpose location for external tables and files.
 resource "databricks_external_location" "external" {
   provider = databricks.workspace
 
@@ -46,6 +63,11 @@ resource "databricks_external_location" "external" {
   skip_validation = false
 }
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Catalog and schemas
+# ----------------------------------------------------------------------------------------------------------------------
+
+# The catalog's managed storage root sits under the managed external location, as Unity Catalog requires.
 resource "databricks_catalog" "dev" {
   provider = databricks.workspace
 
@@ -57,6 +79,7 @@ resource "databricks_catalog" "dev" {
   force_destroy  = false
 }
 
+# A schema without its own owner is owned by the catalog owner.
 resource "databricks_schema" "this" {
   provider = databricks.workspace
   for_each = var.schemas
@@ -67,7 +90,11 @@ resource "databricks_schema" "this" {
   owner        = coalesce(try(each.value.owner, null), var.catalog_owner)
 }
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Workspace bindings: this workspace
+# ----------------------------------------------------------------------------------------------------------------------
 
+# Isolated securables are usable only from workspaces they are bound to, so each one is bound to this workspace.
 resource "databricks_workspace_binding" "catalog_current" {
   provider = databricks.workspace
 
@@ -104,6 +131,11 @@ resource "databricks_workspace_binding" "storage_credential_current" {
   binding_type   = "BINDING_TYPE_READ_WRITE"
 }
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Workspace bindings: additional approved workspaces
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Read-only bindings are supported only for catalogs; storage credentials and external locations are always bound read-write.
 resource "databricks_workspace_binding" "catalog_additional" {
   provider = databricks.workspace
   for_each = var.additional_catalog_workspace_bindings
@@ -144,6 +176,10 @@ resource "databricks_workspace_binding" "storage_credential_additional" {
   binding_type   = "BINDING_TYPE_READ_WRITE"
 }
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Grants
+# ----------------------------------------------------------------------------------------------------------------------
+
 resource "databricks_grant" "catalog" {
   provider = databricks.workspace
   for_each = var.catalog_grants
@@ -154,6 +190,7 @@ resource "databricks_grant" "catalog" {
 }
 
 locals {
+  # One entry per schema and principal pair, keyed "<schema>|<principal>".
   flattened_schema_grants = {
     for item in flatten([
       for schema_name, principals in var.schema_grants : [

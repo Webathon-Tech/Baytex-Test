@@ -1,3 +1,5 @@
+# Backend settings for initialising the prod platform root by hand: terraform init -backend-config=backend.hcl
+# Copy to backend.hcl, which is gitignored, and match the TF_STATE_* variables on the prod-plan GitHub Environment.
 resource_group_name  = "rg-bte-dbx-prod-tfstate-cnc-001"
 storage_account_name = "stbtedbxprodtfcnc001"
 container_name       = "tfstate"

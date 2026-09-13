@@ -193,12 +193,13 @@ mis-clicked checkbox cannot destroy an environment you did not mean to name.
   environment without bootstrapping again
 - The **hub VNet, firewall and on-premises systems** — this Terraform never
   owned them
-- The **VNet peering** — with `create_spoke_to_hub_peering = false`, Baytex
-  creates both directions and this Terraform never owns them
+- A **hub-side peering created outside Terraform** — when
+  `create_hub_to_spoke_peering` is `false`, the hub owner creates and removes it
 
-After a spoke is destroyed, the hub-side peering Baytex created shows as
-`Disconnected`. Baytex deletes it and peers the new VNet once the next deploy has
-run; the `hub_side_peering_command` output has the command.
+Peerings Terraform created, in either direction, are destroyed with the
+environment. A hub-side peering created outside Terraform shows as `Disconnected`
+once its spoke is destroyed; the hub owner deletes it, and after the next deploy
+peers the new VNet with the command in the `hub_side_peering_command` output.
 
 **When it finishes** the summary shows how many resources were destroyed and
 confirms that none remain.
@@ -283,6 +284,9 @@ deployment also gate a recovery.
 
 The lock ID is checked against the lock actually held, so a stale or mistyped ID
 releases nothing. The summary says whether the lock was released.
+
+A lock left by a run from a workstation is released by that user, as described in
+[LOCAL-RUNS.md](LOCAL-RUNS.md) §8.
 
 ---
 
@@ -383,7 +387,11 @@ Download artefacts from the bottom of any run's summary page.
 | A pull-request plan says `not configured yet` | Expected before that environment's service principal exists | Nothing. It starts planning once §2 and §4 are done |
 | `TFVARS is empty for <env>-plan` | The variable is missing on that environment | See [GITHUB-SETUP.md](GITHUB-SETUP.md) §4 |
 | Plan shows the workspace **must be replaced** | Real. The workspace is replaced only when a field that cannot change in place changes: its name, managed resource group, subnets, VNet, root storage account name or infrastructure encryption. Tags and other settings update in place | Find which field changed before approving |
-| Baytex's hub-side peering shows `Disconnected` | The spoke VNet was destroyed and rebuilt | Baytex deletes the old peering and peers the new VNet; the `hub_side_peering_command` output has the command |
+| A hub-side peering created outside Terraform shows `Disconnected` | The spoke VNet was destroyed and rebuilt | The hub owner deletes the old peering and peers the new VNet with the command in the `hub_side_peering_command` output |
+| Apply fails with `LinkedAuthorizationFailed` for `Microsoft.Network/virtualNetworks/peer/action` | `create_spoke_to_hub_peering` is `true`, but the service principal has no role on the hub VNet | Grant Network Contributor on the hub VNet ([GITHUB-SETUP.md](GITHUB-SETUP.md) §2), or set the flag to `false` |
+| Apply fails with `AuthorizationFailed` for `Microsoft.Network/virtualNetworks/virtualNetworkPeerings/write` | `create_hub_to_spoke_peering` is `true`, but the service principal has no role on the hub VNet | Grant Network Contributor on the hub VNet, or set the flag to `false` |
+| Apply fails with `LinkedAuthorizationFailed` for `Microsoft.Network/privateDnsZones/join/action` | DNS zone IDs are set, but the service principal has no role on those zones | Grant Private DNS Zone Contributor on each zone, or set `blob_private_dns_zone_ids` and `dfs_private_dns_zone_ids` to `[]` |
+| Plan fails with `Invalid value for variable` | A `TFVARS` value breaks an input rule in `variables.tf`, such as an address outside its subnet or a peering flag without `hub_vnet_id` | Correct the value the error message names |
 | Destroy log shows `cannot delete mws network connectivity config ... attached to one or more workspaces`, then succeeds | **Normal.** Unbinding the NCC and deleting it are separate Databricks calls, and the unbind is not immediately visible | Nothing. The apply retries automatically and typically completes on attempt 2. `apply.log` records each attempt |
 | Need to inspect a HAProxy VM | Port 22 is deliberately closed (`admin_ssh_source_cidrs = []`). Use `az vm run-command invoke -g <rg> -n <vm> --command-id RunShellScript --scripts "systemctl status haproxy"` — it runs as root over the Azure control plane and needs only Virtual Machine Contributor |
 | HAProxy is not installed, or the load balancer probe is unhealthy, after a deploy | The proxy subnet reaches the internet only through the firewall, so the package install waits until the hub peering exists and the firewall allows the Ubuntu package mirrors. It retries every minute | Complete the peering and the firewall rule. Watch progress with `az vm run-command invoke -g <rg> -n <vm> --command-id RunShellScript --scripts "tail -n 20 /var/log/cloud-init-output.log"` |
