@@ -162,6 +162,9 @@ resource "azurerm_linux_virtual_machine" "proxy" {
 
   # Boot diagnostics use a Microsoft-managed storage account.
   boot_diagnostics {}
+
+  # Creating the VM and adding its NIC to the backend pool both update the NIC, and neither resource locks the other.
+  depends_on = [azurerm_network_interface_backend_address_pool_association.proxy]
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -198,6 +201,9 @@ resource "azurerm_network_interface_backend_address_pool_association" "proxy" {
   network_interface_id    = each.value.id
   ip_configuration_name   = "ipconfig1"
   backend_address_pool_id = azurerm_lb_backend_address_pool.this.id
+
+  # Adding a NIC to the pool updates the load balancer, but this resource locks only the NIC, so it waits until the probe is written.
+  depends_on = [azurerm_lb_probe.haproxy]
 }
 
 # Probes the HAProxy health frontend, so a VM leaves the pool as soon as HAProxy stops answering.
@@ -228,6 +234,13 @@ resource "azurerm_lb_rule" "endpoint" {
   disable_outbound_snat          = true
   idle_timeout_in_minutes        = 30
   load_distribution              = "Default"
+
+  # The NIC backend pool associations and the VMs also write to the load balancer, under a different provider lock than
+  # the rules. Run in parallel, Azure rejects a rule with ConflictingConcurrentWriteNotAllowed.
+  depends_on = [
+    azurerm_network_interface_backend_address_pool_association.proxy,
+    azurerm_linux_virtual_machine.proxy,
+  ]
 }
 
 # ----------------------------------------------------------------------------------------------------------------------

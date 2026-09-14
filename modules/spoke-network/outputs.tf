@@ -35,11 +35,20 @@ output "databricks_container_subnet_name" {
 output "private_endpoint_subnet_id" {
   description = "Resource ID of the private endpoint subnet."
   value       = azurerm_subnet.private_endpoints.id
+
+  # Consumers place private endpoints in this subnet only after its route table is attached, so the two never update the subnet at the same time.
+  depends_on = [azurerm_subnet_route_table_association.private_endpoints]
 }
 
 output "proxy_subnet_id" {
   description = "Resource ID of the proxy subnet."
   value       = azurerm_subnet.proxy.id
+
+  # The load balancer frontends, the HAProxy NICs and the Private Link Service NAT IPs use this subnet only after its NSG and route table are attached.
+  depends_on = [
+    azurerm_subnet_network_security_group_association.proxy,
+    azurerm_subnet_route_table_association.proxy,
+  ]
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -49,11 +58,24 @@ output "proxy_subnet_id" {
 output "host_nsg_association_id" {
   description = "ID of the NSG association on the Databricks host subnet, required by the workspace."
   value       = azurerm_subnet_network_security_group_association.databricks_host.id
+
+  # The workspace receives this ID, so it also waits for the NAT Gateway and route table associations on the host subnet.
+  # Creating the workspace updates the subnet's network policies, and Azure rejects that while another association is still being applied.
+  depends_on = [
+    azurerm_subnet_nat_gateway_association.databricks_host,
+    azurerm_subnet_route_table_association.databricks_host,
+  ]
 }
 
 output "container_nsg_association_id" {
   description = "ID of the NSG association on the Databricks container subnet, required by the workspace."
   value       = azurerm_subnet_network_security_group_association.databricks_container.id
+
+  # Same as host_nsg_association_id, for the container subnet.
+  depends_on = [
+    azurerm_subnet_nat_gateway_association.databricks_container,
+    azurerm_subnet_route_table_association.databricks_container,
+  ]
 }
 
 output "nat_gateway_id" {

@@ -339,4 +339,17 @@ resource "azapi_resource" "hub_to_spoke_peering" {
       useRemoteGateways         = false
     }
   }
+
+  # azapi takes no provider locks, so the hub side waits until every subnet change on the spoke VNet it peers with has finished.
+  depends_on = [
+    azurerm_subnet_network_security_group_association.databricks_host,
+    azurerm_subnet_network_security_group_association.databricks_container,
+    azurerm_subnet_network_security_group_association.proxy,
+    azurerm_subnet_nat_gateway_association.databricks_host,
+    azurerm_subnet_nat_gateway_association.databricks_container,
+    azurerm_subnet_route_table_association.databricks_host,
+    azurerm_subnet_route_table_association.databricks_container,
+    azurerm_subnet_route_table_association.proxy,
+    azurerm_subnet_route_table_association.private_endpoints,
+  ]
 }

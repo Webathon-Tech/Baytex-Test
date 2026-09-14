@@ -201,6 +201,7 @@ resource "azurerm_monitor_action_group" "this" {
 }
 
 # Every diagnostic setting below exists only when enable_diagnostics is true, and all of them send to the Log Analytics workspace above.
+# Each one also waits for the modules still changing its target, because diagnostic settings take no provider lock and would otherwise be written while the target is being updated.
 
 # Databricks workspace: all log categories.
 resource "azurerm_monitor_diagnostic_setting" "workspace" {
@@ -213,6 +214,8 @@ resource "azurerm_monitor_diagnostic_setting" "workspace" {
   enabled_log {
     category_group = "allLogs"
   }
+
+  depends_on = [module.ncc]
 }
 
 # Data storage account and its blob service: every log category and metric Azure reports for each, discovered at plan time.
@@ -246,6 +249,8 @@ resource "azurerm_monitor_diagnostic_setting" "data_storage" {
       category = enabled_metric.value
     }
   }
+
+  depends_on = [module.data_foundation, module.ncc]
 }
 
 # log_analytics_destination_type is not set.
@@ -270,6 +275,8 @@ resource "azurerm_monitor_diagnostic_setting" "data_storage_blob" {
       category = enabled_metric.value
     }
   }
+
+  depends_on = [module.data_foundation, module.ncc]
 }
 
 # Internal load balancer and NAT Gateway: platform metrics.
@@ -283,6 +290,8 @@ resource "azurerm_monitor_diagnostic_setting" "load_balancer" {
   enabled_metric {
     category = "AllMetrics"
   }
+
+  depends_on = [module.haproxy]
 }
 
 resource "azurerm_monitor_diagnostic_setting" "nat_gateway" {
@@ -295,4 +304,6 @@ resource "azurerm_monitor_diagnostic_setting" "nat_gateway" {
   enabled_metric {
     category = "AllMetrics"
   }
+
+  depends_on = [module.network]
 }
