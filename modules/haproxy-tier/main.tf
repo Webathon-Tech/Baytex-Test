@@ -255,8 +255,10 @@ resource "azurerm_private_link_service" "endpoint" {
   name                = "pls-${var.name_prefix}-${each.key}"
   location            = var.location
   resource_group_name = var.resource_group_name
+  # The frontend's resource ID is composed from the load balancer ID rather than read back from its frontend_ip_configuration attribute.
+  # Azure reports that attribute as computed, so while a destination is being added or renamed it still holds the previous set and no frontend would match the new name.
   load_balancer_frontend_ip_configuration_ids = [
-    one([for configuration in azurerm_lb.this.frontend_ip_configuration : configuration.id if configuration.name == "fe-${each.key}"])
+    "${azurerm_lb.this.id}/frontendIPConfigurations/fe-${each.key}"
   ]
   visibility_subscription_ids    = var.allow_all_subscriptions_visibility ? [] : var.visibility_subscription_ids
   auto_approval_subscription_ids = var.auto_approval_subscription_ids
