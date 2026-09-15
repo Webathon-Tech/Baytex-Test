@@ -182,9 +182,9 @@ on_prem_endpoints = {
 # ----------------------------------------------------------------------------------------------------------------------
 
 # Auto-approval subscriptions must also be in the visibility list, and all-subscription visibility cannot be combined with auto-approval.
-allow_all_subscriptions_pls_visibility = false
-pls_visibility_subscription_ids        = ["6a3bb170-5159-4bff-860b-aa74fb762697"]
-pls_auto_approval_subscription_ids     = ["6a3bb170-5159-4bff-860b-aa74fb762697"]
+allow_all_subscriptions_pls_visibility = true
+pls_visibility_subscription_ids        = []
+pls_auto_approval_subscription_ids     = []
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Databricks workspace

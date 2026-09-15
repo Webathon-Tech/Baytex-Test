@@ -71,12 +71,12 @@ output "databricks_workspace_url" {
 }
 
 output "root_access_connector_id" {
-  description = "Resource ID of the root Access Connector, or null when the default storage firewall is off."
+  description = "Resource ID of the root Access Connector. It is attached to the workspace only while the default storage firewall is on."
   value       = module.databricks_workspace.root_access_connector_id
 }
 
 output "root_access_connector_principal_id" {
-  description = "Principal ID of the root Access Connector, or null when the default storage firewall is off."
+  description = "Principal ID of the root Access Connector's managed identity."
   value       = module.databricks_workspace.root_access_connector_principal_id
 }
 

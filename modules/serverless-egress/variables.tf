@@ -7,6 +7,16 @@ variable "workspace_id" {
   type        = number
 }
 
+variable "network_policy_id" {
+  description = "Identifier of the network policy, unique within the Databricks account. It is chosen rather than generated, so the policy keeps the same identifier when it is recreated."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$", var.network_policy_id))
+    error_message = "network_policy_id must be 3 to 64 characters of lowercase letters, digits and hyphens, starting and ending with a letter or digit."
+  }
+}
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Egress policy
 # ----------------------------------------------------------------------------------------------------------------------

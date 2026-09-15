@@ -160,6 +160,17 @@ variable "databricks_nsg_rules" {
     condition     = alltrue([for rule in values(var.databricks_nsg_rules) : (rule.destination_address_prefix != null) != (rule.destination_address_prefixes != null)])
     error_message = "Every databricks_nsg_rules entry must set exactly one of destination_address_prefix and destination_address_prefixes."
   }
+
+  # Azure accepts "*" only in the singular parameter, which this module uses whenever a list holds a single entry.
+  validation {
+    condition = alltrue(flatten([
+      for rule in values(var.databricks_nsg_rules) : [
+        for list in [rule.source_port_ranges, rule.destination_port_ranges, rule.source_address_prefixes, rule.destination_address_prefixes] :
+        list == null || length(list) < 2 || !contains(list, "*")
+      ]
+    ]))
+    error_message = "A databricks_nsg_rules entry that lists two or more ports or address prefixes must not include \"*\", because Azure rejects it there. Use a single entry of \"*\" on its own instead."
+  }
 }
 
 variable "proxy_nsg_rules" {
@@ -202,6 +213,17 @@ variable "proxy_nsg_rules" {
   validation {
     condition     = alltrue([for rule in values(var.proxy_nsg_rules) : (rule.destination_address_prefix != null) != (rule.destination_address_prefixes != null)])
     error_message = "Every proxy_nsg_rules entry must set exactly one of destination_address_prefix and destination_address_prefixes."
+  }
+
+  # Azure accepts "*" only in the singular parameter, which this module uses whenever a list holds a single entry.
+  validation {
+    condition = alltrue(flatten([
+      for rule in values(var.proxy_nsg_rules) : [
+        for list in [rule.source_port_ranges, rule.destination_port_ranges, rule.source_address_prefixes, rule.destination_address_prefixes] :
+        list == null || length(list) < 2 || !contains(list, "*")
+      ]
+    ]))
+    error_message = "A proxy_nsg_rules entry that lists two or more ports or address prefixes must not include \"*\", because Azure rejects it there. Use a single entry of \"*\" on its own instead."
   }
 }
 

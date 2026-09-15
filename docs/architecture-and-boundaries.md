@@ -22,7 +22,7 @@ Environment spoke subscription (one per environment)
   Spoke VNet with Databricks, private endpoint and proxy subnets
   Azure Databricks workspace (Premium, VNet-injected)
   ADLS Gen2 data storage with a data Access Connector
-  Root Access Connector, when the default storage firewall is enabled
+  Root Access Connector, attached to the workspace when the default storage firewall is enabled
   Two-node HAProxy tier, internal load balancer and Private Link Services
   Network Connectivity Configuration (Databricks account level)
   Log Analytics and diagnostic settings
@@ -102,7 +102,7 @@ Resource names follow `<type>-<organization>-<workload>-<environment>-<purpose>-
 | Resource group | Contents |
 | --- | --- |
 | `network` | Spoke VNet, subnets, network security groups, NAT Gateway and its public IP, route tables, spoke-side peering |
-| `platform` | Azure Databricks workspace, root Access Connector when the default storage firewall is enabled |
+| `platform` | Azure Databricks workspace, root Access Connector |
 | `dbx-managed` | Created and managed by Azure Databricks: the workspace root storage account and classic compute resources |
 | `data` | Data storage account and containers, blob and dfs private endpoints, data Access Connector and its role assignments |
 | `connectivity` | HAProxy network interfaces, VMs and disks, internal load balancer, Private Link Services |
@@ -119,7 +119,7 @@ Private DNS records described below.
 | --- | --- | --- |
 | Deployment service principal, `app-bte-dbx-<env>-terraform-001` (one per environment) | Contributor, Storage Blob Data Contributor and Role Based Access Control Administrator on the environment subscription; Databricks account admin | Runs every pipeline through GitHub OIDC, with no client secret |
 | Data Access Connector | Storage Blob Data Contributor, Storage Account Contributor, Storage Queue Data Contributor and EventGrid EventSubscription Contributor on the data storage account | Backs the Unity Catalog storage credential and Auto Loader file events |
-| Root Access Connector | Granted by Azure Databricks on the root storage account | Accesses the workspace root storage when its firewall is enabled |
+| Root Access Connector | Granted by Azure Databricks on the root storage account while it is attached | Accesses the workspace root storage when its firewall is enabled |
 | HAProxy VMs | System-assigned managed identities with no role assignments | Available for agent onboarding |
 
 ## Hub-subscription integration
