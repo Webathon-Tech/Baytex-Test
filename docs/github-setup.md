@@ -46,7 +46,7 @@ REPO=<github-repository>
 ENVIRONMENT=dev                        # then test, then prod
 SUBSCRIPTION_ID=<subscription-id>      # this environment's subscription
 
-APP_NAME="sp-bte-dbx-${ENVIRONMENT}-github"
+APP_NAME="app-bte-dbx-${ENVIRONMENT}-terraform-001"
 
 # 1. App registration and service principal. No client secret is created.
 APP_ID=$(az ad app create --display-name "$APP_NAME" --query appId -o tsv)
@@ -65,7 +65,7 @@ done
 
 # 3. Roles at subscription scope. The table below explains each one.
 SCOPE="/subscriptions/${SUBSCRIPTION_ID}"
-for ROLE in "Contributor" "User Access Administrator" "Storage Blob Data Contributor"; do
+for ROLE in "Contributor" "Storage Blob Data Contributor" "Role Based Access Control Administrator"; do
   az role assignment create --assignee "$APP_ID" --role "$ROLE" --scope "$SCOPE"
 done
 
@@ -83,7 +83,7 @@ Duplicate federated credentials and role assignments are rejected rather than do
 
 | Item | Value |
 | --- | --- |
-| App registration | `sp-bte-dbx-<env>-github` |
+| App registration | `app-bte-dbx-<env>-terraform-001` |
 | Federated credential 1 | Subject `repo:<org>/<repo>:environment:<env>-plan` |
 | Federated credential 2 | Subject `repo:<org>/<repo>:environment:<env>-apply` |
 | Issuer | `https://token.actions.githubusercontent.com` |
@@ -108,10 +108,12 @@ be used by `prod-apply`, by another repository, or by a workflow that does not d
 | Role | Why it is needed |
 | --- | --- |
 | **Contributor** | Creates and manages the platform resources and registers the resource providers they need |
-| **User Access Administrator** | Assigns the data Access Connector its roles on the data storage account |
-| **Storage Blob Data Contributor** | Reads and writes the Terraform state; the backend authenticates with Microsoft Entra ID (`use_azuread_auth = true`), never with an account key |
+| **Storage Blob Data Contributor** | Maintains the storage account containers, and reads and writes the Terraform state; the backend authenticates with Microsoft Entra ID (`use_azuread_auth = true`), never with an account key |
+| **Role Based Access Control Administrator** | Assigns the data Access Connector its four roles on the data storage account |
 
-Owner can replace the first two roles. The split above is the least privilege that works.
+Owner can replace all three. The split above is the least privilege that works. Role Based Access Control Administrator
+grants only `Microsoft.Authorization/roleAssignments` write and delete, which is narrower than User Access
+Administrator.
 
 ### Optional roles in the hub subscription
 
@@ -144,7 +146,8 @@ effect.
 
 ### Databricks account console
 
-Each service principal must be added to the Databricks account **and granted the Account Admin role**. Without it, the
+Each service principal, `app-bte-dbx-<env>-terraform-001`, must be added to the Databricks account **and granted the
+Account Admin role**. Without it, the
 Network Connectivity Configuration API returns *"API disabled without account admin"* and the deploy fails.
 
 > Account console → **User management** → **Service principals** → add by Application ID → enable **Account admin**.

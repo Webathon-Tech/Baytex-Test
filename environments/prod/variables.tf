@@ -151,7 +151,7 @@ variable "vnet_cidr" {
 
   validation {
     condition     = can(regex("^([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$", var.vnet_cidr)) && can(cidrhost(var.vnet_cidr, 0))
-    error_message = "vnet_cidr must be an IPv4 CIDR, for example 10.40.96.0/20."
+    error_message = "vnet_cidr must be an IPv4 CIDR, for example 10.40.144.0/20."
   }
 }
 
@@ -247,21 +247,78 @@ variable "cisco_firewall_private_ip" {
   }
 }
 
-variable "on_prem_routes" {
-  description = "Prefixes the Databricks subnets send to the firewall, keyed by route name. The proxy and private endpoint subnets send all traffic to the firewall regardless of this map."
+variable "firewall_routes" {
+  description = "Prefixes the Databricks subnets send to the firewall, keyed by route name. One aggregate prefix normally covers every Azure spoke, so spoke-to-spoke traffic reaches the firewall without a route per spoke. The proxy and private endpoint subnets send all traffic to the firewall regardless of this map."
   type = map(object({
     address_prefix = string
   }))
 
   validation {
-    condition     = alltrue([for route in values(var.on_prem_routes) : can(regex("^([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$", route.address_prefix)) && can(cidrhost(route.address_prefix, 0))])
-    error_message = "Every on_prem_routes address_prefix must be an IPv4 CIDR."
+    condition     = length(var.firewall_routes) > 0
+    error_message = "firewall_routes must contain at least one prefix."
   }
 
   validation {
-    condition     = !contains([for route in values(var.on_prem_routes) : route.address_prefix], "0.0.0.0/0")
-    error_message = "on_prem_routes must not contain 0.0.0.0/0, because the Databricks subnets reach the internet through the NAT Gateway."
+    condition     = alltrue([for name in keys(var.firewall_routes) : can(regex("^[a-z0-9-]+$", name))])
+    error_message = "firewall_routes keys must contain only lowercase letters, digits and hyphens."
   }
+
+  validation {
+    condition     = alltrue([for route in values(var.firewall_routes) : can(regex("^([0-9]{1,3}[.]){3}[0-9]{1,3}/[0-9]{1,2}$", route.address_prefix)) && can(cidrhost(route.address_prefix, 0))])
+    error_message = "Every firewall_routes address_prefix must be an IPv4 CIDR."
+  }
+
+  validation {
+    condition     = length(distinct([for route in values(var.firewall_routes) : route.address_prefix])) == length(var.firewall_routes)
+    error_message = "Every firewall_routes address_prefix must be unique; Azure rejects a route table with the same prefix twice."
+  }
+
+  validation {
+    condition     = !contains([for route in values(var.firewall_routes) : route.address_prefix], "0.0.0.0/0")
+    error_message = "firewall_routes must not contain 0.0.0.0/0, because the Databricks subnets reach the internet through the NAT Gateway."
+  }
+}
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Network security group rules
+# Network security groups match addresses, CIDR ranges and service tags, never domain names.
+# A destination that is only known by name is allowed on the firewall, and for serverless compute in serverless_allowed_internet_destinations below.
+# ----------------------------------------------------------------------------------------------------------------------
+
+variable "databricks_nsg_rules" {
+  description = "Rules added to both Databricks subnet NSGs, keyed by rule name. Azure Databricks maintains its own rules on these NSGs, so these priorities start at 1000. Adding Allow rules alone records the approved destinations without restricting anything, because the Databricks subnets already reach the internet through the NAT Gateway; add a Deny rule at a higher priority number to restrict them."
+  type = map(object({
+    priority                     = number
+    direction                    = optional(string, "Outbound")
+    access                       = optional(string, "Allow")
+    protocol                     = optional(string, "Tcp")
+    source_address_prefix        = optional(string, "VirtualNetwork")
+    source_address_prefixes      = optional(list(string))
+    source_port_ranges           = optional(list(string), ["*"])
+    destination_address_prefix   = optional(string)
+    destination_address_prefixes = optional(list(string))
+    destination_port_ranges      = optional(list(string), ["443"])
+    description                  = string
+  }))
+  default = {}
+}
+
+variable "proxy_nsg_rules" {
+  description = "Rules added to the proxy NSG, keyed by rule name, alongside the health probe, Private Link Service and SSH rules the platform creates. Priorities start at 1000."
+  type = map(object({
+    priority                     = number
+    direction                    = optional(string, "Outbound")
+    access                       = optional(string, "Allow")
+    protocol                     = optional(string, "Tcp")
+    source_address_prefix        = optional(string, "VirtualNetwork")
+    source_address_prefixes      = optional(list(string))
+    source_port_ranges           = optional(list(string), ["*"])
+    destination_address_prefix   = optional(string)
+    destination_address_prefixes = optional(list(string))
+    destination_port_ranges      = optional(list(string), ["443"])
+    description                  = string
+  }))
+  default = {}
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -308,6 +365,41 @@ variable "dfs_private_dns_zone_ids" {
   validation {
     condition     = alltrue([for id in var.dfs_private_dns_zone_ids : can(regex("(?i)^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.Network/privateDnsZones/privatelink\\.dfs\\.core\\.windows\\.net$", id))])
     error_message = "Every dfs_private_dns_zone_ids entry must be the resource ID of a privatelink.dfs.core.windows.net Private DNS zone."
+  }
+}
+
+variable "blob_private_endpoint_ip" {
+  description = "Static private IP of the blob private endpoint. Setting it keeps the address stable when the environment is rebuilt, so the DNS records and firewall rules that point at it stay valid. Null lets Azure allocate one dynamically."
+  type        = string
+  default     = null
+
+  validation {
+    condition = var.blob_private_endpoint_ip == null || try(
+      can(regex("^([0-9]{1,3}[.]){3}[0-9]{1,3}$", var.blob_private_endpoint_ip)) &&
+      cidrhost("${var.blob_private_endpoint_ip}/${split("/", var.private_endpoint_subnet_cidr)[1]}", 0) == cidrhost(var.private_endpoint_subnet_cidr, 0) &&
+      !contains([for index in range(4) : cidrhost(var.private_endpoint_subnet_cidr, index)], var.blob_private_endpoint_ip),
+    false)
+    error_message = "blob_private_endpoint_ip must be an IPv4 address inside private_endpoint_subnet_cidr, above the four addresses Azure reserves at the start of every subnet."
+  }
+}
+
+variable "dfs_private_endpoint_ip" {
+  description = "Static private IP of the dfs private endpoint. Setting it keeps the address stable when the environment is rebuilt, so the DNS records and firewall rules that point at it stay valid. Null lets Azure allocate one dynamically."
+  type        = string
+  default     = null
+
+  validation {
+    condition = var.dfs_private_endpoint_ip == null || try(
+      can(regex("^([0-9]{1,3}[.]){3}[0-9]{1,3}$", var.dfs_private_endpoint_ip)) &&
+      cidrhost("${var.dfs_private_endpoint_ip}/${split("/", var.private_endpoint_subnet_cidr)[1]}", 0) == cidrhost(var.private_endpoint_subnet_cidr, 0) &&
+      !contains([for index in range(4) : cidrhost(var.private_endpoint_subnet_cidr, index)], var.dfs_private_endpoint_ip),
+    false)
+    error_message = "dfs_private_endpoint_ip must be an IPv4 address inside private_endpoint_subnet_cidr, above the four addresses Azure reserves at the start of every subnet."
+  }
+
+  validation {
+    condition     = var.dfs_private_endpoint_ip == null || var.dfs_private_endpoint_ip != var.blob_private_endpoint_ip
+    error_message = "dfs_private_endpoint_ip must differ from blob_private_endpoint_ip."
   }
 }
 
@@ -476,6 +568,59 @@ variable "workspace_infrastructure_encryption_enabled" {
   description = "Enable a second layer of infrastructure encryption on the root storage account. Set when the workspace is created."
   type        = bool
   default     = true
+}
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Serverless egress
+# The Databricks network policy is the only place an outbound allow list can be expressed by domain name.
+# It covers serverless compute; classic compute leaves through the NAT Gateway and is governed by the route tables, the NSG rules and the firewall.
+# ----------------------------------------------------------------------------------------------------------------------
+
+variable "create_serverless_network_policy" {
+  description = "Create the Databricks network policy for this environment and attach it to the workspace. Leave it false to keep the account default policy."
+  type        = bool
+  default     = true
+}
+
+variable "serverless_egress_restriction_mode" {
+  description = "FULL_ACCESS lets serverless compute reach any internet destination. RESTRICTED_ACCESS limits it to serverless_allowed_internet_destinations."
+  type        = string
+  default     = "RESTRICTED_ACCESS"
+
+  validation {
+    condition     = contains(["FULL_ACCESS", "RESTRICTED_ACCESS"], var.serverless_egress_restriction_mode)
+    error_message = "serverless_egress_restriction_mode must be FULL_ACCESS or RESTRICTED_ACCESS."
+  }
+}
+
+variable "serverless_egress_enforcement_mode" {
+  description = "ENFORCED blocks destinations outside the allow list. DRY_RUN allows them and records them instead, so the list can be validated before it is enforced."
+  type        = string
+  default     = "ENFORCED"
+
+  validation {
+    condition     = contains(["ENFORCED", "DRY_RUN"], var.serverless_egress_enforcement_mode)
+    error_message = "serverless_egress_enforcement_mode must be ENFORCED or DRY_RUN."
+  }
+}
+
+variable "serverless_allowed_internet_destinations" {
+  description = "Domain names serverless compute may reach on the internet. The data storage account and the on-premises destinations are reached through the private endpoint rules of the Network Connectivity Configuration and need no entry here."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for destination in var.serverless_allowed_internet_destinations :
+      can(regex("^[a-z0-9.*-]+$", lower(destination))) && strcontains(destination, ".") && !strcontains(destination, "//")
+    ])
+    error_message = "Every serverless_allowed_internet_destinations entry must be a domain name such as api.example.com or *.example.com, with no scheme, port or path."
+  }
+
+  validation {
+    condition     = !var.create_serverless_network_policy || var.serverless_egress_restriction_mode == "FULL_ACCESS" || length(var.serverless_allowed_internet_destinations) > 0
+    error_message = "serverless_allowed_internet_destinations must list at least one domain name when serverless_egress_restriction_mode is RESTRICTED_ACCESS."
+  }
 }
 
 # ----------------------------------------------------------------------------------------------------------------------

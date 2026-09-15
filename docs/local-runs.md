@@ -23,9 +23,9 @@ Your Azure user needs the same access as the environment's deployment service pr
 
 | Scope | Role | Why |
 | --- | --- | --- |
-| Environment subscription | Contributor and User Access Administrator, or Owner | Creates the platform and assigns the managed identities their roles |
+| Environment subscription | Contributor and Role Based Access Control Administrator, or Owner | Creates the platform and assigns the managed identities their roles |
 | State storage account | Storage Blob Data Contributor | Reads and writes the state blob; the account has shared key access disabled, so Owner or Contributor alone cannot open it |
-| Databricks account console | Account admin | Required by the Network Connectivity Configuration API |
+| Databricks account console | Account admin | Required by the Network Connectivity Configuration and network policy APIs |
 | Hub VNet, only when a peering flag is `true` | Network Contributor | Creates the peering on the hub VNet and peers the spoke with it |
 | Hub Private DNS zones, only when zone IDs are set | Private DNS Zone Contributor | Registers the storage private endpoints in those zones |
 

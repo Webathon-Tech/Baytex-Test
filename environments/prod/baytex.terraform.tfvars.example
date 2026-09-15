@@ -3,7 +3,7 @@
 # Values follow the section order of variables.tf.
 #
 # Target subscription: SUB-BTE-CAN-DATA-PROD.
-# Open items: cost_centre is provisional, and the address plan awaits IPAM sign-off.
+# The spoke address space is pending assignment by Baytex networking.
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Subscription and Databricks account
@@ -46,12 +46,22 @@ additional_tags = {}
 # Spoke network
 # ----------------------------------------------------------------------------------------------------------------------
 
-# Each environment uses its own /20 from the Baytex Azure range.
-vnet_cidr                        = "10.40.144.0/20"
-databricks_host_subnet_cidr      = "10.40.144.0/24"
-databricks_container_subnet_cidr = "10.40.145.0/24"
-private_endpoint_subnet_cidr     = "10.40.146.0/26"
-proxy_subnet_cidr                = "10.40.147.0/26"
+# Baytex networking has not yet assigned the prod spoke address space, so every address in this file is a placeholder.
+# Once the /20 is assigned, fill them in following the layout used by dev:
+#   vnet_cidr                        the assigned /20
+#   databricks_host_subnet_cidr      the first /24 of that /20
+#   databricks_container_subnet_cidr the second /24
+#   private_endpoint_subnet_cidr     the first /26 of the third /24
+#   proxy_subnet_cidr                the first /26 of the fourth /24
+#   blob and dfs private endpoints   the fifth and sixth addresses of the private endpoint subnet
+#   proxy VMs                        the sixth and seventh addresses of the proxy subnet
+#   load balancer frontends          from the twelfth address of the proxy subnet upwards
+#   Private Link Service NAT IPs     from the twenty-second address of the proxy subnet upwards
+vnet_cidr                        = "PENDING"
+databricks_host_subnet_cidr      = "PENDING"
+databricks_container_subnet_cidr = "PENDING"
+private_endpoint_subnet_cidr     = "PENDING"
+proxy_subnet_cidr                = "PENDING"
 
 # Corporate DNS servers, in preference order, for the VNet and the HAProxy resolver.
 dns_servers = [
@@ -81,14 +91,95 @@ cisco_firewall_private_ip = "10.40.240.36"
 
 # Prefixes the Databricks subnets send to the firewall; the rest of their traffic leaves through the NAT Gateway.
 # The proxy and private endpoint subnets send all traffic to the firewall and need no entry here.
-on_prem_routes = {
-  azure_spokes = {
+#
+# azure-landing-zone is one aggregate covering every Baytex spoke in 10.40.0.0/16, so traffic to another spoke reaches the firewall without a route per spoke.
+# It covers the BI, hub, identity, infrastructure and OT spokes, this spoke, and the test and production Databricks spokes as they are added.
+# Azure selects the longest matching prefix, so this spoke's own /20 and the hub range learned from the peering stay more specific and are unaffected.
+firewall_routes = {
+  azure-landing-zone = {
     address_prefix = "10.40.0.0/16"
   }
-  baytex_onprem = {
+  baytex-onprem-172 = {
     address_prefix = "172.19.64.0/18"
   }
+  baytex-onprem-192 = {
+    address_prefix = "192.168.0.0/16"
+  }
+  trimble-vpn-host = {
+    address_prefix = "172.23.178.197/32"
+  }
 }
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Network security group rules
+# ----------------------------------------------------------------------------------------------------------------------
+
+# The approved outbound destinations for classic compute that can be expressed as a network security group rule.
+# Network security groups match addresses, CIDR ranges and service tags, never domain names, so the destinations that are only known by name are allowed on the firewall and, for serverless compute, in serverless_allowed_internet_destinations below.
+# These rules record the approved destinations. They do not restrict anything on their own, because the Databricks subnets already reach the internet through the NAT Gateway.
+# To restrict them, add a Deny rule with a higher priority number than every Allow rule, once every destination Databricks needs is covered.
+databricks_nsg_rules = {
+  Allow-Oplii-AzureSql = {
+    priority                   = 1000
+    destination_address_prefix = "Sql.CanadaCentral"
+    destination_port_ranges    = ["1433"]
+    description                = "Oplii, on baytex-bi.database.windows.net."
+  }
+  Allow-PowerBI = {
+    priority                   = 1010
+    destination_address_prefix = "PowerBI.CanadaCentral"
+    destination_port_ranges    = ["443"]
+    description                = "Power BI service."
+  }
+  Allow-PowerPlatform-Infra = {
+    priority                   = 1020
+    destination_address_prefix = "PowerPlatformInfra"
+    destination_port_ranges    = ["443"]
+    description                = "Power Platform infrastructure."
+  }
+  Allow-PowerPlatform-Plex = {
+    priority                   = 1030
+    destination_address_prefix = "PowerPlatformPlex"
+    destination_port_ranges    = ["443"]
+    description                = "Power Platform services."
+  }
+  Allow-DatabricksGenie-Teams = {
+    priority = 1040
+    destination_address_prefixes = [
+      "20.36.151.208/28",
+      "20.65.4.240/28",
+      "40.70.144.208/28",
+      "23.101.152.95/32",
+      "20.41.4.112/32",
+      "20.41.4.114/32",
+      "74.249.107.232/29",
+      "20.161.82.48/29",
+      "20.161.68.208/29",
+      "74.249.108.56/29",
+      "20.161.82.56/29",
+      "20.161.68.216/29",
+      "74.249.108.120/29",
+      "20.161.82.64/29",
+      "20.161.68.224/29",
+      "20.161.81.88/29",
+      "20.161.68.200/29",
+      "68.154.4.136/29"
+    ]
+    destination_port_ranges = ["443"]
+    description             = "Azure Databricks control plane in East US 2, published for the Genie app in Microsoft Teams."
+  }
+}
+
+# Rules added to the proxy NSG alongside the health probe, Private Link Service and SSH rules the platform creates. Example:
+#   proxy_nsg_rules = {
+#     Allow-Ubuntu-Mirrors = {
+#       priority                   = 1000
+#       destination_address_prefix = "Internet"
+#       destination_port_ranges    = ["80", "443"]
+#       description                = "Ubuntu package mirrors, reached through the firewall."
+#     }
+#   }
+proxy_nsg_rules = {}
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Data foundation
@@ -107,6 +198,11 @@ data_containers = ["managed", "external", "landing", "checkpoints"]
 blob_private_dns_zone_ids = []
 dfs_private_dns_zone_ids  = []
 
+# Static addresses for the two private endpoints, so a rebuilt environment keeps the addresses already published in DNS.
+# Both must be inside private_endpoint_subnet_cidr and above the four addresses Azure reserves at the start of every subnet.
+blob_private_endpoint_ip = "PENDING"
+dfs_private_endpoint_ip  = "PENDING"
+
 # ----------------------------------------------------------------------------------------------------------------------
 # HAProxy tier
 # ----------------------------------------------------------------------------------------------------------------------
@@ -121,8 +217,8 @@ ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIpC6AYv2TDM3+DFJJYLSy3hQZ
 # Both VM IPs must be inside proxy_subnet_cidr.
 proxy_vm_size = "Standard_D4s_v3"
 proxy_vm_private_ips = [
-  "10.40.147.5",
-  "10.40.147.6"
+  "PENDING",
+  "PENDING"
 ]
 
 # One load balancer frontend, Private Link Service and HAProxy listener per destination.
@@ -130,64 +226,64 @@ proxy_vm_private_ips = [
 # HAProxy resolves target_fqdn at run time through dns_servers; the trailing comments give each destination's confirmed IP address.
 on_prem_endpoints = {
   sqlbidb01yyc = {
-    frontend_ip = "10.40.147.11"
-    pls_nat_ip  = "10.40.147.21"
+    frontend_ip = "PENDING"
+    pls_nat_ip  = "PENDING"
     listen_port = 1433
     target_fqdn = "sqlbidb01yyc.baytexenergy.com" # 172.19.77.45
     target_port = 1433
     domain_name = "sqlbidb01yyc.baytexenergy.com"
   }
   sqlbidb01yyc_t = {
-    frontend_ip = "10.40.147.12"
-    pls_nat_ip  = "10.40.147.22"
+    frontend_ip = "PENDING"
+    pls_nat_ip  = "PENDING"
     listen_port = 1433
     target_fqdn = "sqlbidb01yyc-t.baytexenergy.com" # 172.19.96.44
     target_port = 1433
     domain_name = "sqlbidb01yyc-t.baytexenergy.com"
   }
   sql14yyc = {
-    frontend_ip = "10.40.147.13"
-    pls_nat_ip  = "10.40.147.23"
+    frontend_ip = "PENDING"
+    pls_nat_ip  = "PENDING"
     listen_port = 1433
     target_fqdn = "sql14yyc.baytexenergy.com" # 172.19.77.94
     target_port = 1433
     domain_name = "sql14yyc.baytexenergy.com"
   }
   sql6 = {
-    frontend_ip = "10.40.147.16"
-    pls_nat_ip  = "10.40.147.26"
+    frontend_ip = "PENDING"
+    pls_nat_ip  = "PENDING"
     listen_port = 1433
     target_fqdn = "sql6.baytexenergy.com" # 172.19.77.123
     target_port = 1433
     domain_name = "sql6.baytexenergy.com"
   }
   ora33yyc = {
-    frontend_ip = "10.40.147.14"
-    pls_nat_ip  = "10.40.147.24"
+    frontend_ip = "PENDING"
+    pls_nat_ip  = "PENDING"
     listen_port = 1521
     target_fqdn = "ora33yyc.baytexenergy.com" # 172.19.77.88
     target_port = 1521
     domain_name = "ora33yyc.baytexenergy.com"
   }
   ora33yyc_t = {
-    frontend_ip = "10.40.147.15"
-    pls_nat_ip  = "10.40.147.25"
+    frontend_ip = "PENDING"
+    pls_nat_ip  = "PENDING"
     listen_port = 1521
     target_fqdn = "ora33yyc-t.baytexenergy.com" # 172.19.96.112
     target_port = 1521
     domain_name = "ora33yyc-t.baytexenergy.com"
   }
   sql03yyc = {
-    frontend_ip = "10.40.147.17"
-    pls_nat_ip  = "10.40.147.27"
+    frontend_ip = "PENDING"
+    pls_nat_ip  = "PENDING"
     listen_port = 1433
     target_fqdn = "sql03yyc.baytexenergy.com" # address to be confirmed by Baytex
     target_port = 1433
     domain_name = "sql03yyc.baytexenergy.com"
   }
   trimble_sql = {
-    frontend_ip = "10.40.147.18"
-    pls_nat_ip  = "10.40.147.28"
+    frontend_ip = "PENDING"
+    pls_nat_ip  = "PENDING"
     listen_port = 1433
     target_fqdn = "btx-sql01.trimble.vpn" # 172.23.178.197, reached over the Trimble vendor VPN
     target_port = 1433
@@ -225,6 +321,38 @@ workspace_default_storage_firewall_enabled = false
 
 # Set only when the workspace is created.
 workspace_infrastructure_encryption_enabled = true
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Serverless egress
+# ----------------------------------------------------------------------------------------------------------------------
+
+# The Databricks network policy is the only place the approved outbound list can be expressed by domain name.
+# It applies to serverless compute. Classic compute leaves through the NAT Gateway and is governed by the route tables, the network security group rules and the firewall.
+create_serverless_network_policy = true
+
+# RESTRICTED_ACCESS limits serverless compute to the domain names below, and ENFORCED blocks everything else.
+# Set enforcement to DRY_RUN to record what would be blocked without blocking it while the list is being confirmed.
+serverless_egress_restriction_mode = "RESTRICTED_ACCESS"
+serverless_egress_enforcement_mode = "ENFORCED"
+
+# The approved outbound destinations, by domain name.
+# The policy matches the name only, so a destination on a non-standard port, such as Envirosoft on 8443, is listed once and the port is allowed on the firewall.
+# The data storage account and the on-premises SQL Server and Oracle destinations are reached through the private endpoint rules of the Network Connectivity Configuration and need no entry here.
+# Power BI, Power Platform and SharePoint are approved but have no domain name confirmed yet; add them here before serverless compute uses them.
+serverless_allowed_internet_destinations = [
+  "baytex.prodman.ca",
+  "platformv2api.peloton.com",
+  "baytex-bi.database.windows.net",
+  "api.ca.samsara.com",
+  "api.samsara.com",
+  "api.eu.samsara.com",
+  "baytex.whitson.com",
+  "whitson.eu.auth0.com",
+  "app1.envirosoft.com",
+  "apps.envirosoft.com",
+  "gdcdata1.geologic.com",
+  "api.alberta.ca"
+]
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Operations

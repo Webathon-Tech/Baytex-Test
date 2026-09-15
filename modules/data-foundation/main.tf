@@ -107,6 +107,10 @@ resource "azurerm_role_assignment" "access_connector_storage" {
 # When zone IDs are supplied, each endpoint gets a DNS zone group and Azure writes its A record into those Private DNS zones.
 # The zones can be in another subscription, such as the hub, as long as the deployment identity holds Private DNS Zone Contributor on each zone.
 # When the list is empty, no zone group is created and DNS records for the endpoint are managed outside Terraform.
+#
+# Each endpoint takes a static address when one is supplied, so a rebuilt environment keeps the addresses already published in DNS and allowed on the firewall.
+# Azure allocates the address dynamically when none is supplied.
+# The address is fixed when the endpoint is created: changing it replaces the endpoint.
 resource "azurerm_private_endpoint" "blob" {
   name                = "pe-${var.storage_account_name}-blob"
   location            = var.location
@@ -119,6 +123,16 @@ resource "azurerm_private_endpoint" "blob" {
     private_connection_resource_id = azurerm_storage_account.this.id
     subresource_names              = ["blob"]
     is_manual_connection           = false
+  }
+
+  dynamic "ip_configuration" {
+    for_each = var.blob_private_endpoint_ip == null ? [] : [var.blob_private_endpoint_ip]
+    content {
+      name               = "ipconfig-blob"
+      private_ip_address = ip_configuration.value
+      subresource_name   = "blob"
+      member_name        = "blob"
+    }
   }
 
   dynamic "private_dns_zone_group" {
@@ -142,6 +156,16 @@ resource "azurerm_private_endpoint" "dfs" {
     private_connection_resource_id = azurerm_storage_account.this.id
     subresource_names              = ["dfs"]
     is_manual_connection           = false
+  }
+
+  dynamic "ip_configuration" {
+    for_each = var.dfs_private_endpoint_ip == null ? [] : [var.dfs_private_endpoint_ip]
+    content {
+      name               = "ipconfig-dfs"
+      private_ip_address = ip_configuration.value
+      subresource_name   = "dfs"
+      member_name        = "dfs"
+    }
   }
 
   dynamic "private_dns_zone_group" {

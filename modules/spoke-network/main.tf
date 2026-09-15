@@ -100,6 +100,67 @@ resource "azurerm_network_security_rule" "proxy_ssh" {
   network_security_group_name = azurerm_network_security_group.proxy.name
 }
 
+# Rules from databricks_nsg_rules are added to both Databricks NSGs, and rules from proxy_nsg_rules to the proxy NSG.
+# Both maps are empty by default, and their priorities start at 1000 so the rules created above and the rules Azure Databricks maintains keep precedence.
+# A rule that sets destination_address_prefixes takes precedence over destination_address_prefix, because Azure accepts only one of the two.
+# Network security groups match addresses, CIDR ranges and service tags, never domain names. Destinations that are only known by name are allowed on the firewall or, for serverless compute, in the Databricks network policy.
+resource "azurerm_network_security_rule" "databricks_host" {
+  for_each = var.databricks_nsg_rules
+
+  name                         = each.key
+  description                  = each.value.description
+  priority                     = each.value.priority
+  direction                    = each.value.direction
+  access                       = each.value.access
+  protocol                     = each.value.protocol
+  source_port_ranges           = each.value.source_port_ranges
+  source_address_prefix        = each.value.source_address_prefixes == null ? each.value.source_address_prefix : null
+  source_address_prefixes      = each.value.source_address_prefixes
+  destination_port_ranges      = each.value.destination_port_ranges
+  destination_address_prefix   = each.value.destination_address_prefixes == null ? each.value.destination_address_prefix : null
+  destination_address_prefixes = each.value.destination_address_prefixes
+  resource_group_name          = var.resource_group_name
+  network_security_group_name  = azurerm_network_security_group.databricks_host.name
+}
+
+resource "azurerm_network_security_rule" "databricks_container" {
+  for_each = var.databricks_nsg_rules
+
+  name                         = each.key
+  description                  = each.value.description
+  priority                     = each.value.priority
+  direction                    = each.value.direction
+  access                       = each.value.access
+  protocol                     = each.value.protocol
+  source_port_ranges           = each.value.source_port_ranges
+  source_address_prefix        = each.value.source_address_prefixes == null ? each.value.source_address_prefix : null
+  source_address_prefixes      = each.value.source_address_prefixes
+  destination_port_ranges      = each.value.destination_port_ranges
+  destination_address_prefix   = each.value.destination_address_prefixes == null ? each.value.destination_address_prefix : null
+  destination_address_prefixes = each.value.destination_address_prefixes
+  resource_group_name          = var.resource_group_name
+  network_security_group_name  = azurerm_network_security_group.databricks_container.name
+}
+
+resource "azurerm_network_security_rule" "proxy_additional" {
+  for_each = var.proxy_nsg_rules
+
+  name                         = each.key
+  description                  = each.value.description
+  priority                     = each.value.priority
+  direction                    = each.value.direction
+  access                       = each.value.access
+  protocol                     = each.value.protocol
+  source_port_ranges           = each.value.source_port_ranges
+  source_address_prefix        = each.value.source_address_prefixes == null ? each.value.source_address_prefix : null
+  source_address_prefixes      = each.value.source_address_prefixes
+  destination_port_ranges      = each.value.destination_port_ranges
+  destination_address_prefix   = each.value.destination_address_prefixes == null ? each.value.destination_address_prefix : null
+  destination_address_prefixes = each.value.destination_address_prefixes
+  resource_group_name          = var.resource_group_name
+  network_security_group_name  = azurerm_network_security_group.proxy.name
+}
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Subnets
 # ----------------------------------------------------------------------------------------------------------------------
@@ -236,10 +297,14 @@ resource "azurerm_subnet_nat_gateway_association" "databricks_container" {
 # ----------------------------------------------------------------------------------------------------------------------
 
 # Two route tables separate the Databricks subnets from the rest of the spoke.
-# The databricks route table sends only the prefixes in on_prem_routes to the firewall, and everything else leaves through the NAT Gateway.
+# The databricks route table sends only the prefixes in firewall_routes to the firewall, and everything else leaves through the NAT Gateway.
 # Routing all Databricks traffic through the firewall would require every Databricks control-plane and artifact endpoint to be allowed on it.
 # The default route table sends all traffic, 0.0.0.0/0, to the firewall.
 # A 0.0.0.0/0 route to a virtual appliance takes precedence over a NAT Gateway, which is why the proxy subnet has none.
+#
+# firewall_routes normally carries one aggregate prefix covering every Azure spoke, so traffic to the other spokes reaches the firewall without a route per spoke.
+# Azure selects the longest matching prefix, so an aggregate never captures traffic that belongs to a more specific route.
+# The spoke's own address space and the hub address space learned from the peering are both more specific, so intra-VNet traffic stays local and the next hop itself stays reachable.
 resource "azurerm_route_table" "databricks" {
   name                          = "rt-${var.name_prefix}-databricks"
   location                      = var.location
@@ -248,8 +313,8 @@ resource "azurerm_route_table" "databricks" {
   tags                          = var.tags
 }
 
-resource "azurerm_route" "on_prem" {
-  for_each = var.on_prem_routes
+resource "azurerm_route" "firewall" {
+  for_each = var.firewall_routes
 
   name                   = "route-${each.key}"
   resource_group_name    = var.resource_group_name

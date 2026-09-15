@@ -61,3 +61,13 @@ output "dfs_private_endpoint_id" {
   description = "Resource ID of the dfs private endpoint."
   value       = azurerm_private_endpoint.dfs.id
 }
+
+output "blob_private_endpoint_ip" {
+  description = "Private IP address of the blob private endpoint."
+  value       = azurerm_private_endpoint.blob.private_service_connection[0].private_ip_address
+}
+
+output "dfs_private_endpoint_ip" {
+  description = "Private IP address of the dfs private endpoint."
+  value       = azurerm_private_endpoint.dfs.private_service_connection[0].private_ip_address
+}

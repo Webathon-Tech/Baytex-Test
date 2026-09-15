@@ -25,14 +25,24 @@ format. Proposed values in the example files are not approvals.
 - Databricks host and container subnet CIDRs
 - Private endpoint subnet CIDR
 - Proxy subnet CIDR
+- Static addresses for the blob and dfs private endpoints, inside the private endpoint subnet
 - Existing hub VNet resource ID
 - Which peering directions Terraform creates (`create_spoke_to_hub_peering`, `create_hub_to_spoke_peering`), with Network
   Contributor on the hub VNet for any Terraform-managed direction
 - Cisco firewall private IP
-- On-premises prefixes the Databricks subnets route to the firewall
+- The prefixes the Databricks subnets route to the firewall: the aggregate covering the other Azure spokes, the
+  on-premises ranges and any vendor VPN host
 - Corporate DNS servers
 - Blob and dfs Private DNS zone IDs with Private DNS Zone Contributor on those zones, or an approved manual DNS change
 - Owner and change reference for the on-premises return routes
+
+## Outbound destinations
+
+- The approved list of outbound destinations, by domain name, for serverless compute
+- Whether the serverless policy is enforced from the first apply or run in dry-run mode first
+- The destinations to record as network security group rules for classic compute, as addresses, CIDR ranges or service
+  tags
+- Whether classic compute egress is restricted by a Deny rule, and which destinations must be covered first
 
 ## On-premises destinations
 
