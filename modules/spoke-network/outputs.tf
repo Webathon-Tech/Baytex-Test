@@ -78,6 +78,21 @@ output "container_nsg_association_id" {
   ]
 }
 
+output "databricks_host_nsg_name" {
+  description = "Name of the NSG on the Databricks host subnet."
+  value       = azurerm_network_security_group.databricks_host.name
+}
+
+output "databricks_container_nsg_name" {
+  description = "Name of the NSG on the Databricks container subnet."
+  value       = azurerm_network_security_group.databricks_container.name
+}
+
+output "proxy_nsg_name" {
+  description = "Name of the NSG on the proxy subnet."
+  value       = azurerm_network_security_group.proxy.name
+}
+
 output "nat_gateway_id" {
   description = "Resource ID of the NAT Gateway."
   value       = azurerm_nat_gateway.this.id

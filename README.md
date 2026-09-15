@@ -10,9 +10,9 @@ GitHub Actions pipelines deploy every change from a reviewed plan, through an ap
 
 | Area | Delivered |
 | --- | --- |
-| **Networking** | A spoke VNet with Databricks host and container subnets, a private endpoint subnet and a proxy subnet; network security groups; a NAT Gateway for Databricks internet egress; two route tables that send on-premises traffic to the Cisco firewall; and optional VNet peering with the hub in either or both directions |
-| **Databricks** | A Premium Azure Databricks workspace with VNet injection and secure cluster connectivity, so classic compute has no public IP addresses; a Network Connectivity Configuration (NCC) bound to the workspace; and a root Access Connector when the default storage firewall is enabled |
-| **Data foundation** | An ADLS Gen2 storage account with hierarchical namespace, zone-redundant storage, no public network access and no shared keys; `managed`, `external`, `landing` and `checkpoints` containers; a data Access Connector with the roles Unity Catalog needs; and blob and dfs private endpoints, optionally registered in central Private DNS zones |
+| **Networking** | A spoke VNet with Databricks host and container subnets, a private endpoint subnet and a proxy subnet; network security groups with the environment's own rules; a NAT Gateway for Databricks internet egress; two route tables that send on-premises traffic and traffic to the other Azure spokes to the Cisco firewall; and optional VNet peering with the hub in either or both directions |
+| **Databricks** | A Premium Azure Databricks workspace with VNet injection and secure cluster connectivity, so classic compute has no public IP addresses; a Network Connectivity Configuration (NCC) bound to the workspace; a network policy that limits which internet destinations serverless compute may reach; and a root Access Connector when the default storage firewall is enabled |
+| **Data foundation** | An ADLS Gen2 storage account with hierarchical namespace, zone-redundant storage, no public network access and no shared keys; `managed`, `external`, `landing` and `checkpoints` containers; a data Access Connector with the roles Unity Catalog needs; and blob and dfs private endpoints at fixed addresses, optionally registered in central Private DNS zones |
 | **On-premises connectivity for serverless compute** | Two HAProxy VMs in separate availability zones behind an internal Standard Load Balancer, with one frontend and one Private Link Service per approved SQL Server or Oracle destination, reached from serverless compute through NCC private endpoint rules |
 | **Operations** | A Log Analytics workspace, diagnostic settings for the workspace, storage, load balancer and NAT Gateway, an optional alert action group, and Terraform outputs for the firewall and Unity Catalog handoffs |
 | **Terraform state** | A dedicated state storage account with versioning, soft delete and Microsoft Entra ID-only access |
@@ -40,7 +40,7 @@ GitHub Actions pipelines deploy every change from a reviewed plan, through an ap
   Environment spoke subscription         |
   +--------------------------------------+-----------------------------------+
   |  Databricks host and container subnets                                   |
-  |     - on-premises prefixes -> firewall                                   |
+  |     - on-premises and other Azure spokes -> firewall                     |
   |     - everything else      -> NAT Gateway -> internet and Databricks     |
   |  Private endpoint subnet: data storage (blob, dfs)                       |
   |  Proxy subnet: Private Link Services -> load balancer -> 2 x HAProxy     |
@@ -48,6 +48,7 @@ GitHub Actions pipelines deploy every change from a reviewed plan, through an ap
   +--------------------------------------^-----------------------------------+
                                          |  NCC private endpoints
                           Databricks serverless compute
+                          - internet egress limited by the account network policy
 ```
 
 Full design, traffic flows and resource inventory: [docs/architecture-and-boundaries.md](docs/architecture-and-boundaries.md).
@@ -63,7 +64,8 @@ Full design, traffic flows and resource inventory: [docs/architecture-and-bounda
 │   ├── data-foundation/                     # Data storage, data Access Connector, private endpoints
 │   ├── databricks-workspace/                # Workspace and root Access Connector
 │   ├── haproxy-tier/                        # HAProxy VMs, load balancer, Private Link Services
-│   └── ncc/                                 # Network Connectivity Configuration and private endpoint rules
+│   ├── ncc/                                 # Network Connectivity Configuration and private endpoint rules
+│   └── serverless-egress/                   # Databricks network policy for serverless internet egress
 ├── baytex-bi-owned-unity-catalog-example/   # Optional Unity Catalog reference with its own state
 ├── scripts/                                 # Operational PowerShell scripts
 ├── docs/                                    # Project documentation
@@ -123,34 +125,41 @@ Operator guide: [docs/workflows.md](docs/workflows.md). Planning or applying fro
 | Party | Owns |
 | --- | --- |
 | **AMTRA** | The platform foundation in this repository: networking, workspace, data foundation, connectivity tier, NCC, operations, Terraform state and pipelines |
-| **Baytex Infrastructure** | The hub VNet, Cisco firewall policy, VPN, on-premises routes, corporate DNS and Private DNS zones, and the hub-subscription roles that let Terraform manage peering or DNS registration |
+| **Baytex Infrastructure** | The hub VNet and the peering to each spoke, Cisco firewall policy, VPN, on-premises routes, corporate DNS, the Private DNS zones and their record sets, and connectivity testing from Databricks once the network changes are in place |
 | **Baytex BI** | Unity Catalog: metastore assignment, catalogs, schemas, storage credentials, external locations, workspace bindings, groups, grants, workloads and data |
 
 Existing Azure and Databricks resources are not imported, renamed, modified or destroyed. Two integrations with the hub
-subscription are optional — VNet peering and Private DNS registration — and each is enabled in `TFVARS` once Baytex
-grants the deployment service principal one role. Without them, Terraform makes no calls to the hub subscription.
+subscription can be managed by Terraform — VNet peering and Private DNS registration — and every environment is
+delivered with both switched off, so Baytex owns them and Terraform makes no calls to the hub subscription. Either can
+be moved to Terraform later by granting the deployment service principal one role and setting the values in `TFVARS`.
 
 ## Design principles
 
 1. **Built new, not cloned.** The existing production estate informs the design, but legacy proxy VMs, names,
    permissive rules and unrelated resources are not copied.
-2. **Two route tables.** The Databricks subnets send only approved on-premises prefixes to the firewall and reach the
-   internet through the NAT Gateway, so the firewall does not have to allow every Databricks endpoint. The proxy and
-   private endpoint subnets send all traffic to the firewall.
+2. **Two route tables.** The Databricks subnets send only approved prefixes to the firewall — the on-premises ranges and
+   one aggregate covering the other Azure spokes — and reach the internet through the NAT Gateway, so the firewall does
+   not have to allow every Databricks endpoint. The proxy and private endpoint subnets send all traffic to the firewall.
 3. **Private data paths.** The data storage account has no public network access; classic compute uses the spoke
-   private endpoints and serverless compute uses NCC private endpoints.
-4. **Public workspace front end, private compute.** Users, Power BI and GitHub reach the workspace front end, while
+   private endpoints and serverless compute uses NCC private endpoints. The spoke endpoints take fixed addresses, so
+   the DNS records and firewall rules that point at them survive a rebuild.
+4. **Outbound destinations enforced where they can be matched.** A network security group matches addresses, CIDR ranges
+   and service tags, never domain names, so the approved list is enforced for serverless compute in the Databricks
+   network policy, which matches by name, and for classic compute in the route tables, the network security group rules
+   and the firewall.
+5. **Public workspace front end, private compute.** Users, Power BI and GitHub reach the workspace front end, while
    classic compute has no public IP addresses.
-5. **Hub integration is opt-in.** Peering and Private DNS registration in the hub subscription are off by default, so an
-   identity with roles only in its own subscription deploys cleanly.
-6. **Fail-closed Private Link Service visibility.** Terraform refuses to create the Private Link Services until
+6. **Hub integration is opt-in.** Peering and Private DNS registration in the hub subscription are off in every
+   delivered environment, so an identity with roles only in its own subscription deploys cleanly and Baytex keeps
+   ownership of the hub.
+7. **Fail-closed Private Link Service visibility.** Terraform refuses to create the Private Link Services until
    explicit visibility subscriptions are provided or all-subscription visibility is deliberately enabled.
-7. **Configuration as code for HAProxy.** Both VMs use SSH-key authentication, Trusted Launch, platform patching and a
+8. **Configuration as code for HAProxy.** Both VMs use SSH-key authentication, Trusted Launch, platform patching and a
    cloud-init configuration rendered by Terraform.
-8. **One NCC per environment.** A workspace can bind to only one NCC, so every storage and on-premises rule for an
+9. **One NCC per environment.** A workspace can bind to only one NCC, so every storage and on-premises rule for an
    environment lives in one.
-9. **Unity Catalog stays with Baytex BI.** The platform outputs everything Baytex BI needs, and creates no Unity
-   Catalog objects itself.
+10. **Unity Catalog stays with Baytex BI.** The platform outputs everything Baytex BI needs, and creates no Unity
+    Catalog objects itself.
 
 ## Documentation
 

@@ -40,7 +40,13 @@ with a comment on what each value controls.
   twice
 - A VNet resource ID for `hub_vnet_id`, required whenever a peering flag is `true`
 - `privatelink.blob.core.windows.net` and `privatelink.dfs.core.windows.net` zone resource IDs for the DNS zone lists
-- No `0.0.0.0/0` in `on_prem_routes`
+- Static private endpoint addresses inside the private endpoint subnet, above the four addresses Azure reserves at the
+  start of every subnet, and different from each other
+- Unique IPv4 prefixes in `firewall_routes`, at least one of them, and no `0.0.0.0/0`
+- Network security group rule names, priorities between 1000 and 4096, unique within a direction, a valid direction,
+  access and protocol, and exactly one form of destination address
+- Domain names without a scheme, port or path in `serverless_allowed_internet_destinations`, and at least one of them
+  whenever the serverless restriction mode is `RESTRICTED_ACCESS`
 - Storage account names, container names, SSH key format, email addresses and Log Analytics retention between 30 and
   730 days
 - Auto-approval subscriptions that are also in the visibility list
@@ -143,7 +149,37 @@ Inputs of `environments/<env>`, in the order of `variables.tf`. An input without
 | `create_spoke_to_hub_peering` | `false` | Create the spoke-side peering, from the spoke VNet to the hub VNet. When the hub is in another subscription, the deployment identity needs Network Contributor on the hub VNet. |
 | `create_hub_to_spoke_peering` | `false` | Create the hub-side peering, from the hub VNet to the spoke VNet, in the hub subscription. The deployment identity needs Network Contributor on the hub VNet. |
 | `cisco_firewall_private_ip` | required | Private IP of the hub firewall, used as the next hop by both route tables. |
-| `on_prem_routes` | required | Prefixes the Databricks subnets send to the firewall, keyed by route name. The proxy and private endpoint subnets send all traffic to the firewall regardless of this map. |
+| `firewall_routes` | required | Prefixes the Databricks subnets send to the firewall, keyed by route name. One aggregate prefix normally covers every Azure spoke, so spoke-to-spoke traffic reaches the firewall without a route per spoke. The proxy and private endpoint subnets send all traffic to the firewall regardless of this map. |
+
+### Network security group rules
+
+A network security group matches addresses, CIDR ranges and service tags, never domain names. A destination that is only
+known by name is allowed on the firewall, and for serverless compute in `serverless_allowed_internet_destinations`.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `databricks_nsg_rules` | `{}` | Rules added to both Databricks subnet NSGs, keyed by rule name. Azure Databricks maintains its own rules on these NSGs, so these priorities start at 1000. |
+| `proxy_nsg_rules` | `{}` | Rules added to the proxy NSG, keyed by rule name, alongside the health probe, Private Link Service and SSH rules the platform creates. |
+
+Each entry sets `priority` and `description`, and takes defaults for the rest:
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| `priority` | required | Between 1000 and 4096, unique within its direction |
+| `description` | required | Shown on the rule in Azure |
+| `direction` | `"Outbound"` | `Inbound` or `Outbound` |
+| `access` | `"Allow"` | `Allow` or `Deny` |
+| `protocol` | `"Tcp"` | `Tcp`, `Udp`, `Icmp`, `Esp`, `Ah` or `*` |
+| `source_address_prefix` | `"VirtualNetwork"` | An address, CIDR range or service tag |
+| `source_address_prefixes` | unset | A list of them, which replaces `source_address_prefix` |
+| `source_port_ranges` | `["*"]` | |
+| `destination_address_prefix` | unset | Exactly one destination form must be set |
+| `destination_address_prefixes` | unset | A list, which replaces `destination_address_prefix` |
+| `destination_port_ranges` | `["443"]` | |
+
+Allow rules record the approved destinations without restricting anything on their own, because the Databricks subnets
+already reach the internet through the NAT Gateway. Restricting them takes a Deny rule at a higher priority number than
+every Allow rule.
 
 ### Data foundation
 
@@ -153,6 +189,8 @@ Inputs of `environments/<env>`, in the order of `variables.tf`. An input without
 | `data_containers` | `["managed", "external", "landing", "checkpoints"]` | Containers created in the data storage account. |
 | `blob_private_dns_zone_ids` | `[]` | Resource IDs of `privatelink.blob.core.windows.net` zones the blob private endpoint registers in. Leave empty to create no DNS zone group. Zones in another subscription need Private DNS Zone Contributor for the deployment identity. |
 | `dfs_private_dns_zone_ids` | `[]` | Resource IDs of `privatelink.dfs.core.windows.net` zones the dfs private endpoint registers in. Leave empty to create no DNS zone group. Zones in another subscription need Private DNS Zone Contributor for the deployment identity. |
+| `blob_private_endpoint_ip` | `null` | Static private IP of the blob private endpoint. Setting it keeps the address stable when the environment is rebuilt, so the DNS records and firewall rules that point at it stay valid. |
+| `dfs_private_endpoint_ip` | `null` | Static private IP of the dfs private endpoint, on the same terms. |
 
 ### HAProxy tier
 
@@ -181,6 +219,22 @@ Inputs of `environments/<env>`, in the order of `variables.tf`. An input without
 | `workspace_default_storage_firewall_enabled` | `false` | Firewall the Databricks-managed root storage account. When `true`, the root Access Connector is created and attached to the workspace. |
 | `workspace_infrastructure_encryption_enabled` | `true` | Enable a second layer of infrastructure encryption on the root storage account. Set when the workspace is created. |
 
+### Serverless egress
+
+The Databricks network policy is the only place an outbound allow list can be expressed by domain name. It governs
+serverless compute; classic compute leaves through the NAT Gateway and is governed by the route tables, the network
+security group rules and the firewall.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `create_serverless_network_policy` | `true` | Create the network policy for this environment and attach it to the workspace. Leave it `false` to keep the account default policy. |
+| `serverless_egress_restriction_mode` | `"RESTRICTED_ACCESS"` | `FULL_ACCESS` lets serverless compute reach any internet destination. `RESTRICTED_ACCESS` limits it to the list below. |
+| `serverless_egress_enforcement_mode` | `"ENFORCED"` | `ENFORCED` blocks destinations outside the list. `DRY_RUN` allows them and records them instead, so the list can be validated before it is enforced. |
+| `serverless_allowed_internet_destinations` | `[]` | Domain names serverless compute may reach on the internet. The data storage account and the on-premises destinations are reached through the NCC private endpoint rules and need no entry. |
+
+The policy matches the domain name only, never a port or a path, so a destination on a non-standard port is listed once
+here and its port is allowed on the firewall.
+
 ### Operations
 
 | Variable | Default | Description |
@@ -197,6 +251,8 @@ Changing any of these after the first deploy replaces the resource that uses it,
   and subnets the workspace uses — the workspace is replaced
 - `on_prem_endpoints` and `dns_servers` — the HAProxy VMs are replaced, because their cloud-init configuration changes
 - `data_storage_account_name` — the data storage account is replaced
+- `blob_private_endpoint_ip` and `dfs_private_endpoint_ip` — the matching private endpoint is replaced, and it returns
+  with the new address
 
 ## Platform outputs
 
@@ -210,6 +266,7 @@ Changing any of these after the first deploy replaces the resource that uses it,
 | `spoke_to_hub_peering_id` | Resource ID of the spoke-side peering, or `null` when `create_spoke_to_hub_peering` is `false`. |
 | `hub_to_spoke_peering_id` | Resource ID of the hub-side peering, or `null` when `create_hub_to_spoke_peering` is `false`. |
 | `hub_side_peering_command` | Azure CLI command that creates the hub-side peering, or `null` when Terraform manages it or `hub_vnet_id` is not set. |
+| `network_security_group_names` | Names of the network security groups on the Databricks and proxy subnets. |
 
 ### Databricks workspace
 
@@ -237,7 +294,15 @@ Changing any of these after the first deploy replaces the resource that uses it,
 | `data_storage_account_name` | Name of the data storage account. |
 | `data_access_connector_id` | Resource ID of the data Access Connector, used for the Unity Catalog storage credential. |
 | `data_access_connector_principal_id` | Principal ID of the data Access Connector. |
+| `data_private_endpoint_ips` | Private IP addresses of the blob and dfs private endpoints. |
 | `container_urls` | `abfss://` URL of each data container, keyed by container name. |
+
+### Serverless egress
+
+| Output | Description |
+| --- | --- |
+| `serverless_network_policy_id` | ID of the network policy attached to the workspace, or `null` when `create_serverless_network_policy` is `false`. |
+| `serverless_egress_allowed_destinations` | Domain names serverless compute may reach on the internet, or `null` when `create_serverless_network_policy` is `false`. |
 
 ### Handoffs
 

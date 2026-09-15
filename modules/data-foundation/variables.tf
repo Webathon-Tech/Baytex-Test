@@ -46,6 +46,18 @@ variable "private_endpoint_subnet_id" {
   type        = string
 }
 
+variable "blob_private_endpoint_ip" {
+  description = "Static private IP of the blob private endpoint, inside the private endpoint subnet. Null lets Azure allocate one dynamically."
+  type        = string
+  default     = null
+}
+
+variable "dfs_private_endpoint_ip" {
+  description = "Static private IP of the dfs private endpoint, inside the private endpoint subnet. Null lets Azure allocate one dynamically."
+  type        = string
+  default     = null
+}
+
 variable "blob_private_dns_zone_ids" {
   description = "Resource IDs of privatelink.blob.core.windows.net zones the blob private endpoint registers in. Empty creates no DNS zone group."
   type        = set(string)

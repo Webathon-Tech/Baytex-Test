@@ -40,15 +40,23 @@ Each environment uses its own non-overlapping address space, typically a `/20`, 
 | Private endpoints | `/26` | Blob and dfs private endpoints of the data storage account | `default` | Firewall |
 | Proxy | `/26` | HAProxy VMs, load balancer frontends and Private Link Service NAT IPs | `default` | Firewall |
 
-- **`databricks` route table** — sends only the prefixes in `on_prem_routes` to the firewall. Everything else, including
+- **`databricks` route table** — sends only the prefixes in `firewall_routes` to the firewall. Everything else, including
   the Databricks control plane and artefact repositories, leaves through the NAT Gateway, so the firewall does not have
   to allow every Databricks endpoint.
 - **`default` route table** — sends all traffic, `0.0.0.0/0`, to the firewall.
-- **Network security groups** — the host and container groups are maintained by Databricks. The proxy group allows the
-  load balancer health probe, Private Link Service traffic on each listener port and, optionally, SSH from approved
-  ranges.
+- **Network security groups** — the host and container groups are maintained by Databricks, and `databricks_nsg_rules`
+  adds the environment's own rules to both. The proxy group allows the load balancer health probe, Private Link Service
+  traffic on each listener port and, optionally, SSH from approved ranges, and takes any further rules from
+  `proxy_nsg_rules`.
 - **No implicit outbound access** — every subnet disables Azure's default outbound access, so traffic leaves only
   through the NAT Gateway or the firewall.
+
+### Reaching the other Azure spokes
+
+`firewall_routes` normally carries one aggregate prefix covering the whole Azure address range rather than a route per
+spoke, so a new spoke needs no change here. Azure selects the longest matching prefix, so the aggregate never captures
+traffic that belongs to a more specific route: the spoke's own address space stays local, and the hub range learned from
+the peering keeps the next hop reachable.
 
 ## Traffic flows
 
@@ -59,12 +67,31 @@ Each environment uses its own non-overlapping address space, typically a `/20`, 
 | Classic compute | Data storage | Private endpoints in the spoke private endpoint subnet |
 | Serverless compute | On-premises SQL Server and Oracle | NCC private endpoint → Private Link Service → internal load balancer → HAProxy → Cisco firewall → hub → VPN → destination |
 | Serverless compute | Data storage | NCC private endpoints on the storage account's blob and dfs endpoints |
+| Serverless compute | Approved internet destinations | Databricks serverless network, governed by the account network policy |
 | Users, Power BI, GitHub | Workspace front end | Public workspace URL, authenticated with Microsoft Entra ID |
 | HAProxy VMs | Ubuntu package mirrors | Proxy subnet → Cisco firewall → internet |
 
 HAProxy resolves each destination's fully qualified domain name through the corporate DNS servers at run time. The
 destinations therefore return traffic to the proxy subnet, whose address range Baytex adds to its on-premises return
 routes.
+
+## Controlling outbound destinations
+
+Approved outbound destinations are enforced in different places for the two kinds of compute, because the two leave the
+platform by different paths.
+
+| Compute | Leaves through | Enforced by | Matches on |
+| --- | --- | --- | --- |
+| Serverless | The Databricks serverless network | The account network policy, `serverless_allowed_internet_destinations` | Domain names |
+| Classic | The spoke subnets and the NAT Gateway | Route tables, `databricks_nsg_rules` and the Cisco firewall | Addresses, CIDR ranges and service tags |
+
+A network security group matches addresses, CIDR ranges and service tags; it has no way to match a domain name. A
+destination that is only known by name is therefore expressed for serverless compute in the network policy, and for
+classic compute either as a service tag, where Azure publishes one, or as a rule on the firewall.
+
+Allow rules in `databricks_nsg_rules` record the approved destinations without restricting anything on their own,
+because the Databricks subnets already reach the internet through the NAT Gateway. Restricting them takes a Deny rule
+at a higher priority number than every Allow rule, added once every destination Databricks itself needs is covered.
 
 ## Resources in each environment
 
@@ -83,14 +110,14 @@ Resource names follow `<type>-<organization>-<workload>-<environment>-<purpose>-
 | `tfstate` | Terraform state storage account, created by the bootstrap root |
 
 At the Databricks account level, each environment also has a Network Connectivity Configuration with its workspace
-binding and private endpoint rules. In the hub subscription, Terraform manages only the optional hub-side peering and
+binding and private endpoint rules, and a network policy attached to the workspace. In the hub subscription, Terraform manages only the optional hub-side peering and
 Private DNS records described below.
 
 ### Identities and access
 
 | Identity | Access | Purpose |
 | --- | --- | --- |
-| Deployment service principal (one per environment) | Contributor, User Access Administrator and Storage Blob Data Contributor on the environment subscription; Databricks account admin | Runs every pipeline through GitHub OIDC, with no client secret |
+| Deployment service principal, `app-bte-dbx-<env>-terraform-001` (one per environment) | Contributor, Storage Blob Data Contributor and Role Based Access Control Administrator on the environment subscription; Databricks account admin | Runs every pipeline through GitHub OIDC, with no client secret |
 | Data Access Connector | Storage Blob Data Contributor, Storage Account Contributor, Storage Queue Data Contributor and EventGrid EventSubscription Contributor on the data storage account | Backs the Unity Catalog storage credential and Auto Loader file events |
 | Root Access Connector | Granted by Azure Databricks on the root storage account | Accesses the workspace root storage when its firewall is enabled |
 | HAProxy VMs | System-assigned managed identities with no role assignments | Available for agent onboarding |
@@ -109,6 +136,11 @@ Terraform addresses the hub VNet and the zones by their full resource IDs, so th
 access to the hub subscription. With both peering flags `false` and both zone lists empty, Terraform makes no calls to
 the hub subscription at all. The grant commands are in [GitHub setup](github-setup.md#optional-roles-in-the-hub-subscription).
 
+Baytex owns both integrations, so every environment is configured with the peering flags `false` and the zone lists
+empty. Baytex creates the peering in both directions, creates the Private DNS zones and adds the record sets for the
+storage private endpoints. The storage private endpoints take static addresses from `blob_private_endpoint_ip` and
+`dfs_private_endpoint_ip`, so those records stay correct when an environment is rebuilt.
+
 ## Ownership
 
 ### AMTRA — platform foundation in this repository
@@ -117,7 +149,9 @@ the hub subscription at all. The grant commands are in [GitHub setup](github-set
 - VNet peering with the hub, for each direction enabled in `TFVARS`
 - Azure Databricks workspace and its Azure settings
 - ADLS Gen2 data foundation, Access Connectors and their Azure role assignments
-- Private endpoints in the spoke, and their Private DNS zone groups when zone IDs are supplied
+- Private endpoints in the spoke, at the static addresses configured for them, and their Private DNS zone groups when
+  zone IDs are supplied
+- The Databricks network policy that limits serverless internet egress, and its attachment to the workspace
 - HAProxy VMs, load balancer and Private Link Services
 - Databricks Network Connectivity Configuration and private endpoint rules
 - Log Analytics and platform diagnostics
@@ -125,10 +159,12 @@ the hub subscription at all. The grant commands are in [GitHub setup](github-set
 
 ### Baytex Infrastructure — shared network and governance
 
-- Existing hub VNet, and the hub-side peering when `create_hub_to_spoke_peering` is `false`
-- Cisco firewall policy and rules
+- Existing hub VNet, and the VNet peering between the hub and each spoke in both directions
+- The Private DNS zones and the record sets for the storage private endpoints
+- Cisco firewall policy and rules, including spoke traffic to on-premises resources and to the other spokes
 - VPN and on-premises connectivity, including return routes to each spoke
 - Corporate DNS and central Private DNS zones, including their VNet links
+- Connectivity testing from Databricks once the network changes are in place
 - Hub-subscription role assignments for the deployment service principals, when Terraform manages peering or DNS
   registration
 - Subscription governance, endpoint security and monitoring agent onboarding

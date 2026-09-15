@@ -90,8 +90,8 @@ variable "cisco_firewall_private_ip" {
   type        = string
 }
 
-variable "on_prem_routes" {
-  description = "Prefixes the Databricks subnets send to the firewall. The proxy and private endpoint subnets send all traffic to the firewall regardless of this map."
+variable "firewall_routes" {
+  description = "Prefixes the Databricks subnets send to the firewall, keyed by route name. The proxy and private endpoint subnets send all traffic to the firewall regardless of this map."
   type = map(object({
     address_prefix = string
   }))
@@ -113,6 +113,96 @@ variable "create_hub_to_spoke_peering" {
   description = "Create the hub-side peering, from the hub VNet to the spoke VNet, as a child resource of hub_vnet_id."
   type        = bool
   default     = false
+}
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Network security group rules
+# ----------------------------------------------------------------------------------------------------------------------
+
+variable "databricks_nsg_rules" {
+  description = "Rules added to both Databricks subnet NSGs, keyed by rule name. Azure Databricks maintains its own rules on these NSGs, so these priorities start at 1000."
+  type = map(object({
+    priority                     = number
+    direction                    = optional(string, "Outbound")
+    access                       = optional(string, "Allow")
+    protocol                     = optional(string, "Tcp")
+    source_address_prefix        = optional(string, "VirtualNetwork")
+    source_address_prefixes      = optional(list(string))
+    source_port_ranges           = optional(list(string), ["*"])
+    destination_address_prefix   = optional(string)
+    destination_address_prefixes = optional(list(string))
+    destination_port_ranges      = optional(list(string), ["443"])
+    description                  = string
+  }))
+  default = {}
+
+  validation {
+    condition     = alltrue([for name in keys(var.databricks_nsg_rules) : can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,78}[A-Za-z0-9_]$", name))])
+    error_message = "Every databricks_nsg_rules key must be a valid network security rule name of letters, digits, periods, underscores and hyphens."
+  }
+
+  validation {
+    condition     = alltrue([for rule in values(var.databricks_nsg_rules) : rule.priority >= 1000 && rule.priority <= 4096])
+    error_message = "Every databricks_nsg_rules priority must be between 1000 and 4096, so the rules Azure Databricks maintains on these NSGs keep precedence."
+  }
+
+  validation {
+    condition     = length(distinct([for rule in values(var.databricks_nsg_rules) : "${rule.direction}-${rule.priority}"])) == length(var.databricks_nsg_rules)
+    error_message = "Every databricks_nsg_rules priority must be unique within its direction."
+  }
+
+  validation {
+    condition     = alltrue([for rule in values(var.databricks_nsg_rules) : contains(["Inbound", "Outbound"], rule.direction) && contains(["Allow", "Deny"], rule.access) && contains(["Tcp", "Udp", "Icmp", "Esp", "Ah", "*"], rule.protocol)])
+    error_message = "Every databricks_nsg_rules entry must set direction to Inbound or Outbound, access to Allow or Deny, and protocol to Tcp, Udp, Icmp, Esp, Ah or *."
+  }
+
+  validation {
+    condition     = alltrue([for rule in values(var.databricks_nsg_rules) : (rule.destination_address_prefix != null) != (rule.destination_address_prefixes != null)])
+    error_message = "Every databricks_nsg_rules entry must set exactly one of destination_address_prefix and destination_address_prefixes."
+  }
+}
+
+variable "proxy_nsg_rules" {
+  description = "Rules added to the proxy NSG, keyed by rule name, alongside the health probe, Private Link Service and SSH rules this module creates. Priorities start at 1000."
+  type = map(object({
+    priority                     = number
+    direction                    = optional(string, "Outbound")
+    access                       = optional(string, "Allow")
+    protocol                     = optional(string, "Tcp")
+    source_address_prefix        = optional(string, "VirtualNetwork")
+    source_address_prefixes      = optional(list(string))
+    source_port_ranges           = optional(list(string), ["*"])
+    destination_address_prefix   = optional(string)
+    destination_address_prefixes = optional(list(string))
+    destination_port_ranges      = optional(list(string), ["443"])
+    description                  = string
+  }))
+  default = {}
+
+  validation {
+    condition     = alltrue([for name in keys(var.proxy_nsg_rules) : can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,78}[A-Za-z0-9_]$", name))])
+    error_message = "Every proxy_nsg_rules key must be a valid network security rule name of letters, digits, periods, underscores and hyphens."
+  }
+
+  validation {
+    condition     = alltrue([for rule in values(var.proxy_nsg_rules) : rule.priority >= 1000 && rule.priority <= 4096])
+    error_message = "Every proxy_nsg_rules priority must be between 1000 and 4096, so the rules this module creates keep precedence."
+  }
+
+  validation {
+    condition     = length(distinct([for rule in values(var.proxy_nsg_rules) : "${rule.direction}-${rule.priority}"])) == length(var.proxy_nsg_rules)
+    error_message = "Every proxy_nsg_rules priority must be unique within its direction."
+  }
+
+  validation {
+    condition     = alltrue([for rule in values(var.proxy_nsg_rules) : contains(["Inbound", "Outbound"], rule.direction) && contains(["Allow", "Deny"], rule.access) && contains(["Tcp", "Udp", "Icmp", "Esp", "Ah", "*"], rule.protocol)])
+    error_message = "Every proxy_nsg_rules entry must set direction to Inbound or Outbound, access to Allow or Deny, and protocol to Tcp, Udp, Icmp, Esp, Ah or *."
+  }
+
+  validation {
+    condition     = alltrue([for rule in values(var.proxy_nsg_rules) : (rule.destination_address_prefix != null) != (rule.destination_address_prefixes != null)])
+    error_message = "Every proxy_nsg_rules entry must set exactly one of destination_address_prefix and destination_address_prefixes."
+  }
 }
 
 # ----------------------------------------------------------------------------------------------------------------------

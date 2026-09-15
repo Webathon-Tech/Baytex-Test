@@ -42,6 +42,15 @@ output "hub_side_peering_command" {
   EOT
 }
 
+output "network_security_group_names" {
+  description = "Names of the network security groups on the Databricks and proxy subnets."
+  value = {
+    databricks_host      = module.network.databricks_host_nsg_name
+    databricks_container = module.network.databricks_container_nsg_name
+    proxy                = module.network.proxy_nsg_name
+  }
+}
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Databricks workspace
 # ----------------------------------------------------------------------------------------------------------------------
@@ -114,9 +123,31 @@ output "data_access_connector_principal_id" {
   value       = module.data_foundation.access_connector_principal_id
 }
 
+output "data_private_endpoint_ips" {
+  description = "Private IP addresses of the blob and dfs private endpoints of the data storage account."
+  value = {
+    blob = module.data_foundation.blob_private_endpoint_ip
+    dfs  = module.data_foundation.dfs_private_endpoint_ip
+  }
+}
+
 output "container_urls" {
   description = "abfss:// URL of each data container, keyed by container name."
   value       = module.data_foundation.container_urls
+}
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Serverless egress
+# ----------------------------------------------------------------------------------------------------------------------
+
+output "serverless_network_policy_id" {
+  description = "ID of the Databricks network policy attached to the workspace, or null when create_serverless_network_policy is false."
+  value       = one(module.serverless_egress[*].network_policy_id)
+}
+
+output "serverless_egress_allowed_destinations" {
+  description = "Domain names serverless compute may reach on the internet, or null when create_serverless_network_policy is false."
+  value       = one(module.serverless_egress[*].allowed_internet_destinations)
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -133,11 +164,15 @@ output "firewall_handoff" {
       databricks_container = var.databricks_container_subnet_cidr
       proxy                = var.proxy_subnet_cidr
     }
-    next_hop_ip    = var.cisco_firewall_private_ip
-    on_prem_routes = var.on_prem_routes
+    next_hop_ip     = var.cisco_firewall_private_ip
+    firewall_routes = var.firewall_routes
     default_route_subnets = {
       proxy             = var.proxy_subnet_cidr
       private_endpoints = var.private_endpoint_subnet_cidr
+    }
+    private_endpoint_ips = {
+      blob = module.data_foundation.blob_private_endpoint_ip
+      dfs  = module.data_foundation.dfs_private_endpoint_ip
     }
     destination_matrix    = local.endpoint_matrix
     required_return_route = var.vnet_cidr

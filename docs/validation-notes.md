@@ -39,6 +39,8 @@ apply log, outputs and state list.
 | Data storage | Blob and dfs access works privately from classic and serverless compute, and is refused from public networks |
 | NCC | The workspace is bound and every private endpoint rule is `ESTABLISHED` |
 | On-premises connectivity | Serverless and classic compute connect to every approved SQL Server and Oracle destination |
+| Spoke-to-spoke | Traffic from the Databricks subnets to another Azure spoke leaves through the firewall |
+| Serverless egress | Serverless compute reaches every approved internet destination and is refused everywhere else |
 | Resilience | Connections survive stopping HAProxy, and stopping each VM, in turn |
 | Pipelines | A deploy runs through GitHub OIDC with the approval gate and evidence bundle |
 | Monitoring | Diagnostic logs and metrics arrive in Log Analytics |

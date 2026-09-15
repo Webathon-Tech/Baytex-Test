@@ -6,9 +6,12 @@ to be completed once.
 ## Baytex approvals
 
 - [ ] Environment address space and subnet CIDRs approved by Baytex networking
+- [ ] Static addresses for the blob and dfs private endpoints agreed, and the DNS records planned against them
 - [ ] VNet peering ownership decided: Terraform-managed (both peering flags `true` and Network Contributor on the hub
       VNet granted) or Baytex-managed (change scheduled)
 - [ ] Cisco firewall source, destination and port matrix approved
+- [ ] Firewall rules for spoke-to-spoke traffic approved, covering the aggregate prefix in `firewall_routes`
+- [ ] Approved outbound destination list confirmed, and the serverless enforcement mode agreed
 - [ ] On-premises return routes to the environment's address space approved
 - [ ] Corporate DNS server list confirmed
 - [ ] Private DNS registration decided: zone IDs set with Private DNS Zone Contributor granted, or a manual DNS change
@@ -23,8 +26,8 @@ to be completed once.
 
 - [ ] Environment subscription available
 - [ ] Deployment service principal created with federated credentials for `<env>-plan` and `<env>-apply`
-- [ ] Service principal holds Contributor, User Access Administrator and Storage Blob Data Contributor on the
-      environment subscription
+- [ ] Service principal `app-bte-dbx-<env>-terraform-001` holds Contributor, Storage Blob Data Contributor and Role
+      Based Access Control Administrator on the environment subscription
 - [ ] Service principal holds the hub-subscription roles for every integration enabled in `TFVARS`
 - [ ] Service principal added to the Databricks account with the Account Admin role
 - [ ] GitHub Environments, variables and protection rules configured ([GitHub setup](github-setup.md))
@@ -47,6 +50,7 @@ to be completed once.
 - [ ] VNet peering `Connected` on both the spoke and hub VNets
 - [ ] Classic compute starts without public IP addresses
 - [ ] Serverless and classic compute reach every approved on-premises destination
+- [ ] Serverless compute reaches every approved internet destination, and is refused everywhere else
 - [ ] HAProxy service and VM failover tested in both directions
 - [ ] Private data storage access and Unity Catalog storage validation pass
 - [ ] Pipeline deployment and representative workload validation pass

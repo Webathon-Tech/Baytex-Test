@@ -67,7 +67,10 @@ module "network" {
   create_spoke_to_hub_peering = var.create_spoke_to_hub_peering
   create_hub_to_spoke_peering = var.create_hub_to_spoke_peering
   cisco_firewall_private_ip   = var.cisco_firewall_private_ip
-  on_prem_routes              = var.on_prem_routes
+  firewall_routes             = var.firewall_routes
+
+  databricks_nsg_rules = var.databricks_nsg_rules
+  proxy_nsg_rules      = var.proxy_nsg_rules
 
   admin_ssh_source_cidrs = var.admin_ssh_source_cidrs
   proxy_listener_ports   = local.listener_ports
@@ -92,6 +95,8 @@ module "data_foundation" {
   private_endpoint_subnet_id = module.network.private_endpoint_subnet_id
   blob_private_dns_zone_ids  = var.blob_private_dns_zone_ids
   dfs_private_dns_zone_ids   = var.dfs_private_dns_zone_ids
+  blob_private_endpoint_ip   = var.blob_private_endpoint_ip
+  dfs_private_endpoint_ip    = var.dfs_private_endpoint_ip
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -165,6 +170,26 @@ module "ncc" {
   workspace_id          = module.databricks_workspace.workspace_id
   storage_account_id    = module.data_foundation.storage_account_id
   private_link_services = local.private_link_services_for_ncc
+}
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Serverless egress
+# The Databricks network policy that limits which internet destinations serverless compute may reach, attached to this workspace.
+# ----------------------------------------------------------------------------------------------------------------------
+
+module "serverless_egress" {
+  source = "../../modules/serverless-egress"
+
+  count = var.create_serverless_network_policy ? 1 : 0
+
+  providers = {
+    databricks = databricks.account
+  }
+
+  workspace_id                  = module.databricks_workspace.workspace_id
+  restriction_mode              = var.serverless_egress_restriction_mode
+  enforcement_mode              = var.serverless_egress_enforcement_mode
+  allowed_internet_destinations = var.serverless_allowed_internet_destinations
 }
 
 # ----------------------------------------------------------------------------------------------------------------------

@@ -43,13 +43,17 @@ deleted.
 
 Before approving the first apply:
 
-- **VNet peering:** both peering flags are `true` and the service principal holds Network Contributor on the hub VNet,
-  or the hub-side peering change is approved and scheduled.
-- **Private DNS:** the zone IDs are set and the service principal holds Private DNS Zone Contributor on both zones, or
-  the DNS change for the storage private endpoints is approved and scheduled.
-- **Firewall:** the firewall objects and rules, including proxy subnet access to the Ubuntu package mirrors, are
-  approved and scheduled.
+- **VNet peering:** the Baytex change that creates the peering in both directions is approved and scheduled, or both
+  peering flags are `true` and the service principal holds Network Contributor on the hub VNet.
+- **Private DNS:** the Baytex change that creates the zones and the record sets for the storage private endpoints is
+  approved and scheduled against the static addresses in `TFVARS`, or the zone IDs are set and the service principal
+  holds Private DNS Zone Contributor on both zones.
+- **Firewall:** the firewall objects and rules are approved and scheduled, covering the on-premises destinations,
+  spoke-to-spoke traffic for the aggregate prefix in `firewall_routes`, and proxy subnet access to the Ubuntu package
+  mirrors.
 - **Routing:** the on-premises return routes to the environment's address space are approved and scheduled.
+- **Outbound destinations:** the approved list is in `serverless_allowed_internet_destinations`, and the enforcement
+  mode is the agreed one.
 
 ## Gate 4 — apply
 
@@ -66,14 +70,46 @@ Pending and serverless compute cannot use it until it is approved. After every d
 - two connections on the data storage account, one for blob and one for dfs
 
 Approve only connections whose private endpoint name matches an `endpoint_name` in the `ncc_private_endpoint_rules`
-output, and reject anything else. `scripts/Approve-BaytexDatabricksPrivateEndpoints.ps1` approves pending connections
-whose names match the list it is given and skips all others. Afterwards, confirm every rule in
-`ncc_private_endpoint_rules` reports `ESTABLISHED`.
+output, and reject anything else. `scripts/Approve-BaytexDatabricksPrivateEndpoints.ps1` does exactly that: it reads the
+targets and the expected endpoint names from the environment's outputs, approves the pending connections that match, and
+reports every other connection without touching it.
+
+Export the outputs once the apply has finished, then run the script:
+
+```powershell
+terraform -chdir=environments/dev output -json > dev-outputs.json
+./scripts/Approve-BaytexDatabricksPrivateEndpoints.ps1 -TerraformOutputPath dev-outputs.json
+```
+
+Add `-WhatIf` to see what it would approve without changing anything. When the outputs are read from a pipeline run
+instead, the same values can be passed directly:
+
+```powershell
+$parameters = @{
+    StorageAccountId            = '<data_storage_account_id>'
+    PrivateLinkServiceId        = '<private_link_service_ids values>'
+    ExpectedPrivateEndpointName = '<endpoint_name values from ncc_private_endpoint_rules>'
+}
+./scripts/Approve-BaytexDatabricksPrivateEndpoints.ps1 @parameters
+```
+
+Running it again is safe: connections approved by an earlier run are reported as already approved and left alone. The
+exit code says what happened.
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | Every expected connection is approved |
+| `2` | An expected connection is still pending |
+| `3` | An expected connection is missing, rejected or disconnected |
+
+Databricks can take a few minutes to create the endpoints after an apply, so an exit code of `3` shortly after a deploy
+usually clears on a second run. Afterwards, confirm every rule in `ncc_private_endpoint_rules` reports `ESTABLISHED`.
 
 ## Gate 6 — handoffs
 
 - Baytex Infrastructure completes the changes in [Firewall and DNS handoff](firewall-and-dns-handoff.md), using the
-  `firewall_handoff` output.
+  `firewall_handoff`, `data_private_endpoint_ips` and `private_link_service_ids` outputs. This covers the Private DNS
+  zones and record sets, the peering in both directions, the firewall rules and the connectivity tests.
 - Baytex BI attaches the workspace to the existing metastore and configures Unity Catalog, using the
   `unity_catalog_handoff` output and [Unity Catalog handoff](unity-catalog-handoff.md).
 
@@ -89,6 +125,8 @@ Work through the acceptance criteria in [Validation and acceptance](validation-n
 - Private access to the data storage account
 - NCC binding and every private endpoint rule established
 - Serverless and classic compute connectivity to each approved SQL Server and Oracle destination
+- Traffic from the Databricks subnets to another Azure spoke leaving through the firewall
+- Serverless compute reaching each approved internet destination, and being refused elsewhere
 - HAProxy failover in both directions
 - Pipeline runs through GitHub OIDC
 - Diagnostic logs arriving in Log Analytics
