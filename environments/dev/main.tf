@@ -186,6 +186,7 @@ module "serverless_egress" {
     databricks = databricks.account
   }
 
+  account_id                    = var.databricks_account_id
   network_policy_id             = local.names.network_policy
   workspace_id                  = module.databricks_workspace.workspace_id
   restriction_mode              = var.serverless_egress_restriction_mode

@@ -14,7 +14,10 @@
 #
 # The allow list holds domain names, because that is what the policy matches on.
 # Destinations that are only reachable by address, and destinations for classic compute, are allowed on the firewall and in the network security group rules instead.
+# The account is set rather than left for the provider to fill in.
+# It is a value the policy cannot be changed without replacing, and a policy that is still attached to a workspace cannot be deleted, so leaving it unset would make the allow list impossible to edit after the first apply.
 resource "databricks_account_network_policy" "this" {
+  account_id        = var.account_id
   network_policy_id = var.network_policy_id
 
   egress = {

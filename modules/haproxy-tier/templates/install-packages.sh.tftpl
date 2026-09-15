@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Retries until the package mirrors answer. --force-confold keeps the haproxy.cfg cloud-init has already written.
+# Azure's automatic guest patching runs its own apt-get assessment while the VM boots, and that holds the package lock for several minutes.
+# Both calls wait for the lock rather than failing, so the install starts as soon as the assessment releases it instead of colliding with it on every retry.
 export DEBIAN_FRONTEND=noninteractive
-until apt-get update && apt-get install -y -o Dpkg::Options::=--force-confold haproxy rsyslog netcat-openbsd; do
+until apt-get -o DPkg::Lock::Timeout=600 update && apt-get -o DPkg::Lock::Timeout=600 install -y -o Dpkg::Options::=--force-confold haproxy rsyslog netcat-openbsd; do
   echo "Package install failed; retrying in 60 seconds."
   sleep 60
 done
