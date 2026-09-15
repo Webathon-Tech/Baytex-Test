@@ -7,6 +7,11 @@ variable "workspace_id" {
   type        = number
 }
 
+variable "account_id" {
+  description = "Azure Databricks account that owns the network policy."
+  type        = string
+}
+
 variable "network_policy_id" {
   description = "Identifier of the network policy, unique within the Databricks account. It is chosen rather than generated, so the policy keeps the same identifier when it is recreated."
   type        = string
