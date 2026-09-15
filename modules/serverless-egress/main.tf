@@ -15,14 +15,17 @@
 # The allow list holds domain names, because that is what the policy matches on.
 # Destinations that are only reachable by address, and destinations for classic compute, are allowed on the firewall and in the network security group rules instead.
 resource "databricks_account_network_policy" "this" {
+  network_policy_id = var.network_policy_id
+
   egress = {
     network_access = {
       restriction_mode = var.restriction_mode
 
+      # DNS_NAME is the only destination type the policy supports; address ranges are not accepted here.
       allowed_internet_destinations = [
         for destination in sort(tolist(var.allowed_internet_destinations)) : {
           destination               = destination
-          internet_destination_type = "FQDN"
+          internet_destination_type = "DNS_NAME"
         }
       ]
 

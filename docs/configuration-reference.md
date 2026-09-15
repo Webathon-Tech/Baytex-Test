@@ -71,6 +71,7 @@ Names are composed from `organization`, `workload`, `environment`, `region_short
 | Databricks workspace | `dbw-<prefix>` | `dbw-bte-dbx-dev-cnc-001` |
 | Access Connectors | `ac-<org>-<workload>-<env>-root-<region>-<instance>`, `...-data-...` | `ac-bte-dbx-dev-data-cnc-001` |
 | Network Connectivity Configuration | `ncc-<prefix>` | `ncc-bte-dbx-dev-cnc-001` |
+| Databricks network policy | `np-<prefix>` | `np-bte-dbx-dev-cnc-001` |
 | HAProxy VMs | `vm-<prefix>-proxy-01`, `vm-<prefix>-proxy-02` | `vm-bte-dbx-dev-cnc-001-proxy-01` |
 | Load balancer | `lb-<prefix>-proxy` | `lb-bte-dbx-dev-cnc-001-proxy` |
 | Private Link Services | `pls-<prefix>-<destination>` | `pls-bte-dbx-dev-cnc-001-sql6` |
@@ -216,7 +217,7 @@ every Allow rule.
 | --- | --- | --- |
 | `workspace_root_storage_account_name` | required | Globally unique name of the root (DBFS) storage account Databricks creates in the managed resource group. Set when the workspace is created. |
 | `workspace_public_network_access_enabled` | `true` | Allow users, Power BI and GitHub to reach the workspace front end from public networks. Classic compute has no public IPs either way. |
-| `workspace_default_storage_firewall_enabled` | `false` | Firewall the Databricks-managed root storage account. When `true`, the root Access Connector is created and attached to the workspace. |
+| `workspace_default_storage_firewall_enabled` | `false` | Firewall the Databricks-managed root storage account. When `true`, the root Access Connector is attached to the workspace. The connector itself is created either way, because Azure refuses to delete a connector a workspace still refers to. |
 | `workspace_infrastructure_encryption_enabled` | `true` | Enable a second layer of infrastructure encryption on the root storage account. Set when the workspace is created. |
 
 ### Serverless egress
@@ -275,8 +276,8 @@ Changing any of these after the first deploy replaces the resource that uses it,
 | `databricks_workspace_arm_id` | Azure resource ID of the Databricks workspace. |
 | `databricks_workspace_id` | Numeric Databricks workspace ID. |
 | `databricks_workspace_url` | Workspace URL. |
-| `root_access_connector_id` | Resource ID of the root Access Connector, or `null` when the default storage firewall is off. |
-| `root_access_connector_principal_id` | Principal ID of the root Access Connector, or `null` when the default storage firewall is off. |
+| `root_access_connector_id` | Resource ID of the root Access Connector. It is attached to the workspace only while the default storage firewall is on. |
+| `root_access_connector_principal_id` | Principal ID of the root Access Connector's managed identity. |
 
 ### Serverless connectivity
 

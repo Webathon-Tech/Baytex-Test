@@ -6,6 +6,46 @@
 locals {
   # Listener ports are sorted so every proxy NSG rule keeps the same priority from one plan to the next.
   sorted_listener_ports = sort([for port in var.proxy_listener_ports : tostring(port)])
+
+  # Azure rejects "*" inside the plural port range and address prefix parameters, and reports a single-entry list back
+  # as the singular parameter, which would then show as a change on every later plan.
+  # Both rule maps are therefore normalised here: a single entry becomes the singular parameter, and only a list of two
+  # or more stays plural.
+  databricks_nsg_rules = {
+    for name, rule in var.databricks_nsg_rules : name => {
+      priority                     = rule.priority
+      direction                    = rule.direction
+      access                       = rule.access
+      protocol                     = rule.protocol
+      description                  = rule.description
+      source_port_range            = length(rule.source_port_ranges) == 1 ? rule.source_port_ranges[0] : null
+      source_port_ranges           = length(rule.source_port_ranges) == 1 ? null : rule.source_port_ranges
+      destination_port_range       = length(rule.destination_port_ranges) == 1 ? rule.destination_port_ranges[0] : null
+      destination_port_ranges      = length(rule.destination_port_ranges) == 1 ? null : rule.destination_port_ranges
+      source_address_prefix        = rule.source_address_prefixes == null ? rule.source_address_prefix : (length(rule.source_address_prefixes) == 1 ? rule.source_address_prefixes[0] : null)
+      source_address_prefixes      = rule.source_address_prefixes == null ? null : (length(rule.source_address_prefixes) == 1 ? null : rule.source_address_prefixes)
+      destination_address_prefix   = rule.destination_address_prefixes == null ? rule.destination_address_prefix : (length(rule.destination_address_prefixes) == 1 ? rule.destination_address_prefixes[0] : null)
+      destination_address_prefixes = rule.destination_address_prefixes == null ? null : (length(rule.destination_address_prefixes) == 1 ? null : rule.destination_address_prefixes)
+    }
+  }
+
+  proxy_nsg_rules = {
+    for name, rule in var.proxy_nsg_rules : name => {
+      priority                     = rule.priority
+      direction                    = rule.direction
+      access                       = rule.access
+      protocol                     = rule.protocol
+      description                  = rule.description
+      source_port_range            = length(rule.source_port_ranges) == 1 ? rule.source_port_ranges[0] : null
+      source_port_ranges           = length(rule.source_port_ranges) == 1 ? null : rule.source_port_ranges
+      destination_port_range       = length(rule.destination_port_ranges) == 1 ? rule.destination_port_ranges[0] : null
+      destination_port_ranges      = length(rule.destination_port_ranges) == 1 ? null : rule.destination_port_ranges
+      source_address_prefix        = rule.source_address_prefixes == null ? rule.source_address_prefix : (length(rule.source_address_prefixes) == 1 ? rule.source_address_prefixes[0] : null)
+      source_address_prefixes      = rule.source_address_prefixes == null ? null : (length(rule.source_address_prefixes) == 1 ? null : rule.source_address_prefixes)
+      destination_address_prefix   = rule.destination_address_prefixes == null ? rule.destination_address_prefix : (length(rule.destination_address_prefixes) == 1 ? rule.destination_address_prefixes[0] : null)
+      destination_address_prefixes = rule.destination_address_prefixes == null ? null : (length(rule.destination_address_prefixes) == 1 ? null : rule.destination_address_prefixes)
+    }
+  }
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -105,7 +145,7 @@ resource "azurerm_network_security_rule" "proxy_ssh" {
 # A rule that sets destination_address_prefixes takes precedence over destination_address_prefix, because Azure accepts only one of the two.
 # Network security groups match addresses, CIDR ranges and service tags, never domain names. Destinations that are only known by name are allowed on the firewall or, for serverless compute, in the Databricks network policy.
 resource "azurerm_network_security_rule" "databricks_host" {
-  for_each = var.databricks_nsg_rules
+  for_each = local.databricks_nsg_rules
 
   name                         = each.key
   description                  = each.value.description
@@ -113,18 +153,20 @@ resource "azurerm_network_security_rule" "databricks_host" {
   direction                    = each.value.direction
   access                       = each.value.access
   protocol                     = each.value.protocol
+  source_port_range            = each.value.source_port_range
   source_port_ranges           = each.value.source_port_ranges
-  source_address_prefix        = each.value.source_address_prefixes == null ? each.value.source_address_prefix : null
+  source_address_prefix        = each.value.source_address_prefix
   source_address_prefixes      = each.value.source_address_prefixes
+  destination_port_range       = each.value.destination_port_range
   destination_port_ranges      = each.value.destination_port_ranges
-  destination_address_prefix   = each.value.destination_address_prefixes == null ? each.value.destination_address_prefix : null
+  destination_address_prefix   = each.value.destination_address_prefix
   destination_address_prefixes = each.value.destination_address_prefixes
   resource_group_name          = var.resource_group_name
   network_security_group_name  = azurerm_network_security_group.databricks_host.name
 }
 
 resource "azurerm_network_security_rule" "databricks_container" {
-  for_each = var.databricks_nsg_rules
+  for_each = local.databricks_nsg_rules
 
   name                         = each.key
   description                  = each.value.description
@@ -132,18 +174,20 @@ resource "azurerm_network_security_rule" "databricks_container" {
   direction                    = each.value.direction
   access                       = each.value.access
   protocol                     = each.value.protocol
+  source_port_range            = each.value.source_port_range
   source_port_ranges           = each.value.source_port_ranges
-  source_address_prefix        = each.value.source_address_prefixes == null ? each.value.source_address_prefix : null
+  source_address_prefix        = each.value.source_address_prefix
   source_address_prefixes      = each.value.source_address_prefixes
+  destination_port_range       = each.value.destination_port_range
   destination_port_ranges      = each.value.destination_port_ranges
-  destination_address_prefix   = each.value.destination_address_prefixes == null ? each.value.destination_address_prefix : null
+  destination_address_prefix   = each.value.destination_address_prefix
   destination_address_prefixes = each.value.destination_address_prefixes
   resource_group_name          = var.resource_group_name
   network_security_group_name  = azurerm_network_security_group.databricks_container.name
 }
 
 resource "azurerm_network_security_rule" "proxy_additional" {
-  for_each = var.proxy_nsg_rules
+  for_each = local.proxy_nsg_rules
 
   name                         = each.key
   description                  = each.value.description
@@ -151,11 +195,13 @@ resource "azurerm_network_security_rule" "proxy_additional" {
   direction                    = each.value.direction
   access                       = each.value.access
   protocol                     = each.value.protocol
+  source_port_range            = each.value.source_port_range
   source_port_ranges           = each.value.source_port_ranges
-  source_address_prefix        = each.value.source_address_prefixes == null ? each.value.source_address_prefix : null
+  source_address_prefix        = each.value.source_address_prefix
   source_address_prefixes      = each.value.source_address_prefixes
+  destination_port_range       = each.value.destination_port_range
   destination_port_ranges      = each.value.destination_port_ranges
-  destination_address_prefix   = each.value.destination_address_prefixes == null ? each.value.destination_address_prefix : null
+  destination_address_prefix   = each.value.destination_address_prefix
   destination_address_prefixes = each.value.destination_address_prefixes
   resource_group_name          = var.resource_group_name
   network_security_group_name  = azurerm_network_security_group.proxy.name

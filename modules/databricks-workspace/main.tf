@@ -4,22 +4,24 @@
 # ----------------------------------------------------------------------------------------------------------------------
 
 locals {
-  # The provider sets default_storage_firewall_enabled and access_connector_id together.
-  # Both stay null while the firewall is off, which matches what Azure returns for a workspace without it, so plans show no change.
-  firewall_enabled    = var.default_storage_firewall_enabled ? true : null
-  access_connector_id = one(azurerm_databricks_access_connector.root[*].id)
+  # The provider requires default_storage_firewall_enabled and access_connector_id to be set together, so both are always sent.
+  # Sending the firewall setting on every apply is what lets it be switched off again: Azure keeps the workspace's current value for a field that is left out.
+  firewall_enabled    = var.default_storage_firewall_enabled
+  access_connector_id = azurerm_databricks_access_connector.root.id
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Root Access Connector
 # ----------------------------------------------------------------------------------------------------------------------
 
-# Managed identity for the workspace root (DBFS) storage account, created only when default_storage_firewall_enabled is true.
+# Managed identity for the workspace root (DBFS) storage account, attached to the workspace only when default_storage_firewall_enabled is true.
 # Once it is attached, Databricks exempts it from the managed resource group's deny assignment and grants its roles on the root storage account.
 # Terraform assigns no roles on that storage account, because the deny assignment blocks deleting role assignments there, which would prevent the environment from being destroyed.
+#
+# The connector exists for the life of the workspace rather than only while the firewall is on.
+# Azure refuses to delete a connector that a workspace still refers to, and the detach and the delete would otherwise be planned as one step, so turning the firewall off would fail and leave the environment half applied.
+# It holds no role assignments while it is unattached.
 resource "azurerm_databricks_access_connector" "root" {
-  count = var.default_storage_firewall_enabled ? 1 : 0
-
   name                = var.root_access_connector_name
   resource_group_name = var.resource_group_name
   location            = var.location
@@ -63,4 +65,14 @@ resource "azurerm_databricks_workspace" "this" {
     storage_account_name     = var.root_storage_account_name
     storage_account_sku_name = "Standard_GRS"
   }
+}
+
+# ----------------------------------------------------------------------------------------------------------------------
+# State addresses
+# ----------------------------------------------------------------------------------------------------------------------
+
+# State that holds the connector at an indexed address is carried over to the unindexed one, so the existing connector is kept rather than replaced.
+moved {
+  from = azurerm_databricks_access_connector.root[0]
+  to   = azurerm_databricks_access_connector.root
 }
