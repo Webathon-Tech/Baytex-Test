@@ -69,8 +69,9 @@ module "network" {
   cisco_firewall_private_ip   = var.cisco_firewall_private_ip
   firewall_routes             = var.firewall_routes
 
-  databricks_nsg_rules = var.databricks_nsg_rules
-  proxy_nsg_rules      = var.proxy_nsg_rules
+  databricks_nsg_rules          = var.databricks_nsg_rules
+  proxy_nsg_rules               = var.proxy_nsg_rules
+  proxy_deny_other_vnet_inbound = var.proxy_deny_other_vnet_inbound
 
   admin_ssh_source_cidrs = var.admin_ssh_source_cidrs
   proxy_listener_ports   = local.listener_ports
@@ -155,7 +156,7 @@ module "databricks_workspace" {
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Network Connectivity Configuration
-# Serverless private endpoint rules to the data storage account and to every Private Link Service.
+# Serverless private endpoint rules to the data storage account and to every Private Link Service, and the network policy that limits which internet destinations serverless compute may reach.
 # ----------------------------------------------------------------------------------------------------------------------
 
 module "ncc" {
@@ -170,28 +171,25 @@ module "ncc" {
   workspace_id          = module.databricks_workspace.workspace_id
   storage_account_id    = module.data_foundation.storage_account_id
   private_link_services = local.private_link_services_for_ncc
-}
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Serverless egress
-# The Databricks network policy that limits which internet destinations serverless compute may reach, attached to this workspace.
-# ----------------------------------------------------------------------------------------------------------------------
-
-module "serverless_egress" {
-  source = "../../modules/serverless-egress"
-
-  count = var.create_serverless_network_policy ? 1 : 0
-
-  providers = {
-    databricks = databricks.account
-  }
 
   account_id                    = var.databricks_account_id
+  create_network_policy         = var.create_serverless_network_policy
+  attach_network_policy         = var.attach_serverless_network_policy
   network_policy_id             = local.names.network_policy
-  workspace_id                  = module.databricks_workspace.workspace_id
-  restriction_mode              = var.serverless_egress_restriction_mode
-  enforcement_mode              = var.serverless_egress_enforcement_mode
+  egress_restriction_mode       = var.serverless_egress_restriction_mode
+  egress_enforcement_mode       = var.serverless_egress_enforcement_mode
   allowed_internet_destinations = var.serverless_allowed_internet_destinations
+}
+
+# The network policy and its workspace attachment used to live in a module of their own.
+moved {
+  from = module.serverless_egress[0].databricks_account_network_policy.this
+  to   = module.ncc.databricks_account_network_policy.this[0]
+}
+
+moved {
+  from = module.serverless_egress[0].databricks_workspace_network_option.this
+  to   = module.ncc.databricks_workspace_network_option.this
 }
 
 # ----------------------------------------------------------------------------------------------------------------------

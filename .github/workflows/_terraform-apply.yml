@@ -188,6 +188,19 @@ jobs:
             fi
             echo "Attempt $attempt did not finish; waiting for Databricks and Azure state to settle." | tee -a apply.log
             sleep 45
+
+            # Azure refuses to delete a Private Link Service that still has endpoint connections, and the private
+            # endpoints Databricks created for the NCC rules outlive the NCC itself. Retrying alone never clears them,
+            # so they are removed here before the next attempt re-plans.
+            for PLS_ID in $(terraform output -json private_link_service_ids 2>/dev/null | jq -r '.[]?'); do
+              PLS_RG=$(echo "$PLS_ID" | cut -d/ -f5)
+              PLS_NAME=$(echo "$PLS_ID" | cut -d/ -f9)
+              for CONNECTION in $(az network private-link-service show -g "$PLS_RG" -n "$PLS_NAME" --query "privateEndpointConnections[].name" -o tsv 2>/dev/null); do
+                echo "Removing endpoint connection $CONNECTION from $PLS_NAME." | tee -a apply.log
+                az network private-link-service connection delete -g "$PLS_RG" --service-name "$PLS_NAME" -n "$CONNECTION" -o none 2>/dev/null || true
+              done
+            done
+
             terraform plan -destroy -lock-timeout=10m -out=tfplan
           done
 

@@ -64,8 +64,7 @@ Full design, traffic flows and resource inventory: [docs/architecture-and-bounda
 │   ├── data-foundation/                     # Data storage, data Access Connector, private endpoints
 │   ├── databricks-workspace/                # Workspace and root Access Connector
 │   ├── haproxy-tier/                        # HAProxy VMs, load balancer, Private Link Services
-│   ├── ncc/                                 # Network Connectivity Configuration and private endpoint rules
-│   └── serverless-egress/                   # Databricks network policy for serverless internet egress
+│   └── ncc/                                 # Network Connectivity Configuration, private endpoint rules and the serverless egress policy
 ├── baytex-bi-owned-unity-catalog-example/   # Optional Unity Catalog reference with its own state
 ├── scripts/                                 # Operational PowerShell scripts
 ├── docs/                                    # Project documentation

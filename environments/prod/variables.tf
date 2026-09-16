@@ -303,8 +303,14 @@ variable "databricks_nsg_rules" {
   default = {}
 }
 
+variable "proxy_deny_other_vnet_inbound" {
+  description = "Close the proxy subnet to everything arriving from the virtual network that is not explicitly allowed. Azure's own default rule otherwise admits any address in the VNet, the hub and the networks reached through it, on every port. The load balancer health probe, Private Link Service traffic on the listener ports and any approved administrative SSH are allowed before it."
+  type        = bool
+  default     = true
+}
+
 variable "proxy_nsg_rules" {
-  description = "Rules added to the proxy NSG, keyed by rule name, alongside the health probe, Private Link Service and SSH rules the platform creates. Priorities start at 1000."
+  description = "Rules added to the proxy NSG, keyed by rule name, alongside the health probe, Private Link Service and SSH rules the platform creates. Priorities run from 1000 to 4095; 4096 is reserved for the rule that denies everything else from the virtual network."
   type = map(object({
     priority                     = number
     direction                    = optional(string, "Outbound")
@@ -578,6 +584,12 @@ variable "workspace_infrastructure_encryption_enabled" {
 
 variable "create_serverless_network_policy" {
   description = "Create the Databricks network policy for this environment and attach it to the workspace. Leave it false to keep the account default policy."
+  type        = bool
+  default     = true
+}
+
+variable "attach_serverless_network_policy" {
+  description = "Point the workspace at this environment's network policy. Set it to false, and apply, before removing the policy or destroying the environment: Azure Databricks refuses to delete a policy a running workspace still refers to."
   type        = bool
   default     = true
 }

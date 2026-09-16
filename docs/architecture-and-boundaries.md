@@ -46,8 +46,24 @@ Each environment uses its own non-overlapping address space, typically a `/20`, 
 - **`default` route table** — sends all traffic, `0.0.0.0/0`, to the firewall.
 - **Network security groups** — the host and container groups are maintained by Databricks, and `databricks_nsg_rules`
   adds the environment's own rules to both. The proxy group allows the load balancer health probe, Private Link Service
-  traffic on each listener port and, optionally, SSH from approved ranges, and takes any further rules from
-  `proxy_nsg_rules`.
+  traffic on each listener port and, optionally, SSH from approved ranges, takes any further rules from
+  `proxy_nsg_rules`, and then denies everything else arriving from the virtual network.
+
+### What a network security group can and cannot close
+
+Azure admits traffic from the `VirtualNetwork` tag by default, and that tag covers the spoke, the hub and every network
+reached through it. The platform closes that on the proxy subnet with a deny rule at the last available priority, so only
+the flows listed above reach the HAProxy VMs.
+
+The Databricks subnets are different. Azure Databricks maintains its own rule on them, at priority 100, that allows any
+traffic from the `VirtualNetwork` tag to any port, and a rule below priority 100 cannot be written. That rule is part of
+VNet injection and Databricks restores it if it is removed, so inbound traffic from the virtual network to the Databricks
+subnets cannot be restricted with a network security group. Those subnets are protected instead by having no inbound
+route from outside the spoke and by the firewall rules that govern what may reach them.
+
+The private endpoint subnet has no network security group. Private endpoint network policies are disabled on it, which is
+the documented Azure pattern for a subnet that holds only private endpoints, and a network security group would not be
+applied to the endpoints while they are disabled.
 - **No implicit outbound access** — every subnet disables Azure's default outbound access, so traffic leaves only
   through the NAT Gateway or the firewall.
 
@@ -110,7 +126,8 @@ Resource names follow `<type>-<organization>-<workload>-<environment>-<purpose>-
 | `tfstate` | Terraform state storage account, created by the bootstrap root |
 
 At the Databricks account level, each environment also has a Network Connectivity Configuration with its workspace
-binding and private endpoint rules, and a network policy attached to the workspace. In the hub subscription, Terraform manages only the optional hub-side peering and
+binding, its private endpoint rules and the network policy attached to the workspace. All of them are created by the
+`ncc` module, because they are account-level resources bound to the same workspace. In the hub subscription, Terraform manages only the optional hub-side peering and
 Private DNS records described below.
 
 ### Identities and access

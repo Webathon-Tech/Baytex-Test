@@ -207,6 +207,27 @@ resource "azurerm_network_security_rule" "proxy_additional" {
   network_security_group_name  = azurerm_network_security_group.proxy.name
 }
 
+# Azure's default rule admits anything from the VirtualNetwork tag, which covers the spoke, the hub and every network reached through it, on every port.
+# This rule closes that on the proxy subnet, leaving only what the rules above allow: the load balancer health probe, Private Link Service traffic on the listener ports and any approved administrative SSH.
+# It is the last priority a rule can take, so every rule above it, including anything added through proxy_nsg_rules, is evaluated first.
+# Outbound is deliberately untouched, because the proxy subnet sends all of its traffic to the firewall, which is where those destinations are controlled.
+resource "azurerm_network_security_rule" "proxy_deny_other_vnet_inbound" {
+  count = var.proxy_deny_other_vnet_inbound ? 1 : 0
+
+  name                        = "Deny-Other-VirtualNetwork-Inbound"
+  description                 = "Denies traffic from the virtual network that no rule above has allowed."
+  priority                    = 4096
+  direction                   = "Inbound"
+  access                      = "Deny"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*"
+  source_address_prefix       = "VirtualNetwork"
+  destination_address_prefix  = "*"
+  resource_group_name         = var.resource_group_name
+  network_security_group_name = azurerm_network_security_group.proxy.name
+}
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Subnets
 # ----------------------------------------------------------------------------------------------------------------------

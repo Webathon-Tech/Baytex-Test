@@ -108,7 +108,13 @@ databricks_nsg_rules = {
   }
 }
 
+# Azure's own default rule lets any address in the VNet, the hub and the networks reached through it open any port on
+# the HAProxy VMs. This closes that, leaving only the load balancer health probe, Private Link Service traffic on the
+# listener ports and any approved administrative SSH.
+proxy_deny_other_vnet_inbound = true
+
 # Rules added to the proxy NSG alongside the health probe, Private Link Service and SSH rules the platform creates.
+# Priorities run from 1000 to 4095; 4096 is taken by the rule that denies everything else from the virtual network.
 proxy_nsg_rules = {
   Allow-Ubuntu-Mirrors = {
     priority                   = 1000
@@ -209,6 +215,11 @@ workspace_infrastructure_encryption_enabled = true
 # The Databricks network policy is the only place an outbound allow list can be expressed by domain name.
 # It applies to serverless compute. Classic compute leaves through the NAT Gateway and is governed by the route tables, the network security group rules and the firewall.
 create_serverless_network_policy = true
+# Point the workspace at the policy above.
+# Set this to false, and apply, before removing the policy or destroying the environment: Azure Databricks refuses to
+# delete a policy a running workspace still refers to.
+attach_serverless_network_policy = true
+
 
 # RESTRICTED_ACCESS limits serverless compute to the domain names below, and ENFORCED blocks everything else.
 # Set enforcement to DRY_RUN to record what would be blocked without blocking it while the list is being confirmed.

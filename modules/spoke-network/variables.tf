@@ -196,8 +196,8 @@ variable "proxy_nsg_rules" {
   }
 
   validation {
-    condition     = alltrue([for rule in values(var.proxy_nsg_rules) : rule.priority >= 1000 && rule.priority <= 4096])
-    error_message = "Every proxy_nsg_rules priority must be between 1000 and 4096, so the rules this module creates keep precedence."
+    condition     = alltrue([for rule in values(var.proxy_nsg_rules) : rule.priority >= 1000 && rule.priority <= 4095])
+    error_message = "Every proxy_nsg_rules priority must be between 1000 and 4095. Priority 4096 is reserved for the rule that denies everything else arriving from the virtual network."
   }
 
   validation {
@@ -225,6 +225,12 @@ variable "proxy_nsg_rules" {
     ]))
     error_message = "A proxy_nsg_rules entry that lists two or more ports or address prefixes must not include \"*\", because Azure rejects it there. Use a single entry of \"*\" on its own instead."
   }
+}
+
+variable "proxy_deny_other_vnet_inbound" {
+  description = "Close the proxy subnet to everything arriving from the virtual network that is not explicitly allowed. Azure's own default rule otherwise admits any address in the VNet, the hub and the networks reached through it, on every port."
+  type        = bool
+  default     = true
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
