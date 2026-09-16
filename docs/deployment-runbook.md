@@ -128,7 +128,7 @@ Work through the acceptance criteria in [Validation and acceptance](validation-n
 - Traffic from the Databricks subnets to another Azure spoke leaving through the firewall
 - Serverless compute reaching each approved internet destination, and being refused elsewhere
 - HAProxy failover in both directions
-- HAProxy running on both VMs, with the health probe alert not raised
+- HAProxy running on every VM, with no platform alert raised
 - Pipeline runs through GitHub OIDC
 - Diagnostic logs arriving in Log Analytics
 

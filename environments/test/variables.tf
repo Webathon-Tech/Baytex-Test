@@ -435,7 +435,7 @@ variable "ssh_public_key" {
 }
 
 variable "proxy_vm_size" {
-  description = "Azure VM size of both HAProxy VMs."
+  description = "Azure VM size of every HAProxy VM."
   type        = string
   default     = "Standard_D4s_v6"
 
@@ -446,12 +446,12 @@ variable "proxy_vm_size" {
 }
 
 variable "proxy_vm_private_ips" {
-  description = "Static private IPs of the two HAProxy VMs, in zone 1 and zone 2 order. Both must be inside proxy_subnet_cidr."
+  description = "Static private IPs of the HAProxy VMs, two or three, in zone order: the first VM is placed in zone 1, the second in zone 2 and a third in zone 3. All must be inside proxy_subnet_cidr."
   type        = list(string)
 
   validation {
-    condition     = length(var.proxy_vm_private_ips) == 2 && length(distinct(var.proxy_vm_private_ips)) == 2
-    error_message = "Exactly two different HAProxy VM private IPs are required."
+    condition     = length(var.proxy_vm_private_ips) >= 2 && length(var.proxy_vm_private_ips) <= 3 && length(distinct(var.proxy_vm_private_ips)) == length(var.proxy_vm_private_ips)
+    error_message = "Two or three different HAProxy VM private IPs are required, one per availability zone."
   }
 
   validation {
@@ -651,7 +651,13 @@ variable "log_analytics_retention_days" {
 }
 
 variable "enable_diagnostics" {
-  description = "Send diagnostic logs and metrics from the workspace, data storage account, load balancer and NAT Gateway to Log Analytics, and create the HAProxy health probe alert."
+  description = "Send diagnostic logs and metrics from the workspace, data storage account, load balancer and NAT Gateway to Log Analytics."
+  type        = bool
+  default     = true
+}
+
+variable "enable_alerts" {
+  description = "Create the platform alerts on the HAProxy tier, NAT Gateway and data storage account. Each notifies the action group when alert_email_receivers creates one."
   type        = bool
   default     = true
 }

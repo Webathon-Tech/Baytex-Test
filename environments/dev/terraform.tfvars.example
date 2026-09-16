@@ -155,7 +155,7 @@ admin_ssh_source_cidrs = []
 
 ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMhki1LbqhnxgL8qjn0rcCIy6b/7NYAW6AT1D+6NvlNJ vkp-platform"
 
-# Both VM IPs must be inside proxy_subnet_cidr.
+# Two or three VM IPs, in zone order: zone 1, zone 2 and optionally zone 3. All must be inside proxy_subnet_cidr.
 proxy_vm_size = "Standard_D4s_v6"
 proxy_vm_private_ips = [
   "10.99.2.70",
@@ -239,6 +239,7 @@ serverless_allowed_internet_destinations = [
 
 log_analytics_retention_days = 30
 enable_diagnostics           = true
+enable_alerts                = true
 
 # Receiver name to email address. Empty creates no action group. Example:
 #   alert_email_receivers = { cloud_operations = "cloud-operations@example.com" }

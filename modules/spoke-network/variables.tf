@@ -247,3 +247,19 @@ variable "proxy_listener_ports" {
   description = "TCP ports the HAProxy listeners accept Private Link Service traffic on."
   type        = set(number)
 }
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Monitoring
+# ----------------------------------------------------------------------------------------------------------------------
+
+variable "enable_alerts" {
+  description = "Create the NAT Gateway datapath availability and failed SNAT connection alerts."
+  type        = bool
+  default     = false
+}
+
+variable "alert_action_group_ids" {
+  description = "Action groups the alerts notify. An empty list raises the alerts in Azure Monitor without notifying anyone."
+  type        = list(string)
+  default     = []
+}

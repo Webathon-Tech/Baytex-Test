@@ -97,6 +97,12 @@ the package mirrors are reachable, validates each new configuration with `haprox
 keeps the running configuration when a new one is rejected, so a change to the destinations or DNS servers updates the
 VMs in place.
 
+The tier is built to keep serving through the loss of a VM or an availability zone. The load balancer requests the
+HAProxy health frontend over HTTP every five seconds and takes a VM out of the pool after one failed probe. A third
+address in `proxy_vm_private_ips` adds a VM in the third zone, so two VMs keep serving while one zone is unavailable. A
+connection that reaches the load balancer idle timeout receives a TCP reset, and HAProxy sends TCP keepalives on both
+sides, so long-lived database sessions stay open through the load balancer, Private Link and firewall idle timers.
+
 ## Controlling outbound destinations
 
 Approved outbound destinations are enforced in different places for the two kinds of compute, because the two leave the
@@ -123,11 +129,11 @@ Resource names follow `<type>-<organization>-<workload>-<environment>-<purpose>-
 
 | Resource group | Contents |
 | --- | --- |
-| `network` | Spoke VNet, subnets, network security groups, NAT Gateway and its public IP, route tables, spoke-side peering |
+| `network` | Spoke VNet, subnets, network security groups, NAT Gateway and its public IP, route tables, spoke-side peering, NAT Gateway alerts |
 | `platform` | Azure Databricks workspace, root Access Connector |
 | `dbx-managed` | Created and managed by Azure Databricks: the workspace root storage account and classic compute resources |
-| `data` | Data storage account and containers, blob and dfs private endpoints, data Access Connector and its role assignments |
-| `connectivity` | HAProxy network interfaces, VMs and disks, internal load balancer, Private Link Services |
+| `data` | Data storage account and containers, blob and dfs private endpoints, data Access Connector and its role assignments, storage availability alert |
+| `connectivity` | HAProxy network interfaces, VMs and disks, internal load balancer, Private Link Services, load balancer and HAProxy VM alerts |
 | `ops` | Log Analytics workspace, alert action group when receivers are configured |
 | `tfstate` | Terraform state storage account, created by the bootstrap root |
 

@@ -63,6 +63,7 @@ For each SQL Server or Oracle destination:
 - HAProxy SSH public key
 - Approved SSH source CIDRs, or confirmation that administration uses `az vm run-command` only
 - HAProxy VM size
+- Number of HAProxy VMs: two, or three to keep two serving while one availability zone is unavailable
 - Log Analytics retention
 - Alert email receivers
 - Owner of Azure Monitor Agent, endpoint detection and Arctic Wolf onboarding for the HAProxy VMs
