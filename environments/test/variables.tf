@@ -651,7 +651,7 @@ variable "log_analytics_retention_days" {
 }
 
 variable "enable_diagnostics" {
-  description = "Send diagnostic logs and metrics from the workspace, data storage account, load balancer and NAT Gateway to Log Analytics."
+  description = "Send diagnostic logs and metrics from the workspace, data storage account, load balancer and NAT Gateway to Log Analytics, and create the HAProxy health probe alert."
   type        = bool
   default     = true
 }

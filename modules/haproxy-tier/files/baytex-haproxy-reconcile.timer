@@ -1,0 +1,16 @@
+# Installed by cloud-init from the haproxy-tier Terraform module.
+# Runs the reconcile shortly after every boot and every two minutes after that. The randomised delay keeps the two VMs
+# from reloading HAProxy at the same moment.
+
+[Unit]
+Description=Run the HAProxy reconcile at boot and every two minutes
+
+[Timer]
+OnBootSec=30s
+OnCalendar=*:0/2
+RandomizedDelaySec=30s
+AccuracySec=5s
+Unit=baytex-haproxy-reconcile.service
+
+[Install]
+WantedBy=timers.target

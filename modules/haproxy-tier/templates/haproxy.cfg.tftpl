@@ -1,4 +1,5 @@
-# HAProxy configuration, rendered by Terraform and written by cloud-init.
+# HAProxy configuration, rendered by Terraform and delivered to the VMs through their user data.
+# baytex-haproxy-reconcile applies it with a graceful reload once haproxy -c accepts it.
 # One TCP frontend and backend per on-premises destination, plus an HTTP health frontend on port 8404 for the load balancer probe.
 
 global
@@ -10,12 +11,6 @@ global
     user haproxy
     group haproxy
     daemon
-
-    ca-base /etc/ssl/certs
-    crt-base /etc/ssl/private
-
-    ssl-default-bind-ciphers PROFILE=SYSTEM
-    ssl-default-server-ciphers PROFILE=SYSTEM
 
 defaults
     log     global

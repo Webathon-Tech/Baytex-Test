@@ -42,8 +42,9 @@ apply log, outputs and state list.
 | Spoke-to-spoke | Traffic from the Databricks subnets to another Azure spoke leaves through the firewall |
 | Serverless egress | Serverless compute reaches every approved internet destination and is refused everywhere else |
 | Resilience | Connections survive stopping HAProxy, and stopping each VM, in turn |
+| Configuration changes | A change to `on_prem_endpoints` or `dns_servers` reaches both HAProxy VMs without replacing them |
 | Pipelines | A deploy runs through GitHub OIDC with the approval gate and evidence bundle |
-| Monitoring | Diagnostic logs and metrics arrive in Log Analytics |
+| Monitoring | Diagnostic logs and metrics arrive in Log Analytics, and the HAProxy health probe alert is not raised |
 | Unity Catalog | Baytex BI's storage credential, external locations and catalog work from the workspace |
 | Workload | A representative Baytex BI workload runs end to end |
 

@@ -140,7 +140,7 @@ Inputs of `environments/<env>`, in the order of `variables.tf`. An input without
 | `databricks_container_subnet_cidr` | required | Address prefix of the Databricks container (private) subnet. Must be inside `vnet_cidr`. |
 | `private_endpoint_subnet_cidr` | required | Address prefix of the private endpoint subnet. Must be inside `vnet_cidr`. |
 | `proxy_subnet_cidr` | required | Address prefix of the proxy subnet, which holds the HAProxy VMs, load balancer frontends and Private Link Service NAT IPs. Must be inside `vnet_cidr`. |
-| `dns_servers` | required | DNS servers, in preference order, assigned to the VNet and used by the HAProxy resolver. |
+| `dns_servers` | required | DNS servers, in preference order, assigned to the VNet and used by the HAProxy resolver. A change reaches the HAProxy VMs in place, within about two minutes of the apply. |
 
 ### Hub peering and routing
 
@@ -202,7 +202,7 @@ every Allow rule.
 | `ssh_public_key` | required | SSH public key for the `azureadmin` user on the HAProxy VMs. Password authentication is disabled. |
 | `proxy_vm_size` | `"Standard_D4s_v6"` | Azure VM size of both HAProxy VMs. |
 | `proxy_vm_private_ips` | required | Static private IPs of the two HAProxy VMs, in zone 1 and zone 2 order. Both must be inside `proxy_subnet_cidr`. |
-| `on_prem_endpoints` | required | On-premises destinations, keyed by a short name. Each gets a load balancer frontend on `frontend_ip`, a Private Link Service with its NAT IP on `pls_nat_ip`, and an HAProxy listener on `listen_port` that forwards to `target_fqdn:target_port`. `domain_name` is the name serverless compute uses to reach the destination. |
+| `on_prem_endpoints` | required | On-premises destinations, keyed by a short name. Each gets a load balancer frontend on `frontend_ip`, a Private Link Service with its NAT IP on `pls_nat_ip`, and an HAProxy listener on `listen_port` that forwards to `target_fqdn:target_port`. `domain_name` is the name serverless compute uses to reach the destination. A change reaches the HAProxy VMs in place, within about two minutes of the apply. |
 
 ### Private Link Service access
 
@@ -243,7 +243,7 @@ here and its port is allowed on the firewall.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `log_analytics_retention_days` | `90` | Retention period of the Log Analytics workspace, in days. |
-| `enable_diagnostics` | `true` | Send diagnostic logs and metrics from the workspace, data storage account, load balancer and NAT Gateway to Log Analytics. |
+| `enable_diagnostics` | `true` | Send diagnostic logs and metrics from the workspace, data storage account, load balancer and NAT Gateway to Log Analytics, and create the HAProxy health probe alert, which notifies the action group when one exists. |
 | `alert_email_receivers` | `{}` | Email receivers on the platform action group, as a map of receiver name to email address. An empty map creates no action group. |
 
 ### Settings fixed at creation
@@ -252,7 +252,6 @@ Changing any of these after the first deploy replaces the resource that uses it,
 
 - `workspace_root_storage_account_name` and `workspace_infrastructure_encryption_enabled`, and the naming inputs, VNet
   and subnets the workspace uses — the workspace is replaced
-- `on_prem_endpoints` and `dns_servers` — the HAProxy VMs are replaced, because their cloud-init configuration changes
 - `data_storage_account_name` — the data storage account is replaced
 - `blob_private_endpoint_ip` and `dfs_private_endpoint_ip` — the matching private endpoint is replaced, and it returns
   with the new address

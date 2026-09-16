@@ -125,6 +125,10 @@ module "haproxy" {
   allow_all_subscriptions_visibility = var.allow_all_subscriptions_pls_visibility
   visibility_subscription_ids        = var.pls_visibility_subscription_ids
   auto_approval_subscription_ids     = var.pls_auto_approval_subscription_ids
+
+  # The health probe alert follows the platform monitoring switch, and notifies the action group when one exists.
+  enable_health_probe_alert = var.enable_diagnostics
+  alert_action_group_ids    = azurerm_monitor_action_group.this[*].id
 }
 
 # ----------------------------------------------------------------------------------------------------------------------

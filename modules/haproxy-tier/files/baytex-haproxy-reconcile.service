@@ -1,0 +1,13 @@
+# Installed by cloud-init from the haproxy-tier Terraform module.
+# Started by baytex-haproxy-reconcile.timer. See /usr/local/sbin/baytex-haproxy-reconcile for what each run does.
+
+[Unit]
+Description=Reconcile HAProxy with the configuration published in the VM user data
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/baytex-haproxy-reconcile
+# A package installation through the firewall can take several minutes.
+TimeoutStartSec=30min

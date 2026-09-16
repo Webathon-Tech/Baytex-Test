@@ -153,8 +153,9 @@ be moved to Terraform later by granting the deployment service principal one rol
    ownership of the hub.
 7. **Fail-closed Private Link Service visibility.** Terraform refuses to create the Private Link Services until
    explicit visibility subscriptions are provided or all-subscription visibility is deliberately enabled.
-8. **Configuration as code for HAProxy.** Both VMs use SSH-key authentication, Trusted Launch, platform patching and a
-   cloud-init configuration rendered by Terraform.
+8. **Configuration as code for HAProxy.** Both VMs use SSH-key authentication, Trusted Launch and platform patching.
+   Terraform publishes the HAProxy configuration in the VMs' user data, and a reconcile service on each VM installs
+   HAProxy and applies every validated configuration with a graceful reload, so destination changes need no rebuild.
 9. **One NCC per environment.** A workspace can bind to only one NCC, so every storage and on-premises rule for an
    environment lives in one.
 10. **Unity Catalog stays with Baytex BI.** The platform outputs everything Baytex BI needs, and creates no Unity
