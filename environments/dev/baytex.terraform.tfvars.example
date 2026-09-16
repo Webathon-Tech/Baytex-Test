@@ -163,19 +163,19 @@ databricks_nsg_rules = {
 # Azure's own default rule lets any address in the VNet, the hub and the networks reached through it open any port on
 # the HAProxy VMs. This closes that, leaving only the load balancer health probe, Private Link Service traffic on the
 # listener ports and any approved administrative SSH.
-proxy_deny_other_vnet_inbound = true
+proxy_deny_other_vnet_inbound = false
 
 # Rules added to the proxy NSG alongside the health probe, Private Link Service and SSH rules the platform creates.
 # Priorities run from 1000 to 4095; 4096 is taken by the rule that denies everything else from the virtual network. Example:
-#   proxy_nsg_rules = {
-#     Allow-Ubuntu-Mirrors = {
-#       priority                   = 1000
-#       destination_address_prefix = "Internet"
-#       destination_port_ranges    = ["80", "443"]
-#       description                = "Ubuntu package mirrors, reached through the firewall."
-#     }
-#   }
-proxy_nsg_rules = {}
+   proxy_nsg_rules = {
+     Allow-Ubuntu-Mirrors = {
+       priority                   = 1000
+       destination_address_prefix = "Internet"
+       destination_port_ranges    = ["80", "443"]
+       description                = "Ubuntu package mirrors, reached through the firewall."
+     }
+   }
+# proxy_nsg_rules = {}
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Data foundation
@@ -334,7 +334,7 @@ attach_serverless_network_policy = true
 # RESTRICTED_ACCESS limits serverless compute to the domain names below, and ENFORCED blocks everything else.
 # Set enforcement to DRY_RUN to record what would be blocked without blocking it while the list is being confirmed.
 serverless_egress_restriction_mode = "RESTRICTED_ACCESS"
-serverless_egress_enforcement_mode = "ENFORCED"
+serverless_egress_enforcement_mode = "DRY_RUN"
 
 # The approved outbound destinations, by domain name.
 # The policy matches the name only, so a destination on a non-standard port, such as Envirosoft on 8443, is listed once and the port is allowed on the firewall.
