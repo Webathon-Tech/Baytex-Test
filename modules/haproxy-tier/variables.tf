@@ -93,3 +93,19 @@ variable "auto_approval_subscription_ids" {
   type        = list(string)
   default     = []
 }
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Monitoring
+# ----------------------------------------------------------------------------------------------------------------------
+
+variable "enable_health_probe_alert" {
+  description = "Create a metric alert that is raised while fewer than all HAProxy VMs answer the load balancer health probe."
+  type        = bool
+  default     = false
+}
+
+variable "alert_action_group_ids" {
+  description = "Action groups the health probe alert notifies. An empty list raises the alert in Azure Monitor without notifying anyone."
+  type        = list(string)
+  default     = []
+}

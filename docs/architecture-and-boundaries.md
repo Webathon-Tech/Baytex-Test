@@ -91,6 +91,12 @@ HAProxy resolves each destination's fully qualified domain name through the corp
 destinations therefore return traffic to the proxy subnet, whose address range Baytex adds to its on-premises return
 routes.
 
+Terraform delivers the HAProxy configuration and the load balancer frontend IPs to both VMs through their user data. A
+reconcile service on each VM applies them shortly after boot and every two minutes after that. It installs HAProxy once
+the package mirrors are reachable, validates each new configuration with `haproxy -c` before a graceful reload, and
+keeps the running configuration when a new one is rejected, so a change to the destinations or DNS servers updates the
+VMs in place.
+
 ## Controlling outbound destinations
 
 Approved outbound destinations are enforced in different places for the two kinds of compute, because the two leave the

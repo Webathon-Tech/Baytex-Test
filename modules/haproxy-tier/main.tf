@@ -23,72 +23,82 @@ locals {
   # Earlier sizes keep Azure's default SCSI controller.
   disk_controller_type = can(regex("_v[6-9]$", var.proxy_vm_size)) ? "NVMe" : null
 
-  # Rendered configuration files.
-  # Line endings are normalised to LF so the files work on Linux regardless of the operating system that runs Terraform.
+  # Line endings are normalised to LF so every file works on Linux regardless of the operating system that runs Terraform.
   haproxy_config = replace(templatefile("${path.module}/templates/haproxy.cfg.tftpl", {
     dns_servers = var.dns_servers
     endpoints   = var.endpoints
   }), "\r\n", "\n")
 
-  configure_lb_ips_script = replace(templatefile("${path.module}/templates/configure-lb-ips.sh.tftpl", {
-    frontend_ips = local.frontend_ips
-  }), "\r\n", "\n")
+  # Desired state, published in each VM's user data and applied on the VM by baytex-haproxy-reconcile.
+  # User data is updated in place, so a change to the destinations or DNS servers reaches both VMs within about two minutes
+  # without replacing them.
+  desired_state = jsonencode({
+    haproxy_cfg  = local.haproxy_config
+    frontend_ips = sort(local.frontend_ips)
+  })
 
-  configure_lb_ips_service = replace(templatefile("${path.module}/templates/lb-ips.service.tftpl", {}), "\r\n", "\n")
+  # Bootstrap files that cloud-init installs from the VM custom data.
+  # None of them depends on an input, so the custom data stays the same from one apply to the next. Changing one of these
+  # files replaces the VMs, because custom data can be set only when a VM is created.
+  bootstrap_files = {
+    reconcile_script     = replace(file("${path.module}/files/baytex-haproxy-reconcile.sh"), "\r\n", "\n")
+    reconcile_service    = replace(file("${path.module}/files/baytex-haproxy-reconcile.service"), "\r\n", "\n")
+    reconcile_timer      = replace(file("${path.module}/files/baytex-haproxy-reconcile.timer"), "\r\n", "\n")
+    frontend_ips_service = replace(file("${path.module}/files/baytex-haproxy-frontend-ips.service"), "\r\n", "\n")
+    apt_network_config   = replace(file("${path.module}/files/apt-network.conf"), "\r\n", "\n")
+  }
 
-  install_script = replace(templatefile("${path.module}/templates/install-packages.sh.tftpl", {}), "\r\n", "\n")
-
-  # cloud-init document passed to both VMs as custom data.
-  # Any change to it replaces the VMs, because custom data can be set only when a VM is created.
   cloud_init = yamlencode({
     write_files = [
       {
-        path        = "/etc/haproxy/haproxy.cfg"
-        permissions = "0644"
-        owner       = "root:root"
-        content     = local.haproxy_config
-      },
-      {
-        path        = "/usr/local/sbin/configure-baytex-lb-ips.sh"
+        path        = "/usr/local/sbin/baytex-haproxy-reconcile"
         permissions = "0755"
         owner       = "root:root"
-        content     = local.configure_lb_ips_script
+        content     = local.bootstrap_files.reconcile_script
       },
       {
-        path        = "/usr/local/sbin/install-haproxy-packages.sh"
-        permissions = "0755"
-        owner       = "root:root"
-        content     = local.install_script
-      },
-      {
-        path        = "/etc/systemd/system/baytex-lb-ips.service"
+        path        = "/etc/systemd/system/baytex-haproxy-reconcile.service"
         permissions = "0644"
         owner       = "root:root"
-        content     = local.configure_lb_ips_service
+        content     = local.bootstrap_files.reconcile_service
       },
       {
-        # The load balancer uses floating IP, so the frontend IPs become local only after baytex-lb-ips.service adds them to the dummy0 interface.
-        # Non-local bind lets HAProxy start and bind those addresses regardless of which service starts first.
+        path        = "/etc/systemd/system/baytex-haproxy-reconcile.timer"
+        permissions = "0644"
+        owner       = "root:root"
+        content     = local.bootstrap_files.reconcile_timer
+      },
+      {
+        path        = "/etc/systemd/system/baytex-haproxy-frontend-ips.service"
+        permissions = "0644"
+        owner       = "root:root"
+        content     = local.bootstrap_files.frontend_ips_service
+      },
+      {
+        path        = "/etc/apt/apt.conf.d/99-baytex-network"
+        permissions = "0644"
+        owner       = "root:root"
+        content     = local.bootstrap_files.apt_network_config
+      },
+      {
+        # The load balancer uses floating IP. Non-local bind lets HAProxy bind a frontend IP before it is added to dummy0.
         path        = "/etc/sysctl.d/99-haproxy-nonlocal-bind.conf"
         permissions = "0644"
         owner       = "root:root"
         content     = "net.ipv4.ip_nonlocal_bind = 1\n"
       }
     ]
+    # bootcmd runs on every boot. It enables the reconcile timer on a VM that restarted before runcmd ran on its first boot.
+    # On the first boot itself it does nothing, because bootcmd runs before write_files has created the timer.
+    bootcmd = [
+      ["sh", "-c", "if [ -f /etc/systemd/system/baytex-haproxy-reconcile.timer ]; then systemctl enable --now baytex-haproxy-reconcile.timer; fi"]
+    ]
+    # runcmd runs once, on the first boot. The timer then starts the first reconcile within 30 seconds of boot.
     runcmd = [
-      # Apply non-local bind before HAProxy starts.
       ["sysctl", "--system"],
       ["systemctl", "daemon-reload"],
-      ["systemctl", "enable", "--now", "baytex-lb-ips.service"],
-      # The proxy subnet reaches the package mirrors only through the firewall.
-      # The install script retries every minute until the mirrors answer, so the VMs finish configuring as soon as that path is open.
-      ["/usr/local/sbin/install-haproxy-packages.sh"],
-      ["haproxy", "-c", "-f", "/etc/haproxy/haproxy.cfg"],
-      ["systemctl", "enable", "haproxy"],
-      # The package starts HAProxy as soon as it is installed.
-      # reset-failed clears systemd's start limit from that first start, so the restart below always runs with the final configuration.
-      ["systemctl", "reset-failed", "haproxy"],
-      ["systemctl", "restart", "haproxy"]
+      ["systemctl", "enable", "baytex-haproxy-frontend-ips.service"],
+      ["systemctl", "enable", "--now", "baytex-haproxy-reconcile.timer"]
     ]
   })
 }
@@ -116,6 +126,7 @@ resource "azurerm_network_interface" "proxy" {
 }
 
 # Ubuntu LTS on Trusted Launch (secure boot and vTPM), SSH key authentication only, and platform-managed patching.
+# The custom data carries the bootstrap and the user data carries the HAProxy configuration, as described in the locals above.
 resource "azurerm_linux_virtual_machine" "proxy" {
   for_each = local.proxy_nodes
 
@@ -130,6 +141,7 @@ resource "azurerm_linux_virtual_machine" "proxy" {
   disable_password_authentication = true
   network_interface_ids           = [azurerm_network_interface.proxy[each.key].id]
   custom_data                     = base64encode("#cloud-config\n${local.cloud_init}")
+  user_data                       = base64encode(local.desired_state)
   secure_boot_enabled             = true
   vtpm_enabled                    = true
   provision_vm_agent              = true
@@ -165,6 +177,12 @@ resource "azurerm_linux_virtual_machine" "proxy" {
 
   # Creating the VM and adding its NIC to the backend pool both update the NIC, and neither resource locks the other.
   depends_on = [azurerm_network_interface_backend_address_pool_association.proxy]
+}
+
+# Shows the rendered HAProxy configuration as a readable diff in the plan. The VMs receive it through their user data,
+# which the plan can show only as an encoded value.
+resource "terraform_data" "haproxy_config" {
+  input = local.haproxy_config
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -291,4 +309,40 @@ resource "azurerm_private_link_service" "endpoint" {
   }
 
   depends_on = [azurerm_lb_rule.endpoint]
+}
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Monitoring
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Raised while fewer than all HAProxy VMs answer the health probe on port 8404, such as while a VM is still installing
+# HAProxy, and resolved automatically once both answer again.
+resource "azurerm_monitor_metric_alert" "health_probe" {
+  count = var.enable_health_probe_alert ? 1 : 0
+
+  name                = "alert-${var.name_prefix}-proxy-health-probe"
+  resource_group_name = var.resource_group_name
+  scopes              = [azurerm_lb.this.id]
+  description         = "Fewer than all HAProxy VMs behind lb-${var.name_prefix}-proxy answer the health probe on port 8404."
+  severity            = 2
+  frequency           = "PT1M"
+  window_size         = "PT5M"
+  tags                = var.tags
+
+  criteria {
+    metric_namespace = "Microsoft.Network/loadBalancers"
+    metric_name      = "DipAvailability"
+    aggregation      = "Average"
+    operator         = "LessThan"
+    threshold        = 100
+  }
+
+  dynamic "action" {
+    for_each = var.alert_action_group_ids
+    content {
+      action_group_id = action.value
+    }
+  }
+
+  depends_on = [azurerm_lb_probe.haproxy]
 }

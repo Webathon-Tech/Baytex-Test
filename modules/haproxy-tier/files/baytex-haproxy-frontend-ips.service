@@ -1,0 +1,18 @@
+# Installed by cloud-init from the haproxy-tier Terraform module.
+# Adds the saved load balancer frontend IPs before HAProxy starts, so a restarted VM accepts traffic as soon as HAProxy
+# answers the health probe.
+
+[Unit]
+Description=Add the load balancer frontend IPs before HAProxy starts
+Wants=network-online.target
+After=network-online.target
+Before=haproxy.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/baytex-haproxy-reconcile boot
+TimeoutStartSec=90s
+
+[Install]
+WantedBy=multi-user.target
