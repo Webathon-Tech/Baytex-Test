@@ -167,13 +167,19 @@ Run in the same session, after step 5.
 # created for the NCC rules outlive the NCC. Removing them first lets the destroy finish in one pass.
 $plsIds = ((terraform output -json private_link_service_ids | Out-String) | ConvertFrom-Json).PSObject.Properties.Value
 foreach ($pls in $plsIds) {
-  foreach ($conn in (az network private-endpoint-connection list --id $pls --query "[].id" -o tsv)) {
-    az network private-endpoint-connection delete --id $conn --yes --only-show-errors -o none
+  $plsRg = $pls.Split("/")[4]
+  $plsName = $pls.Split("/")[8]
+  foreach ($conn in (az network private-link-service show -g $plsRg -n $plsName --query "privateEndpointConnections[].name" -o tsv)) {
+    az network private-link-service connection delete -g $plsRg --service-name $plsName -n $conn -o none
   }
 }
 
 # Azure takes a moment before a Private Link Service reports zero connections.
 Start-Sleep -Seconds 20
+
+# Azure Databricks refuses to delete a network policy a running workspace still refers to, so the workspace is moved
+# to the account default policy before the teardown.
+terraform apply -var "attach_serverless_network_policy=false"
 
 terraform plan -destroy -lock-timeout=10m -out=tfplan
 terraform apply -lock-timeout=10m tfplan

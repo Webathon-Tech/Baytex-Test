@@ -142,12 +142,12 @@ output "container_urls" {
 
 output "serverless_network_policy_id" {
   description = "ID of the Databricks network policy attached to the workspace, or null when create_serverless_network_policy is false."
-  value       = one(module.serverless_egress[*].network_policy_id)
+  value       = module.ncc.network_policy_id
 }
 
 output "serverless_egress_allowed_destinations" {
   description = "Domain names serverless compute may reach on the internet, or null when create_serverless_network_policy is false."
-  value       = one(module.serverless_egress[*].allowed_internet_destinations)
+  value       = module.ncc.allowed_internet_destinations
 }
 
 # ----------------------------------------------------------------------------------------------------------------------

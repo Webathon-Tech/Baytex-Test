@@ -145,7 +145,9 @@ environments in that order through **Terraform Deploy Platform**.
 Before business adoption, an environment can be removed and rebuilt:
 
 1. Stop new workloads.
-2. Preserve the Terraform state and the evidence artefacts.
+2. Detach the serverless network policy: apply the environment once with `attach_serverless_network_policy = false`.
+   Azure Databricks refuses to delete a policy a running workspace still refers to, so the teardown fails without this.
+3. Preserve the Terraform state and the evidence artefacts.
 3. Remove the Baytex-managed hub, firewall and DNS changes through the Baytex change process.
 4. Confirm that no Baytex data has been loaded, then run **Terraform Destroy Platform** for the environment. Peerings and
    DNS zone groups created by Terraform are removed with it.

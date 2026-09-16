@@ -160,13 +160,14 @@ known by name is allowed on the firewall, and for serverless compute in `serverl
 | Variable | Default | Description |
 | --- | --- | --- |
 | `databricks_nsg_rules` | `{}` | Rules added to both Databricks subnet NSGs, keyed by rule name. Azure Databricks maintains its own rules on these NSGs, so these priorities start at 1000. |
+| `proxy_deny_other_vnet_inbound` | `true` | Deny everything arriving at the proxy subnet from the virtual network that no rule above has allowed. Azure's own default rule otherwise admits any address in the VNet, the hub and the networks reached through it, on every port. |
 | `proxy_nsg_rules` | `{}` | Rules added to the proxy NSG, keyed by rule name, alongside the health probe, Private Link Service and SSH rules the platform creates. |
 
 Each entry sets `priority` and `description`, and takes defaults for the rest:
 
 | Field | Default | Notes |
 | --- | --- | --- |
-| `priority` | required | Between 1000 and 4096, unique within its direction |
+| `priority` | required | Between 1000 and 4096, unique within its direction. Proxy rules stop at 4095, because 4096 is taken by the deny rule. |
 | `description` | required | Shown on the rule in Azure |
 | `direction` | `"Outbound"` | `Inbound` or `Outbound` |
 | `access` | `"Allow"` | `Allow` or `Deny` |
@@ -228,7 +229,8 @@ security group rules and the firewall.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `create_serverless_network_policy` | `true` | Create the network policy for this environment and attach it to the workspace. Leave it `false` to keep the account default policy. |
+| `create_serverless_network_policy` | `true` | Create the network policy for this environment. Leave it `false` to keep the account default policy. |
+| `attach_serverless_network_policy` | `true` | Point the workspace at this environment's policy. Set it to `false`, and apply, before removing the policy or destroying the environment. |
 | `serverless_egress_restriction_mode` | `"RESTRICTED_ACCESS"` | `FULL_ACCESS` lets serverless compute reach any internet destination. `RESTRICTED_ACCESS` limits it to the list below. |
 | `serverless_egress_enforcement_mode` | `"ENFORCED"` | `ENFORCED` blocks destinations outside the list. `DRY_RUN` allows them and records them instead, so the list can be validated before it is enforced. |
 | `serverless_allowed_internet_destinations` | `[]` | Domain names serverless compute may reach on the internet. The data storage account and the on-premises destinations are reached through the NCC private endpoint rules and need no entry. |
@@ -254,6 +256,18 @@ Changing any of these after the first deploy replaces the resource that uses it,
 - `data_storage_account_name` — the data storage account is replaced
 - `blob_private_endpoint_ip` and `dfs_private_endpoint_ip` — the matching private endpoint is replaced, and it returns
   with the new address
+
+### Removing the serverless network policy
+
+Azure Databricks refuses to delete a network policy that a running workspace still refers to, and Terraform does not
+reliably detach it before deleting it. Removing the policy, and destroying an environment that has one, therefore takes
+two applies:
+
+1. `attach_serverless_network_policy = false` moves the workspace to the account's own `default-policy`.
+2. `create_serverless_network_policy = false` then removes this environment's policy.
+
+Setting `create_serverless_network_policy = false` on its own is rejected at plan time with a message saying the same
+thing, so the failure cannot reach Azure.
 
 ## Platform outputs
 

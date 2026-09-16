@@ -41,3 +41,22 @@ output "private_endpoint_rules" {
     }
   )
 }
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Serverless egress policy
+# ----------------------------------------------------------------------------------------------------------------------
+
+output "network_policy_id" {
+  description = "ID of the network policy attached to the workspace, or null when create_network_policy is false."
+  value       = one(databricks_account_network_policy.this[*].network_policy_id)
+}
+
+output "allowed_internet_destinations" {
+  description = "Domain names serverless compute may reach on the internet, sorted, or null when create_network_policy is false."
+  value       = var.create_network_policy ? sort(tolist(var.allowed_internet_destinations)) : null
+}
+
+output "egress_restriction_mode" {
+  description = "Restriction mode the policy applies to serverless internet egress, or null when create_network_policy is false."
+  value       = var.create_network_policy ? var.egress_restriction_mode : null
+}
