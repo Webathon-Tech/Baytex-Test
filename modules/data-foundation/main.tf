@@ -176,3 +176,37 @@ resource "azurerm_private_endpoint" "dfs" {
     }
   }
 }
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Monitoring
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Exists only when enable_alerts is true, notifies the action groups in alert_action_group_ids, and resolves automatically
+# once availability recovers. Availability is calculated from requests, so the alert stays quiet while the account is idle.
+resource "azurerm_monitor_metric_alert" "storage_availability" {
+  count = var.enable_alerts ? 1 : 0
+
+  name                = "alert-${var.storage_account_name}-availability"
+  resource_group_name = var.resource_group_name
+  scopes              = [azurerm_storage_account.this.id]
+  description         = "Availability of ${var.storage_account_name} has averaged below 99 percent for 15 minutes. Requests to the data storage account are failing."
+  severity            = 2
+  frequency           = "PT5M"
+  window_size         = "PT15M"
+  tags                = var.tags
+
+  criteria {
+    metric_namespace = "Microsoft.Storage/storageAccounts"
+    metric_name      = "Availability"
+    aggregation      = "Average"
+    operator         = "LessThan"
+    threshold        = 99
+  }
+
+  dynamic "action" {
+    for_each = var.alert_action_group_ids
+    content {
+      action_group_id = action.value
+    }
+  }
+}

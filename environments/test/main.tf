@@ -75,6 +75,9 @@ module "network" {
 
   admin_ssh_source_cidrs = var.admin_ssh_source_cidrs
   proxy_listener_ports   = local.listener_ports
+
+  enable_alerts          = var.enable_alerts
+  alert_action_group_ids = azurerm_monitor_action_group.this[*].id
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -98,6 +101,9 @@ module "data_foundation" {
   dfs_private_dns_zone_ids   = var.dfs_private_dns_zone_ids
   blob_private_endpoint_ip   = var.blob_private_endpoint_ip
   dfs_private_endpoint_ip    = var.dfs_private_endpoint_ip
+
+  enable_alerts          = var.enable_alerts
+  alert_action_group_ids = azurerm_monitor_action_group.this[*].id
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -126,9 +132,8 @@ module "haproxy" {
   visibility_subscription_ids        = var.pls_visibility_subscription_ids
   auto_approval_subscription_ids     = var.pls_auto_approval_subscription_ids
 
-  # The health probe alert follows the platform monitoring switch, and notifies the action group when one exists.
-  enable_health_probe_alert = var.enable_diagnostics
-  alert_action_group_ids    = azurerm_monitor_action_group.this[*].id
+  enable_alerts          = var.enable_alerts
+  alert_action_group_ids = azurerm_monitor_action_group.this[*].id
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -199,6 +204,7 @@ moved {
 # ----------------------------------------------------------------------------------------------------------------------
 # Operations
 # Log Analytics workspace, alert action group and platform diagnostic settings.
+# The platform alerts are created by the modules that own the resources they watch, and notify the action group below.
 # ----------------------------------------------------------------------------------------------------------------------
 
 resource "azurerm_log_analytics_workspace" "this" {

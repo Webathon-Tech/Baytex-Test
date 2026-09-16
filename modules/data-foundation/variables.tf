@@ -69,3 +69,19 @@ variable "dfs_private_dns_zone_ids" {
   type        = set(string)
   default     = []
 }
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Monitoring
+# ----------------------------------------------------------------------------------------------------------------------
+
+variable "enable_alerts" {
+  description = "Create the data storage account availability alert."
+  type        = bool
+  default     = false
+}
+
+variable "alert_action_group_ids" {
+  description = "Action groups the alert notifies. An empty list raises the alert in Azure Monitor without notifying anyone."
+  type        = list(string)
+  default     = []
+}

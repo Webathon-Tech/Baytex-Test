@@ -485,3 +485,75 @@ resource "azapi_resource" "hub_to_spoke_peering" {
     azurerm_subnet_route_table_association.private_endpoints,
   ]
 }
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Monitoring
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Every alert below exists only when enable_alerts is true, notifies the action groups in alert_action_group_ids, and
+# resolves automatically once its condition clears. The thresholds follow Microsoft's guidance for NAT Gateway.
+
+# Raised when the NAT Gateway datapath availability averages below 90 percent over 15 minutes, which means the Databricks
+# subnets are losing internet egress. Shorter windows report transient noise.
+resource "azurerm_monitor_metric_alert" "nat_datapath" {
+  count = var.enable_alerts ? 1 : 0
+
+  name                = "alert-${var.name_prefix}-nat-datapath"
+  resource_group_name = var.resource_group_name
+  scopes              = [azurerm_nat_gateway.this.id]
+  description         = "Datapath availability of nat-${var.name_prefix} has averaged below 90 percent for 15 minutes. Classic compute is losing internet egress."
+  severity            = 2
+  frequency           = "PT5M"
+  window_size         = "PT15M"
+  tags                = var.tags
+
+  criteria {
+    metric_namespace = "Microsoft.Network/natGateways"
+    metric_name      = "DatapathAvailability"
+    aggregation      = "Average"
+    operator         = "LessThan"
+    threshold        = 90
+  }
+
+  dynamic "action" {
+    for_each = var.alert_action_group_ids
+    content {
+      action_group_id = action.value
+    }
+  }
+}
+
+# Raised when outbound connections through the NAT Gateway fail, the usual sign of SNAT port exhaustion.
+resource "azurerm_monitor_metric_alert" "nat_snat_failures" {
+  count = var.enable_alerts ? 1 : 0
+
+  name                = "alert-${var.name_prefix}-nat-snat-failures"
+  resource_group_name = var.resource_group_name
+  scopes              = [azurerm_nat_gateway.this.id]
+  description         = "Outbound connections through nat-${var.name_prefix} are failing, which usually means SNAT port exhaustion."
+  severity            = 3
+  frequency           = "PT1M"
+  window_size         = "PT5M"
+  tags                = var.tags
+
+  criteria {
+    metric_namespace = "Microsoft.Network/natGateways"
+    metric_name      = "SNATConnectionCount"
+    aggregation      = "Total"
+    operator         = "GreaterThan"
+    threshold        = 0
+
+    dimension {
+      name     = "ConnectionState"
+      operator = "Include"
+      values   = ["Failed"]
+    }
+  }
+
+  dynamic "action" {
+    for_each = var.alert_action_group_ids
+    content {
+      action_group_id = action.value
+    }
+  }
+}

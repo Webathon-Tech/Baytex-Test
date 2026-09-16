@@ -72,11 +72,12 @@ Names are composed from `organization`, `workload`, `environment`, `region_short
 | Access Connectors | `ac-<org>-<workload>-<env>-root-<region>-<instance>`, `...-data-...` | `ac-bte-dbx-dev-data-cnc-001` |
 | Network Connectivity Configuration | `ncc-<prefix>` | `ncc-bte-dbx-dev-cnc-001` |
 | Databricks network policy | `np-<prefix>` | `np-bte-dbx-dev-cnc-001` |
-| HAProxy VMs | `vm-<prefix>-proxy-01`, `vm-<prefix>-proxy-02` | `vm-bte-dbx-dev-cnc-001-proxy-01` |
+| HAProxy VMs | `vm-<prefix>-proxy-01` to `vm-<prefix>-proxy-03` | `vm-bte-dbx-dev-cnc-001-proxy-01` |
 | Load balancer | `lb-<prefix>-proxy` | `lb-bte-dbx-dev-cnc-001-proxy` |
 | Private Link Services | `pls-<prefix>-<destination>` | `pls-bte-dbx-dev-cnc-001-sql6` |
 | Storage private endpoints | `pe-<storage account>-blob`, `pe-<storage account>-dfs` | `pe-stbtedbxdevcnc001-dfs` |
 | Log Analytics and action group | `log-<prefix>`, `ag-<prefix>` | `log-bte-dbx-dev-cnc-001` |
+| Alerts | `alert-<prefix>-<subject>`, and `alert-<storage account>-availability` for the data storage account | `alert-bte-dbx-dev-cnc-001-proxy-health-probe-down` |
 
 Storage account names are globally unique and set directly: `data_storage_account_name`,
 `workspace_root_storage_account_name`, and `storage_account_name` in the bootstrap root.
@@ -200,8 +201,8 @@ every Allow rule.
 | --- | --- | --- |
 | `admin_ssh_source_cidrs` | `[]` | CIDRs allowed to SSH to the HAProxy VMs. An empty list creates no SSH rule, and the VMs remain reachable through `az vm run-command`. |
 | `ssh_public_key` | required | SSH public key for the `azureadmin` user on the HAProxy VMs. Password authentication is disabled. |
-| `proxy_vm_size` | `"Standard_D4s_v6"` | Azure VM size of both HAProxy VMs. |
-| `proxy_vm_private_ips` | required | Static private IPs of the two HAProxy VMs, in zone 1 and zone 2 order. Both must be inside `proxy_subnet_cidr`. |
+| `proxy_vm_size` | `"Standard_D4s_v6"` | Azure VM size of every HAProxy VM. |
+| `proxy_vm_private_ips` | required | Static private IPs of the HAProxy VMs, two or three, in zone order: the first VM is placed in zone 1, the second in zone 2 and a third in zone 3. All must be inside `proxy_subnet_cidr`. A third VM keeps two VMs serving while one availability zone is unavailable. |
 | `on_prem_endpoints` | required | On-premises destinations, keyed by a short name. Each gets a load balancer frontend on `frontend_ip`, a Private Link Service with its NAT IP on `pls_nat_ip`, and an HAProxy listener on `listen_port` that forwards to `target_fqdn:target_port`. `domain_name` is the name serverless compute uses to reach the destination. A change reaches the HAProxy VMs in place, within about two minutes of the apply. |
 
 ### Private Link Service access
@@ -243,8 +244,26 @@ here and its port is allowed on the firewall.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `log_analytics_retention_days` | `90` | Retention period of the Log Analytics workspace, in days. |
-| `enable_diagnostics` | `true` | Send diagnostic logs and metrics from the workspace, data storage account, load balancer and NAT Gateway to Log Analytics, and create the HAProxy health probe alert, which notifies the action group when one exists. |
+| `enable_diagnostics` | `true` | Send diagnostic logs and metrics from the workspace, data storage account, load balancer and NAT Gateway to Log Analytics. |
+| `enable_alerts` | `true` | Create the platform alerts listed under [Alerts](#alerts). Each notifies the action group when one exists, and appears in Azure Monitor either way. |
 | `alert_email_receivers` | `{}` | Email receivers on the platform action group, as a map of receiver name to email address. An empty map creates no action group. |
+
+### Alerts
+
+Created when `enable_alerts` is `true`, each in the resource group of the resource it watches. Every alert notifies the
+action group when `alert_email_receivers` creates one, appears in Azure Monitor either way, and resolves automatically
+once its condition clears.
+
+| Alert | Watches | Raised when | Severity |
+| --- | --- | --- | --- |
+| `alert-<prefix>-proxy-health-probe-down` | Load balancer | Practically no HAProxy VM has answered the health probe for 5 minutes | 1 |
+| `alert-<prefix>-proxy-health-probe-degraded` | Load balancer | At least one HAProxy VM is not answering the health probe, averaged over 5 minutes | 2 |
+| `alert-<prefix>-proxy-vm-resource-health` | HAProxy VMs | Azure Resource Health reports a VM unavailable or degraded because of a platform event | 2 |
+| `alert-<prefix>-proxy-vm-cpu` | HAProxy VMs | A VM averages more than 85 percent CPU for 15 minutes | 3 |
+| `alert-<prefix>-proxy-vm-memory` | HAProxy VMs | A VM averages less than 10 percent available memory for 15 minutes | 3 |
+| `alert-<prefix>-nat-datapath` | NAT Gateway | Datapath availability averages below 90 percent over 15 minutes | 2 |
+| `alert-<prefix>-nat-snat-failures` | NAT Gateway | Outbound connections fail within a 5-minute window, the usual sign of SNAT port exhaustion | 3 |
+| `alert-<storage account>-availability` | Data storage account | Availability averages below 99 percent over 15 minutes | 2 |
 
 ### Settings fixed at creation
 

@@ -17,6 +17,16 @@ defaults
     mode    tcp
     option  tcplog
     option  dontlognull
+    # TCP keepalives on both sides keep long-idle database sessions open through the load balancer, Private Link and
+    # firewall idle timers, and close a session whose peer has gone away.
+    option  clitcpka
+    option  srvtcpka
+    clitcpka-idle  180s
+    clitcpka-intvl 30s
+    clitcpka-cnt   4
+    srvtcpka-idle  180s
+    srvtcpka-intvl 30s
+    srvtcpka-cnt   4
     timeout connect 10s
     timeout client  1h
     timeout server  1h

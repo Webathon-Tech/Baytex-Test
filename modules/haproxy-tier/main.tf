@@ -1,19 +1,16 @@
 # ----------------------------------------------------------------------------------------------------------------------
 # HAProxy tier module
-# Two HAProxy VMs in separate availability zones behind an internal Standard Load Balancer, with one frontend and one Private Link Service per on-premises destination.
+# Two or three HAProxy VMs, each in its own availability zone, behind an internal Standard Load Balancer, with one frontend and one Private Link Service per on-premises destination.
 # Databricks serverless compute reaches each destination through its Private Link Service, and HAProxy forwards the connection to the on-premises host.
 # ----------------------------------------------------------------------------------------------------------------------
 
 locals {
-  # One VM per availability zone, each with a static private IP.
+  # One VM per availability zone, each with a static private IP: the first address is placed in zone 1, the second in zone 2
+  # and an optional third in zone 3. The keys are 01, 02 and 03, so adding a third VM leaves the first two unchanged.
   proxy_nodes = {
-    "01" = {
-      private_ip = var.proxy_vm_private_ips[0]
-      zone       = "1"
-    }
-    "02" = {
-      private_ip = var.proxy_vm_private_ips[1]
-      zone       = "2"
+    for index, private_ip in var.proxy_vm_private_ips : format("%02d", index + 1) => {
+      private_ip = private_ip
+      zone       = tostring(index + 1)
     }
   }
 
@@ -224,12 +221,14 @@ resource "azurerm_network_interface_backend_address_pool_association" "proxy" {
   depends_on = [azurerm_lb_probe.haproxy]
 }
 
-# Probes the HAProxy health frontend, so a VM leaves the pool as soon as HAProxy stops answering.
+# Requests the HAProxy health frontend over HTTP, so a VM stays in the pool only while HAProxy itself answers requests, not
+# merely while something accepts connections on the port. A VM leaves the pool after one failed probe.
 resource "azurerm_lb_probe" "haproxy" {
   name                = "probe-haproxy-8404"
   loadbalancer_id     = azurerm_lb.this.id
-  protocol            = "Tcp"
+  protocol            = "Http"
   port                = 8404
+  request_path        = "/"
   interval_in_seconds = 5
   number_of_probes    = 2
   probe_threshold     = 1
@@ -237,6 +236,8 @@ resource "azurerm_lb_probe" "haproxy" {
 
 # Floating IP keeps the frontend IP as the destination address, so each HAProxy frontend binds to its own frontend IP and port.
 # Outbound SNAT is disabled because the load balancer carries no outbound traffic.
+# TCP reset is sent to both ends of a connection that reaches the idle timeout, so clients reconnect straight away instead
+# of waiting on a connection that was dropped silently.
 resource "azurerm_lb_rule" "endpoint" {
   for_each = var.endpoints
 
@@ -251,6 +252,7 @@ resource "azurerm_lb_rule" "endpoint" {
   floating_ip_enabled            = true
   disable_outbound_snat          = true
   idle_timeout_in_minutes        = 30
+  tcp_reset_enabled              = true
   load_distribution              = "Default"
 
   # The NIC backend pool associations and the VMs also write to the load balancer, under a different provider lock than
@@ -315,15 +317,18 @@ resource "azurerm_private_link_service" "endpoint" {
 # Monitoring
 # ----------------------------------------------------------------------------------------------------------------------
 
-# Raised while fewer than all HAProxy VMs answer the health probe on port 8404, such as while a VM is still installing
-# HAProxy, and resolved automatically once both answer again.
-resource "azurerm_monitor_metric_alert" "health_probe" {
-  count = var.enable_health_probe_alert ? 1 : 0
+# Every alert below exists only when enable_alerts is true, notifies the action groups in alert_action_group_ids, and
+# resolves automatically once its condition clears.
 
-  name                = "alert-${var.name_prefix}-proxy-health-probe"
+# Raised while fewer than all HAProxy VMs answer the health probe, for example while a VM restarts or installs HAProxy.
+# The remaining VMs keep serving every destination.
+resource "azurerm_monitor_metric_alert" "health_probe_degraded" {
+  count = var.enable_alerts ? 1 : 0
+
+  name                = "alert-${var.name_prefix}-proxy-health-probe-degraded"
   resource_group_name = var.resource_group_name
   scopes              = [azurerm_lb.this.id]
-  description         = "Fewer than all HAProxy VMs behind lb-${var.name_prefix}-proxy answer the health probe on port 8404."
+  description         = "Fewer than all HAProxy VMs behind lb-${var.name_prefix}-proxy answer the health probe. The remaining VMs keep serving."
   severity            = 2
   frequency           = "PT1M"
   window_size         = "PT5M"
@@ -345,4 +350,129 @@ resource "azurerm_monitor_metric_alert" "health_probe" {
   }
 
   depends_on = [azurerm_lb_probe.haproxy]
+}
+
+# Raised when practically no HAProxy VM has answered the health probe for five minutes, which leaves serverless compute
+# without a path to any on-premises destination. Health Probe Status supports only the Average aggregation, so an average
+# below 10 percent across all VMs stands for every VM failing nearly every probe.
+resource "azurerm_monitor_metric_alert" "health_probe_down" {
+  count = var.enable_alerts ? 1 : 0
+
+  name                = "alert-${var.name_prefix}-proxy-health-probe-down"
+  resource_group_name = var.resource_group_name
+  scopes              = [azurerm_lb.this.id]
+  description         = "No HAProxy VM behind lb-${var.name_prefix}-proxy answers the health probe. Serverless compute cannot reach any on-premises destination."
+  severity            = 1
+  frequency           = "PT1M"
+  window_size         = "PT5M"
+  tags                = var.tags
+
+  criteria {
+    metric_namespace = "Microsoft.Network/loadBalancers"
+    metric_name      = "DipAvailability"
+    aggregation      = "Average"
+    operator         = "LessThan"
+    threshold        = 10
+  }
+
+  dynamic "action" {
+    for_each = var.alert_action_group_ids
+    content {
+      action_group_id = action.value
+    }
+  }
+
+  depends_on = [azurerm_lb_probe.haproxy]
+}
+
+# Raised when Azure Resource Health reports an HAProxy VM unavailable or degraded because of a platform event, such as a
+# host failure. Restarts and other changes made by an operator do not raise it.
+resource "azurerm_monitor_activity_log_alert" "proxy_vm_resource_health" {
+  count = var.enable_alerts ? 1 : 0
+
+  name                = "alert-${var.name_prefix}-proxy-vm-resource-health"
+  resource_group_name = var.resource_group_name
+  location            = "global"
+  scopes              = [for vm in azurerm_linux_virtual_machine.proxy : vm.id]
+  description         = "An HAProxy VM is unavailable or degraded because of an Azure platform event."
+  tags                = var.tags
+
+  criteria {
+    category = "ResourceHealth"
+
+    resource_health {
+      current  = ["Degraded", "Unavailable"]
+      previous = ["Available"]
+      reason   = ["PlatformInitiated", "Unknown"]
+    }
+  }
+
+  dynamic "action" {
+    for_each = var.alert_action_group_ids
+    content {
+      action_group_id = action.value
+    }
+  }
+}
+
+# Raised when an HAProxy VM stays busy or short of memory for 15 minutes, a sign that the tier needs a larger VM size.
+# Both alerts evaluate every VM separately.
+resource "azurerm_monitor_metric_alert" "proxy_vm_cpu" {
+  count = var.enable_alerts ? 1 : 0
+
+  name                     = "alert-${var.name_prefix}-proxy-vm-cpu"
+  resource_group_name      = var.resource_group_name
+  scopes                   = [for vm in azurerm_linux_virtual_machine.proxy : vm.id]
+  target_resource_type     = "Microsoft.Compute/virtualMachines"
+  target_resource_location = var.location
+  description              = "An HAProxy VM has averaged more than 85 percent CPU for 15 minutes."
+  severity                 = 3
+  frequency                = "PT5M"
+  window_size              = "PT15M"
+  tags                     = var.tags
+
+  criteria {
+    metric_namespace = "Microsoft.Compute/virtualMachines"
+    metric_name      = "Percentage CPU"
+    aggregation      = "Average"
+    operator         = "GreaterThan"
+    threshold        = 85
+  }
+
+  dynamic "action" {
+    for_each = var.alert_action_group_ids
+    content {
+      action_group_id = action.value
+    }
+  }
+}
+
+resource "azurerm_monitor_metric_alert" "proxy_vm_memory" {
+  count = var.enable_alerts ? 1 : 0
+
+  name                     = "alert-${var.name_prefix}-proxy-vm-memory"
+  resource_group_name      = var.resource_group_name
+  scopes                   = [for vm in azurerm_linux_virtual_machine.proxy : vm.id]
+  target_resource_type     = "Microsoft.Compute/virtualMachines"
+  target_resource_location = var.location
+  description              = "An HAProxy VM has averaged less than 10 percent available memory for 15 minutes."
+  severity                 = 3
+  frequency                = "PT5M"
+  window_size              = "PT15M"
+  tags                     = var.tags
+
+  criteria {
+    metric_namespace = "Microsoft.Compute/virtualMachines"
+    metric_name      = "Available Memory Percentage"
+    aggregation      = "Average"
+    operator         = "LessThan"
+    threshold        = 10
+  }
+
+  dynamic "action" {
+    for_each = var.alert_action_group_ids
+    content {
+      action_group_id = action.value
+    }
+  }
 }

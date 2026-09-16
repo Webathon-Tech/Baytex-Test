@@ -32,13 +32,18 @@ variable "proxy_subnet_id" {
 }
 
 variable "proxy_vm_size" {
-  description = "Azure VM size of both HAProxy VMs."
+  description = "Azure VM size of every HAProxy VM."
   type        = string
 }
 
 variable "proxy_vm_private_ips" {
-  description = "Static private IPs of the two HAProxy VMs, in zone 1 and zone 2 order."
+  description = "Static private IPs of the HAProxy VMs, two or three, in zone order: the first VM is placed in zone 1, the second in zone 2 and a third in zone 3."
   type        = list(string)
+
+  validation {
+    condition     = length(var.proxy_vm_private_ips) >= 2 && length(var.proxy_vm_private_ips) <= 3
+    error_message = "proxy_vm_private_ips must list two or three addresses, one per availability zone."
+  }
 }
 
 variable "admin_username" {
@@ -98,14 +103,14 @@ variable "auto_approval_subscription_ids" {
 # Monitoring
 # ----------------------------------------------------------------------------------------------------------------------
 
-variable "enable_health_probe_alert" {
-  description = "Create a metric alert that is raised while fewer than all HAProxy VMs answer the load balancer health probe."
+variable "enable_alerts" {
+  description = "Create the load balancer health probe alerts and the HAProxy VM resource health, CPU and memory alerts."
   type        = bool
   default     = false
 }
 
 variable "alert_action_group_ids" {
-  description = "Action groups the health probe alert notifies. An empty list raises the alert in Azure Monitor without notifying anyone."
+  description = "Action groups the alerts notify. An empty list raises the alerts in Azure Monitor without notifying anyone."
   type        = list(string)
   default     = []
 }

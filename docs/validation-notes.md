@@ -44,7 +44,7 @@ apply log, outputs and state list.
 | Resilience | Connections survive stopping HAProxy, and stopping each VM, in turn |
 | Configuration changes | A change to `on_prem_endpoints` or `dns_servers` reaches both HAProxy VMs without replacing them |
 | Pipelines | A deploy runs through GitHub OIDC with the approval gate and evidence bundle |
-| Monitoring | Diagnostic logs and metrics arrive in Log Analytics, and the HAProxy health probe alert is not raised |
+| Monitoring | Diagnostic logs and metrics arrive in Log Analytics, and no platform alert is raised |
 | Unity Catalog | Baytex BI's storage credential, external locations and catalog work from the workspace |
 | Workload | A representative Baytex BI workload runs end to end |
 
