@@ -34,10 +34,4 @@ resource "azurerm_databricks_workspace" "this" {
     storage_account_name     = var.root_storage_account_name
     storage_account_sku_name = "Standard_GRS"
   }
-
-  # The default storage firewall is not configured, so the root storage account keeps the network access Azure Databricks gives it.
-  # A firewall setting or Access Connector ID recorded in state is never sent as an update, because Azure rejects a request that disables a storage firewall that is not enabled.
-  lifecycle {
-    ignore_changes = [default_storage_firewall_enabled, access_connector_id]
-  }
 }

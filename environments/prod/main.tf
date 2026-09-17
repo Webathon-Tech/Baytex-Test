@@ -188,17 +188,6 @@ module "ncc" {
   allowed_internet_destinations = var.serverless_allowed_internet_destinations
 }
 
-# State recorded at the serverless_egress module addresses is carried over to the ncc module, so the network policy and its workspace attachment are kept rather than replaced.
-moved {
-  from = module.serverless_egress[0].databricks_account_network_policy.this
-  to   = module.ncc.databricks_account_network_policy.this[0]
-}
-
-moved {
-  from = module.serverless_egress[0].databricks_workspace_network_option.this
-  to   = module.ncc.databricks_workspace_network_option.this
-}
-
 # ----------------------------------------------------------------------------------------------------------------------
 # Operations
 # Log Analytics workspace, alert action group and platform diagnostic settings.

@@ -95,9 +95,3 @@ resource "databricks_workspace_network_option" "this" {
   workspace_id      = var.workspace_id
   network_policy_id = var.attach_network_policy ? databricks_account_network_policy.this[0].network_policy_id : var.account_default_network_policy_id
 }
-
-# State that holds the attachment at the indexed address is carried over to the unindexed one, so the attachment is kept rather than replaced.
-moved {
-  from = databricks_workspace_network_option.this[0]
-  to   = databricks_workspace_network_option.this
-}
