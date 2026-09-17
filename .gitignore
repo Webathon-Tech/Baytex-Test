@@ -30,9 +30,6 @@ apply.log
 plan-checksum.txt
 connectivity-test-results.json
 
-# Local-only scaffolding, never part of the deliverable.
-sandbox/
-
 # Network diagrams (binary)
 *.vsdx
 

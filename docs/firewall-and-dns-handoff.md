@@ -20,8 +20,9 @@ To move either one to Terraform later, Baytex grants the matching role
 ## Changes Baytex Infrastructure completes
 
 1. **Private DNS zones** in the hub or connectivity subscription, with their links to the VNets that resolve them.
-2. **Record sets** in those zones for the storage private endpoints, using the addresses in the `firewall_handoff`
-   output. The endpoints take static addresses, so these records stay correct when an environment is rebuilt.
+2. **Record sets** in those zones for the data storage account's blob and dfs private endpoints, using the addresses
+   in the `firewall_handoff` output. The endpoints take static addresses, so these records stay correct when an
+   environment is rebuilt.
 3. **VNet peering in both directions** between the hub VNet and the spoke VNet, with forwarded traffic allowed. The
    spoke has no gateway of its own and reaches on-premises networks through the firewall, so gateway transit is not
    used.

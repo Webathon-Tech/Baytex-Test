@@ -29,7 +29,8 @@ import time
 # Replace this block for a different environment; everything below it is generic.
 # ----------------------------------------------------------------------------------------------------------------------
 
-STORAGE_ACCOUNT = "stvkpdbxdevcnc001"
+# The environment's data storage account, from the data_storage_account_name output.
+STORAGE_ACCOUNT = "stbtedbxdevcnc001"
 
 # The approved on-premises destinations, by the name serverless compute uses to reach them.
 ON_PREM = [
@@ -163,12 +164,11 @@ def record(ok, expected_ok):
 
 
 # --- On-premises destinations -----------------------------------------------------------------------------------------
-# The listeners in the sandbox answer with the address they were reached on and the address they saw the call come from,
-# which is what identifies the path. A real SQL Server or Oracle sends nothing until the client speaks, so an empty
-# banner against a real destination is still a pass.
+# A successful TCP connection is the pass. SQL Server and Oracle send nothing until the client speaks, so the banner is
+# normally empty; a destination that does send a greeting has it shown in the last column.
 print("\nON-PREMISES DESTINATIONS  (expected: reachable from both serverless and classic)")
 print("-" * 108)
-print(f"{'name':16} {'destination':34} {'port':>5}  {'resolved':16} {'result':10} {'seen by destination'}")
+print(f"{'name':16} {'destination':34} {'port':>5}  {'resolved':16} {'result':10} {'detail'}")
 for name, host, port in ON_PREM:
     address, dns_error = resolve(host)
     if address is None:

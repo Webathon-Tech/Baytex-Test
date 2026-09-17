@@ -14,8 +14,9 @@ Every pull request runs **Terraform Pull Request Checks** ([Workflows](workflows
 Input rules in `variables.tf` reject malformed values when a plan is created, before any resource is touched
 ([Configuration reference](configuration-reference.md#input-validation)).
 
-Every deploy then plans before it applies, the apply uses the reviewed plan, and the evidence bundle records the plan,
-apply log, outputs and state list.
+Every deploy then plans before it applies, the apply uses the reviewed plan, the Databricks private endpoint connections
+are approved against the apply's outputs, and the evidence bundle records the plan, apply log, outputs, approval log and
+state list.
 
 ## Checks before the first apply
 
@@ -37,7 +38,7 @@ apply log, outputs and state list.
 | Peering | The peering is `Connected` on both the spoke and the hub VNet |
 | DNS | On-premises names and the storage private endpoint names resolve to private addresses |
 | Data storage | Blob and dfs access works privately from classic and serverless compute, and is refused from public networks |
-| NCC | The workspace is bound and every private endpoint rule is `ESTABLISHED` |
+| NCC | The workspace is bound, the deploy approved every private endpoint connection, and every rule is `ESTABLISHED` |
 | On-premises connectivity | Serverless and classic compute connect to every approved SQL Server and Oracle destination |
 | Spoke-to-spoke | Traffic from the Databricks subnets to another Azure spoke leaves through the firewall |
 | Serverless egress | Serverless compute reaches every approved internet destination and is refused everywhere else |

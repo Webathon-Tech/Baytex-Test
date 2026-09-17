@@ -22,8 +22,7 @@ Environment spoke subscription (one per environment)
   Spoke VNet with Databricks, private endpoint and proxy subnets
   Azure Databricks workspace (Premium, VNet-injected)
   ADLS Gen2 data storage with a data Access Connector
-  Root Access Connector, attached to the workspace when the default storage firewall is enabled
-  Two-node HAProxy tier, internal load balancer and Private Link Services
+  HAProxy tier of two or three VMs, internal load balancer and Private Link Services
   Network Connectivity Configuration (Databricks account level)
   Log Analytics and diagnostic settings
   Terraform state storage account
@@ -48,6 +47,8 @@ Each environment uses its own non-overlapping address space, typically a `/20`, 
   adds the environment's own rules to both. The proxy group allows the load balancer health probe, Private Link Service
   traffic on each listener port and, optionally, SSH from approved ranges, takes any further rules from
   `proxy_nsg_rules`, and then denies everything else arriving from the virtual network.
+- **No implicit outbound access** — every subnet disables Azure's default outbound access, so traffic leaves only
+  through the NAT Gateway or the firewall.
 
 ### What a network security group can and cannot close
 
@@ -64,8 +65,6 @@ route from outside the spoke and by the firewall rules that govern what may reac
 The private endpoint subnet has no network security group. Private endpoint network policies are disabled on it, which is
 the documented Azure pattern for a subnet that holds only private endpoints, and a network security group would not be
 applied to the endpoints while they are disabled.
-- **No implicit outbound access** — every subnet disables Azure's default outbound access, so traffic leaves only
-  through the NAT Gateway or the firewall.
 
 ### Reaching the other Azure spokes
 
@@ -130,8 +129,8 @@ Resource names follow `<type>-<organization>-<workload>-<environment>-<purpose>-
 | Resource group | Contents |
 | --- | --- |
 | `network` | Spoke VNet, subnets, network security groups, NAT Gateway and its public IP, route tables, spoke-side peering, NAT Gateway alerts |
-| `platform` | Azure Databricks workspace, root Access Connector |
-| `dbx-managed` | Created and managed by Azure Databricks: the workspace root storage account and classic compute resources |
+| `platform` | Azure Databricks workspace |
+| `dbx-managed` | Created and managed by Azure Databricks: the workspace root storage account, with the network access Azure Databricks gives it, and classic compute resources |
 | `data` | Data storage account and containers, blob and dfs private endpoints, data Access Connector and its role assignments, storage availability alert |
 | `connectivity` | HAProxy network interfaces, VMs and disks, internal load balancer, Private Link Services, load balancer and HAProxy VM alerts |
 | `ops` | Log Analytics workspace, alert action group when receivers are configured |
@@ -139,16 +138,15 @@ Resource names follow `<type>-<organization>-<workload>-<environment>-<purpose>-
 
 At the Databricks account level, each environment also has a Network Connectivity Configuration with its workspace
 binding, its private endpoint rules and the network policy attached to the workspace. All of them are created by the
-`ncc` module, because they are account-level resources bound to the same workspace. In the hub subscription, Terraform manages only the optional hub-side peering and
-Private DNS records described below.
+`ncc` module, because they are account-level resources bound to the same workspace. In the hub subscription, Terraform
+manages only the optional hub-side peering and Private DNS records described below.
 
 ### Identities and access
 
 | Identity | Access | Purpose |
 | --- | --- | --- |
-| Deployment service principal, `app-bte-dbx-<env>-terraform-001` (one per environment) | Contributor, Storage Blob Data Contributor and Role Based Access Control Administrator on the environment subscription; Databricks account admin | Runs every pipeline through GitHub OIDC, with no client secret |
+| Deployment service principal, `app-bte-dbx-<env>-terraform-001` (one per environment) | Contributor, Storage Blob Data Contributor and Role Based Access Control Administrator on the environment subscription; Databricks account admin | Runs every pipeline through GitHub OIDC, with no client secret, and approves the NCC private endpoint connections after each deploy |
 | Data Access Connector | Storage Blob Data Contributor, Storage Account Contributor, Storage Queue Data Contributor and EventGrid EventSubscription Contributor on the data storage account | Backs the Unity Catalog storage credential and Auto Loader file events |
-| Root Access Connector | Granted by Azure Databricks on the root storage account while it is attached | Accesses the workspace root storage when its firewall is enabled |
 | HAProxy VMs | System-assigned managed identities with no role assignments | Available for agent onboarding |
 
 ## Hub-subscription integration
@@ -182,7 +180,7 @@ storage private endpoints. The storage private endpoints take static addresses f
   zone IDs are supplied
 - The Databricks network policy that limits serverless internet egress, and its attachment to the workspace
 - HAProxy VMs, load balancer and Private Link Services
-- Databricks Network Connectivity Configuration and private endpoint rules
+- Databricks Network Connectivity Configuration, private endpoint rules and the approval of their connections
 - Log Analytics and platform diagnostics
 - Terraform modules, state, outputs and pipelines
 

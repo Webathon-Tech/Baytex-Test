@@ -2,10 +2,10 @@ name: Reusable - Bootstrap Plan
 
 # Plans the Azure Blob state backend for one environment.
 #
-# This root is unlike the platform roots in one important way: the storage account it manages HOLDS THE STATE FOR EVERY
-# ENVIRONMENT. A change that forced replacement of that account would destroy the state it is tracked in. That is why
-# the bootstrap has the same gated plan/apply split as a deployment - a reviewer must see the plan before anything is
-# applied.
+# This root is unlike the platform roots in one important way: the storage account it manages HOLDS THE TERRAFORM STATE
+# OF ITS ENVIRONMENT. A change that forced replacement of that account would destroy the state it is tracked in. That is
+# why the bootstrap has the same gated plan/apply split as a deployment - a reviewer must see the plan before anything
+# is applied.
 #
 # There is also a chicken-and-egg problem: Terraform cannot keep state in a storage account that does not exist yet. The
 # first run therefore works with local state, creates the account, and migrates. Later runs go straight to the remote
@@ -117,8 +117,8 @@ jobs:
       # Runs before terraform.tfvars is written, so the formatting gate reports on repository code rather than on the
       # content of a GitHub variable.
       #
-      # Scoped to the code this pipeline deploys. "terraform fmt" takes a single
-      # target, so the deployed paths are walked in turn.
+      # Scoped to the code this pipeline deploys. "terraform fmt" takes a single target, so the deployed paths are
+      # walked in turn.
       - name: Check Terraform formatting
         if: env.SKIP != 'true'
         working-directory: .
@@ -138,8 +138,9 @@ jobs:
       # The whole variables file for this environment's backend. Nothing about the environment - not the region, not the
       # account name - is hardcoded in this workflow.
       #
-      # TESTING ONLY: read from a repository VARIABLE so its content is visible in the GitHub UI while the platform is
-      # being validated. Switch to the commented line before any client deployment.
+      # BOOTSTRAP_TFVARS is read from an environment variable, which GitHub does not mask in logs. To hold it as an
+      # environment secret instead, swap which of the two lines below is commented, as described in
+      # docs/github-setup.md under "Variables or secrets".
       - name: Write terraform.tfvars
         if: env.SKIP != 'true'
         env:
@@ -209,11 +210,9 @@ jobs:
             -backend-config="key=${{ steps.probe.outputs.state_key }}" \
             -backend-config="use_azuread_auth=true"
 
-      # The backend block has to be moved aside rather than left uninitialised.
-      # "terraform init -backend=false" skips backend setup, but the azurerm block
-      # is still declared and plan then refuses with "Backend initialization
-      # required". Moving the file out of the root is the only way to plan with
-      # purely local state.
+      # The backend block has to be moved aside rather than left uninitialised. "terraform init -backend=false" skips
+      # backend setup, but the azurerm block is still declared and plan then refuses with "Backend initialization
+      # required". Moving the file out of the root is the only way to plan with purely local state.
       - name: Move the backend block aside for the local-state plan
         if: env.SKIP != 'true' && steps.probe.outputs.mode != 'remote'
         run: mv backend.tf ../backend.tf.disabled

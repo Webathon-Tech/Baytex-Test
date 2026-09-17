@@ -15,6 +15,19 @@
     ncc_private_endpoint_rules output, and reports every other connection without touching it.
 
     Re-running is safe. Connections that are already approved are reported and left alone, and nothing is approved twice.
+    Connections left behind by rules that no longer exist are not in the output, so they are reported and never changed.
+
+    Databricks creates the private endpoints a few minutes after the rules are applied. With -WaitMinutes, the script
+    reviews the targets again every -PollSeconds, approving each expected connection as it appears, until all of them
+    are approved or the wait ends. The deploy pipeline runs it this way after every apply.
+
+    Exit codes:
+      0  Every expected connection is approved.
+      2  Expected connections are still pending, which happens only with -WhatIf.
+      3  Expected private endpoints did not appear on any target before the wait ended, or a rule in the output has no
+         private endpoint name.
+      4  An expected connection is rejected or disconnected. Azure does not allow approving it, so the matching NCC rule
+         is recreated in Terraform to raise a fresh connection.
 
 .PARAMETER TerraformOutputPath
     Path to the JSON produced by "terraform output -json". The targets and the expected private endpoint names are read
@@ -35,9 +48,22 @@
 .PARAMETER IncludeAlreadyApproved
     List connections that were already approved as well as the ones this run changed.
 
+.PARAMETER WaitMinutes
+    How long to keep reviewing the targets while expected private endpoints have not appeared yet. The default, 0,
+    reviews them once.
+
+.PARAMETER PollSeconds
+    Pause between reviews while waiting.
+
 .EXAMPLE
     terraform -chdir=environments/dev output -json > dev-outputs.json
     ./scripts/Approve-BaytexDatabricksPrivateEndpoints.ps1 -TerraformOutputPath dev-outputs.json
+
+.EXAMPLE
+    ./scripts/Approve-BaytexDatabricksPrivateEndpoints.ps1 -TerraformOutputPath outputs.json -WaitMinutes 20 -IncludeAlreadyApproved -Confirm:$false
+
+    Runs unattended, as the deploy pipeline does: approves without prompting and waits up to 20 minutes for the
+    private endpoints Databricks is still creating.
 
 .EXAMPLE
     $parameters = @{
@@ -67,7 +93,13 @@ param(
 
     [string]$Description = 'Approved for the Baytex Azure Databricks Network Connectivity Configuration',
 
-    [switch]$IncludeAlreadyApproved
+    [switch]$IncludeAlreadyApproved,
+
+    [ValidateRange(0, 240)]
+    [int]$WaitMinutes = 0,
+
+    [ValidateRange(5, 600)]
+    [int]$PollSeconds = 30
 )
 
 Set-StrictMode -Version Latest
@@ -138,6 +170,7 @@ if (-not (Invoke-AzJson -Arguments @('account', 'show') -AllowFailure)) {
 
 $targets = [System.Collections.Generic.List[string]]::new()
 $expected = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+$unnamedRules = [System.Collections.Generic.List[string]]::new()
 
 if ($PSCmdlet.ParameterSetName -eq 'FromTerraformOutput') {
     if (-not (Test-Path -LiteralPath $TerraformOutputPath)) {
@@ -159,6 +192,7 @@ if ($PSCmdlet.ParameterSetName -eq 'FromTerraformOutput') {
         foreach ($rule in $rules.PSObject.Properties) {
             $endpointName = Get-Property $rule.Value 'endpoint_name'
             if ($endpointName) { [void]$expected.Add([string]$endpointName) }
+            else { $unnamedRules.Add($rule.Name) }
         }
     }
 
@@ -186,102 +220,132 @@ Write-Host "Expected private endpoints: $($expected.Count)" -ForegroundColor Cya
 # Review and approve
 # ----------------------------------------------------------------------------------------------------------------------
 
-$results = [System.Collections.Generic.List[object]]::new()
-$seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+# Reads every connection on every target, approves the expected ones that are pending, and returns one record per
+# connection together with the expected endpoint names that were found.
+function Invoke-ConnectionReview {
+    $records = [System.Collections.Generic.List[object]]::new()
+    $found = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 
-foreach ($resourceId in $targets) {
-    $subscriptionId = Get-SubscriptionIdFromResourceId -ResourceId $resourceId
-    $isPrivateLinkService = $resourceId -match '/providers/Microsoft.Network/privateLinkServices/'
+    foreach ($resourceId in $targets) {
+        $subscriptionId = Get-SubscriptionIdFromResourceId -ResourceId $resourceId
+        $isPrivateLinkService = $resourceId -match '/providers/Microsoft.Network/privateLinkServices/'
 
-    Write-Host ''
-    Write-Host "Reviewing $(Split-Path $resourceId -Leaf)" -ForegroundColor Cyan
+        $connections = Invoke-AzJson -AllowFailure -Arguments @(
+            'network', 'private-endpoint-connection', 'list',
+            '--id', $resourceId,
+            '--subscription', $subscriptionId
+        )
 
-    $connections = Invoke-AzJson -AllowFailure -Arguments @(
-        'network', 'private-endpoint-connection', 'list',
-        '--id', $resourceId,
-        '--subscription', $subscriptionId
-    )
-
-    # A Private Link Service also reports its connections on the service itself, which is the reliable source when the
-    # generic private-endpoint-connection command cannot read them.
-    if ($null -eq $connections -and $isPrivateLinkService) {
-        $service = Invoke-AzJson -AllowFailure -Arguments @('network', 'private-link-service', 'show', '--ids', $resourceId)
-        $connections = Get-Property $service 'privateEndpointConnections'
-    }
-
-    # One target that cannot be read never stops the run: the remaining targets are still reviewed, and the summary
-    # reports every expected endpoint that was not found.
-    if ($null -eq $connections) {
-        Write-Warning "No private endpoint connections could be read from $resourceId. Check that the resource exists and that the signed-in account can read it."
-        continue
-    }
-
-    foreach ($connection in @($connections)) {
-        $properties = Get-Property $connection 'properties'
-        $connectionState = Get-Property $properties 'privateLinkServiceConnectionState'
-        $status = [string](Get-Property $connectionState 'status')
-        $privateEndpoint = Get-Property $properties 'privateEndpoint'
-        $privateEndpointId = [string](Get-Property $privateEndpoint 'id')
-        $privateEndpointName = if ($privateEndpointId) { Split-Path $privateEndpointId -Leaf } else { '' }
-        $connectionId = [string](Get-Property $connection 'id')
-        $isExpected = $expected.Contains($privateEndpointName)
-
-        if ($isExpected) { [void]$seen.Add($privateEndpointName) }
-
-        $record = [pscustomobject]@{
-            Target          = Split-Path $resourceId -Leaf
-            Connection      = [string](Get-Property $connection 'name')
-            PrivateEndpoint = $privateEndpointName
-            Expected        = $isExpected
-            Status          = $status
-            Action          = 'None'
+        # A Private Link Service also reports its connections on the service itself, which is the reliable source when
+        # the generic private-endpoint-connection command cannot read them.
+        if ($null -eq $connections -and $isPrivateLinkService) {
+            $service = Invoke-AzJson -AllowFailure -Arguments @('network', 'private-link-service', 'show', '--ids', $resourceId)
+            $connections = Get-Property $service 'privateEndpointConnections'
         }
 
-        # Anything Databricks did not create for this environment is left alone for a person to review.
-        if (-not $isExpected) {
-            $record.Action = 'SkippedUnexpectedEndpoint'
-            $results.Add($record)
+        # One target that cannot be read never stops the run: the remaining targets are still reviewed, and the summary
+        # reports every expected endpoint that was not found.
+        if ($null -eq $connections) {
+            Write-Warning "No private endpoint connections could be read from $resourceId. Check that the resource exists and that the signed-in account can read it."
             continue
         }
 
-        switch ($status) {
-            'Pending' {
-                if ($PSCmdlet.ShouldProcess($connectionId, "Approve private endpoint '$privateEndpointName'")) {
-                    if ($isPrivateLinkService) {
-                        $null = Invoke-AzJson -Arguments @(
-                            'network', 'private-link-service', 'connection', 'update',
-                            '--ids', $connectionId,
-                            '--connection-status', 'Approved',
-                            '--description', $Description
-                        )
+        foreach ($connection in @($connections)) {
+            $properties = Get-Property $connection 'properties'
+            $connectionState = Get-Property $properties 'privateLinkServiceConnectionState'
+            $status = [string](Get-Property $connectionState 'status')
+            $privateEndpoint = Get-Property $properties 'privateEndpoint'
+            $privateEndpointId = [string](Get-Property $privateEndpoint 'id')
+            $privateEndpointName = if ($privateEndpointId) { Split-Path $privateEndpointId -Leaf } else { '' }
+            $connectionId = [string](Get-Property $connection 'id')
+            $isExpected = $expected.Contains($privateEndpointName)
+
+            if ($isExpected) { [void]$found.Add($privateEndpointName) }
+
+            $record = [pscustomobject]@{
+                Target          = Split-Path $resourceId -Leaf
+                Connection      = [string](Get-Property $connection 'name')
+                PrivateEndpoint = $privateEndpointName
+                Expected        = $isExpected
+                Status          = $status
+                Action          = 'None'
+            }
+
+            # Anything Databricks did not create for this environment's current rules is left alone for a person to
+            # review.
+            if (-not $isExpected) {
+                $record.Action = 'SkippedUnexpectedEndpoint'
+                $records.Add($record)
+                continue
+            }
+
+            switch ($status) {
+                'Pending' {
+                    if ($PSCmdlet.ShouldProcess($connectionId, "Approve private endpoint '$privateEndpointName'")) {
+                        if ($isPrivateLinkService) {
+                            $null = Invoke-AzJson -Arguments @(
+                                'network', 'private-link-service', 'connection', 'update',
+                                '--ids', $connectionId,
+                                '--connection-status', 'Approved',
+                                '--description', $Description
+                            )
+                        }
+                        else {
+                            $null = Invoke-AzJson -Arguments @(
+                                'network', 'private-endpoint-connection', 'approve',
+                                '--id', $connectionId,
+                                '--description', $Description
+                            )
+                        }
+                        $record.Status = 'Approved'
+                        $record.Action = 'Approved'
+                        Write-Host "Approved $privateEndpointName on $(Split-Path $resourceId -Leaf)" -ForegroundColor Green
                     }
                     else {
-                        $null = Invoke-AzJson -Arguments @(
-                            'network', 'private-endpoint-connection', 'approve',
-                            '--id', $connectionId,
-                            '--description', $Description
-                        )
+                        $record.Action = 'WhatIf'
                     }
-                    $record.Status = 'Approved'
-                    $record.Action = 'Approved'
                 }
-                else {
-                    $record.Action = 'WhatIf'
+                'Approved' {
+                    # A re-run reaches this branch for every connection an earlier run approved, and changes nothing.
+                    $record.Action = 'AlreadyApproved'
+                }
+                default {
+                    # Rejected, Disconnected or an unknown state, none of which Azure allows to be approved.
+                    $record.Action = 'NeedsAttention'
                 }
             }
-            'Approved' {
-                # A re-run reaches this branch for every connection an earlier run approved, and changes nothing.
-                $record.Action = 'AlreadyApproved'
-            }
-            default {
-                # Rejected, Disconnected or an unknown state. Azure does not allow approving these, so the NCC rule is
-                # recreated in Terraform instead, which raises a fresh connection.
-                $record.Action = 'NeedsAttention'
-            }
-        }
 
-        $results.Add($record)
+            $records.Add($record)
+        }
     }
+
+    return [pscustomobject]@{ Records = $records; Found = $found }
+}
+
+# Each pass approves whatever has appeared since the previous one. The wait ends as soon as every expected endpoint has
+# been found, and at once when a connection needs attention, because waiting cannot change a rejected connection.
+$deadline = (Get-Date).AddMinutes($WaitMinutes)
+$approvedByRun = [System.Collections.Generic.List[object]]::new()
+$pass = 0
+
+while ($true) {
+    $pass++
+    Write-Host ''
+    Write-Host "Review pass $pass" -ForegroundColor Cyan
+
+    $review = Invoke-ConnectionReview
+    $results = $review.Records
+    $seen = $review.Found
+    foreach ($record in @($results | Where-Object { $_.Action -eq 'Approved' })) { $approvedByRun.Add($record) }
+
+    $missing = @($expected | Where-Object { -not $seen.Contains($_) })
+    $needsAttention = @($results | Where-Object { $_.Action -eq 'NeedsAttention' })
+    $isWhatIf = @($results | Where-Object { $_.Action -eq 'WhatIf' }).Count -gt 0
+
+    if ($missing.Count -eq 0 -or $needsAttention.Count -gt 0 -or $isWhatIf -or (Get-Date) -ge $deadline) { break }
+
+    Write-Host "Waiting for $($missing.Count) private endpoint(s) Databricks has not created yet: $($missing -join ', ')"
+    Start-Sleep -Seconds $PollSeconds
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -296,29 +360,26 @@ else {
     $results |
         Where-Object { $IncludeAlreadyApproved -or $_.Action -ne 'AlreadyApproved' } |
         Sort-Object Target, Connection |
-        Format-Table -AutoSize
+        Format-Table -AutoSize |
+        Out-String -Width 400 |
+        Write-Host
 }
 
-$approved = @($results | Where-Object { $_.Action -eq 'Approved' })
 $alreadyApproved = @($results | Where-Object { $_.Action -eq 'AlreadyApproved' })
-$unexpected = @($results | Where-Object { $_.Action -eq 'SkippedUnexpectedEndpoint' })
-$needsAttention = @($results | Where-Object { $_.Action -eq 'NeedsAttention' })
+$unexpectedUnapproved = @($results | Where-Object { $_.Action -eq 'SkippedUnexpectedEndpoint' -and $_.Status -ne 'Approved' })
 $stillPending = @($results | Where-Object { $_.Expected -and $_.Status -eq 'Pending' })
-$missing = @($expected | Where-Object { -not $seen.Contains($_) })
 
-Write-Host "Approved by this run: $($approved.Count)"
+Write-Host "Approved by this run: $($approvedByRun.Count)"
 Write-Host "Already approved:     $($alreadyApproved.Count)"
 
-if ($unexpected.Count -gt 0) {
-    Write-Warning "$($unexpected.Count) connection(s) were skipped because their private endpoint name is not in the ncc_private_endpoint_rules output. Review them before approving anything by hand."
+# Approved connections outside the output, such as the platform's own private endpoints, need no attention.
+if ($unexpectedUnapproved.Count -gt 0) {
+    Write-Warning "$($unexpectedUnapproved.Count) connection(s) that are not approved were skipped because their private endpoint name is not in the ncc_private_endpoint_rules output. Review them before approving anything by hand."
 }
 
 if ($needsAttention.Count -gt 0) {
-    Write-Warning "$($needsAttention.Count) connection(s) are rejected or disconnected and cannot be approved. Recreate the matching NCC rule to raise a fresh connection."
-}
-
-if ($missing.Count -gt 0) {
-    Write-Warning "$($missing.Count) expected private endpoint(s) have no connection on any target yet: $($missing -join ', '). Databricks can take a few minutes to create them after an apply."
+    Write-Warning "$($needsAttention.Count) connection(s) are rejected or disconnected and cannot be approved: $(@($needsAttention | ForEach-Object { $_.PrivateEndpoint }) -join ', '). Recreate the matching NCC rule to raise a fresh connection."
+    exit 4
 }
 
 if ($stillPending.Count -gt 0) {
@@ -326,7 +387,13 @@ if ($stillPending.Count -gt 0) {
     exit 2
 }
 
-if ($needsAttention.Count -gt 0 -or $missing.Count -gt 0) {
+if ($unnamedRules.Count -gt 0) {
+    Write-Warning "$($unnamedRules.Count) rule(s) in the ncc_private_endpoint_rules output have no private endpoint name: $($unnamedRules -join ', '). Refresh the state with terraform apply -refresh-only, export the outputs again and re-run."
+    exit 3
+}
+
+if ($missing.Count -gt 0) {
+    Write-Warning "$($missing.Count) expected private endpoint(s) have no connection on any target: $($missing -join ', '). Check each rule's state in the Databricks account console, and re-run with -WaitMinutes to wait for endpoints that are still being created."
     exit 3
 }
 

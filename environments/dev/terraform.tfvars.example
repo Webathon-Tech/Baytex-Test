@@ -202,9 +202,6 @@ workspace_root_storage_account_name = "stvkpdbxdevroot001"
 # The front end stays reachable for users, Power BI and GitHub. Classic compute has no public IPs either way.
 workspace_public_network_access_enabled = true
 
-# When true, the root Access Connector is created and attached to the workspace.
-workspace_default_storage_firewall_enabled = false
-
 # Set only when the workspace is created.
 workspace_infrastructure_encryption_enabled = true
 

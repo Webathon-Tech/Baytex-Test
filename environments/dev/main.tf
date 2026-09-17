@@ -138,7 +138,7 @@ module "haproxy" {
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Databricks workspace
-# Premium workspace injected into the spoke VNet, and the root Access Connector when the default storage firewall is enabled.
+# Premium workspace injected into the spoke VNet, with secure cluster connectivity.
 # ----------------------------------------------------------------------------------------------------------------------
 
 module "databricks_workspace" {
@@ -153,8 +153,6 @@ module "databricks_workspace" {
   root_storage_account_name         = var.workspace_root_storage_account_name
   public_network_access_enabled     = var.workspace_public_network_access_enabled
   infrastructure_encryption_enabled = var.workspace_infrastructure_encryption_enabled
-  default_storage_firewall_enabled  = var.workspace_default_storage_firewall_enabled
-  root_access_connector_name        = local.names.access_connector_root
 
   virtual_network_id           = module.network.vnet_id
   host_subnet_name             = module.network.databricks_host_subnet_name
@@ -190,7 +188,7 @@ module "ncc" {
   allowed_internet_destinations = var.serverless_allowed_internet_destinations
 }
 
-# The network policy and its workspace attachment used to live in a module of their own.
+# State recorded at the serverless_egress module addresses is carried over to the ncc module, so the network policy and its workspace attachment are kept rather than replaced.
 moved {
   from = module.serverless_egress[0].databricks_account_network_policy.this
   to   = module.ncc.databricks_account_network_policy.this[0]

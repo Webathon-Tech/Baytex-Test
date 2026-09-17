@@ -69,7 +69,7 @@ Names are composed from `organization`, `workload`, `environment`, `region_short
 | Route tables | `rt-<prefix>-databricks`, `rt-<prefix>-default` | `rt-bte-dbx-dev-cnc-001-default` |
 | VNet peerings | `peer-<prefix>-to-hub`, `peer-hub-to-<prefix>` | `peer-hub-to-bte-dbx-dev-cnc-001` |
 | Databricks workspace | `dbw-<prefix>` | `dbw-bte-dbx-dev-cnc-001` |
-| Access Connectors | `ac-<org>-<workload>-<env>-root-<region>-<instance>`, `...-data-...` | `ac-bte-dbx-dev-data-cnc-001` |
+| Data Access Connector | `ac-<org>-<workload>-<env>-data-<region>-<instance>` | `ac-bte-dbx-dev-data-cnc-001` |
 | Network Connectivity Configuration | `ncc-<prefix>` | `ncc-bte-dbx-dev-cnc-001` |
 | Databricks network policy | `np-<prefix>` | `np-bte-dbx-dev-cnc-001` |
 | HAProxy VMs | `vm-<prefix>-proxy-01` to `vm-<prefix>-proxy-03` | `vm-bte-dbx-dev-cnc-001-proxy-01` |
@@ -191,7 +191,7 @@ every Allow rule.
 | `data_storage_account_name` | required | Globally unique name of the ADLS Gen2 data storage account. |
 | `data_containers` | `["managed", "external", "landing", "checkpoints"]` | Containers created in the data storage account. |
 | `blob_private_dns_zone_ids` | `[]` | Resource IDs of `privatelink.blob.core.windows.net` zones the blob private endpoint registers in. Leave empty to create no DNS zone group. Zones in another subscription need Private DNS Zone Contributor for the deployment identity. |
-| `dfs_private_dns_zone_ids` | `[]` | Resource IDs of `privatelink.dfs.core.windows.net` zones the dfs private endpoint registers in. Leave empty to create no DNS zone group. Zones in another subscription need Private DNS Zone Contributor for the deployment identity. |
+| `dfs_private_dns_zone_ids` | `[]` | Resource IDs of `privatelink.dfs.core.windows.net` zones the dfs private endpoint registers in, on the same terms. |
 | `blob_private_endpoint_ip` | `null` | Static private IP of the blob private endpoint. Setting it keeps the address stable when the environment is rebuilt, so the DNS records and firewall rules that point at it stay valid. |
 | `dfs_private_endpoint_ip` | `null` | Static private IP of the dfs private endpoint, on the same terms. |
 
@@ -219,7 +219,6 @@ every Allow rule.
 | --- | --- | --- |
 | `workspace_root_storage_account_name` | required | Globally unique name of the root (DBFS) storage account Databricks creates in the managed resource group. Set when the workspace is created. |
 | `workspace_public_network_access_enabled` | `true` | Allow users, Power BI and GitHub to reach the workspace front end from public networks. Classic compute has no public IPs either way. |
-| `workspace_default_storage_firewall_enabled` | `false` | Firewall the Databricks-managed root storage account. When `true`, the root Access Connector is attached to the workspace. The connector itself is created either way, because Azure refuses to delete a connector a workspace still refers to. |
 | `workspace_infrastructure_encryption_enabled` | `true` | Enable a second layer of infrastructure encryption on the root storage account. Set when the workspace is created. |
 
 ### Serverless egress
@@ -308,15 +307,13 @@ thing, so the failure cannot reach Azure.
 | `databricks_workspace_arm_id` | Azure resource ID of the Databricks workspace. |
 | `databricks_workspace_id` | Numeric Databricks workspace ID. |
 | `databricks_workspace_url` | Workspace URL. |
-| `root_access_connector_id` | Resource ID of the root Access Connector. It is attached to the workspace only while the default storage firewall is on. |
-| `root_access_connector_principal_id` | Principal ID of the root Access Connector's managed identity. |
 
 ### Serverless connectivity
 
 | Output | Description |
 | --- | --- |
 | `ncc_id` | ID of the Network Connectivity Configuration. |
-| `ncc_private_endpoint_rules` | Rule ID, private endpoint name and connection state of every NCC private endpoint rule. Approve only connections whose private endpoint name appears here. |
+| `ncc_private_endpoint_rules` | Rule ID, private endpoint name and connection state of every NCC private endpoint rule. The deploy pipeline approves exactly the connections whose private endpoint name appears here. |
 | `private_link_service_ids` | Resource IDs of the Private Link Services, keyed by destination name. |
 
 ### Data foundation
@@ -327,7 +324,7 @@ thing, so the failure cannot reach Azure.
 | `data_storage_account_name` | Name of the data storage account. |
 | `data_access_connector_id` | Resource ID of the data Access Connector, used for the Unity Catalog storage credential. |
 | `data_access_connector_principal_id` | Principal ID of the data Access Connector. |
-| `data_private_endpoint_ips` | Private IP addresses of the blob and dfs private endpoints. |
+| `data_private_endpoint_ips` | Private IP addresses of the blob and dfs private endpoints of the data storage account. |
 | `container_urls` | `abfss://` URL of each data container, keyed by container name. |
 
 ### Serverless egress
@@ -341,7 +338,7 @@ thing, so the failure cannot reach Azure.
 
 | Output | Description |
 | --- | --- |
-| `firewall_handoff` | Source subnets, routes, next hop and destination matrix for the firewall and on-premises routing changes. |
+| `firewall_handoff` | Source subnets, routes, next hop, private endpoint addresses and destination matrix for the firewall, DNS and on-premises routing changes. |
 | `unity_catalog_handoff` | Workspace, metastore, data Access Connector and storage details for the Baytex BI Unity Catalog configuration. |
 
 ## State backend inputs and outputs

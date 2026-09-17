@@ -110,11 +110,10 @@ jobs:
     secrets: inherit
 
   # ------------------------------------------------------------------ test
-  # always() is required because on a dev-only run the dev jobs are SKIPPED, and
-  # a skipped dependency would otherwise skip everything downstream. The
-  # conditions then have to re-state what "success" means, which is what the
-  # "!inputs.<env> ||" clauses do: an environment that was not ticked cannot
-  # block the ones after it, but one that WAS ticked must have applied cleanly.
+  # always() is required because on a dev-only run the dev jobs are SKIPPED, and a skipped dependency would otherwise
+  # skip everything downstream. The conditions then have to re-state what "success" means, which is what the
+  # "!inputs.<env> ||" clauses do: an environment that was not ticked cannot block the ones after it, but one that WAS
+  # ticked must have applied cleanly.
   test-plan:
     name: Plan test platform
     needs: [preflight, dev-apply]
@@ -140,11 +139,10 @@ jobs:
       allowed_refs: refs/heads/main refs/heads/hotfix/*
     secrets: inherit
 
-  # ------------------------------------------------------------------ prod prod depends on
-  # BOTH earlier stages, not
-  # just test. With dev and prod ticked but not test, test drops out - and if prod were gated on test alone,
-  # "!inputs.test" would be true and prod would deploy even after dev had failed. Each stage is therefore gated on every
-  # earlier stage that was actually ticked.
+  # ------------------------------------------------------------------ prod
+  # prod depends on BOTH earlier stages, not just test. With dev and prod ticked but not test, test drops out - and if
+  # prod were gated on test alone, "!inputs.test" would be true and prod would deploy even after dev had failed. Each
+  # stage is therefore gated on every earlier stage that was actually ticked.
   prod-plan:
     name: Plan prod platform
     needs: [preflight, dev-apply, test-apply]

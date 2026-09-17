@@ -564,12 +564,6 @@ variable "workspace_public_network_access_enabled" {
   default     = true
 }
 
-variable "workspace_default_storage_firewall_enabled" {
-  description = "Firewall the Databricks-managed root storage account. When true, the root Access Connector is created and attached to the workspace."
-  type        = bool
-  default     = false
-}
-
 variable "workspace_infrastructure_encryption_enabled" {
   description = "Enable a second layer of infrastructure encryption on the root storage account. Set when the workspace is created."
   type        = bool

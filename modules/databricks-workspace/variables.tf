@@ -3,17 +3,17 @@
 # ----------------------------------------------------------------------------------------------------------------------
 
 variable "location" {
-  description = "Azure region for the workspace and the root Access Connector."
+  description = "Azure region for the workspace."
   type        = string
 }
 
 variable "resource_group_name" {
-  description = "Resource group that holds the workspace and the root Access Connector."
+  description = "Resource group that holds the workspace."
   type        = string
 }
 
 variable "tags" {
-  description = "Tags applied to the workspace and the root Access Connector."
+  description = "Tags applied to the workspace."
   type        = map(string)
 }
 
@@ -44,16 +44,6 @@ variable "public_network_access_enabled" {
 variable "infrastructure_encryption_enabled" {
   description = "Enable a second layer of encryption on the root storage account. Set when the workspace is created."
   type        = bool
-}
-
-variable "default_storage_firewall_enabled" {
-  description = "Firewall the root storage account. Creates the root Access Connector and attaches it to the workspace."
-  type        = bool
-}
-
-variable "root_access_connector_name" {
-  description = "Name of the root Access Connector, created only when default_storage_firewall_enabled is true."
-  type        = string
 }
 
 # ----------------------------------------------------------------------------------------------------------------------

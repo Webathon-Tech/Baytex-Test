@@ -109,8 +109,9 @@ jobs:
           terraform_version: ${{ vars.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
-      # TESTING ONLY: read from a repository VARIABLE so its content is visible in the GitHub UI while the platform is
-      # being validated. Switch to the commented line before any client deployment.
+      # BOOTSTRAP_TFVARS is read from an environment variable, which GitHub does not mask in logs. To hold it as an
+      # environment secret instead, swap which of the two lines below is commented, as described in
+      # docs/github-setup.md under "Variables or secrets".
       - name: Write terraform.tfvars
         env:
           # BOOTSTRAP_TFVARS: ${{ secrets.BOOTSTRAP_TFVARS }}
@@ -267,8 +268,8 @@ jobs:
           EOF
           echo "Evidence header written to run-metadata.json"
 
-      # This root's storage account holds every environment's state, so the question "what exactly did that run do" must
-      # not depend on log retention.
+      # This root's storage account holds the environment's Terraform state, so the question "what exactly did that run
+      # do" must not depend on log retention.
       - name: Upload the apply evidence bundle
         if: always()
         uses: actions/upload-artifact@v7
