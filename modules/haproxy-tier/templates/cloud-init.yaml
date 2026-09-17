@@ -1,0 +1,31 @@
+#cloud-config
+# Custom data for every HAProxy VM, applied once by cloud-init when the VM is created.
+# It prepares the operating system only. The HAProxy configuration and the load balancer frontend IPs are applied by the
+# Custom Script Extension in the haproxy-tier Terraform module, so this file never changes between applies.
+
+package_update: true
+packages:
+  - haproxy
+
+write_files:
+  # The load balancer uses floating IP, so HAProxy binds to the frontend IPs themselves.
+  # Non-local bind lets HAProxy start even if it starts before the interface that carries those IPs is configured.
+  - path: /etc/sysctl.d/99-haproxy-nonlocal-bind.conf
+    owner: root:root
+    permissions: "0644"
+    content: |
+      net.ipv4.ip_nonlocal_bind = 1
+
+  # Unattended package upgrades, including Azure Update Manager patching, keep the HAProxy configuration applied by the
+  # Custom Script Extension instead of stopping at a configuration file prompt.
+  - path: /etc/apt/apt.conf.d/90-keep-local-config
+    owner: root:root
+    permissions: "0644"
+    content: |
+      Dpkg::Options {
+        "--force-confdef";
+        "--force-confold";
+      };
+
+runcmd:
+  - [sysctl, --system]

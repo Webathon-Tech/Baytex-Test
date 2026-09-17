@@ -23,7 +23,7 @@ Environment spoke subscription (one per environment)
   Azure Databricks workspace (Premium, VNet-injected)
   ADLS Gen2 data storage with a data Access Connector
   Root Access Connector and root storage private endpoints, when the default storage firewall is enabled
-  HAProxy tier of two or three VMs, internal load balancer and Private Link Services
+  Two zonal HAProxy VMs, internal load balancer and Private Link Services
   Network Connectivity Configuration (Databricks account level)
   Log Analytics and diagnostic settings
   Terraform state storage account
@@ -93,16 +93,20 @@ HAProxy resolves each destination's fully qualified domain name through the corp
 destinations therefore return traffic to the proxy subnet, whose address range Baytex adds to its on-premises return
 routes.
 
-Terraform delivers the HAProxy configuration and the load balancer frontend IPs to both VMs through their user data. A
-reconcile service on each VM applies them shortly after boot and every two minutes after that. It installs HAProxy once
-the package mirrors are reachable, validates each new configuration with `haproxy -c` before a graceful reload, and
-keeps the running configuration when a new one is rejected, so a change to the destinations or DNS servers updates the
-VMs in place.
+Each HAProxy VM is prepared by cloud-init when it is created, which installs HAProxy. The Custom Script Extension then
+applies the HAProxy configuration and the load balancer frontend IPs, and runs again during any apply that changes the
+destinations or DNS servers, so those changes update the VMs in place. A new configuration replaces the running one only
+after `haproxy -c` accepts it, and HAProxy reloads without dropping established connections. The configuration, the
+frontend IPs and the HAProxy service are all persistent operating system settings, so a restarted VM rejoins the pool
+as soon as it has booted.
+
+Azure Update Manager installs critical and security updates on the HAProxy VMs in a two-hour weekly window, Mountain
+Time: Saturday 02:00 for the zone 1 VM and Sunday 02:00 for the zone 2 VM. A VM restarts only when an update requires
+it, and the two VMs are never patched at the same time.
 
 The tier is built to keep serving through the loss of a VM or an availability zone. The load balancer requests the
-HAProxy health frontend over HTTP every five seconds and takes a VM out of the pool after one failed probe. A third
-address in `proxy_vm_private_ips` adds a VM in the third zone, so two VMs keep serving while one zone is unavailable. A
-connection that reaches the load balancer idle timeout receives a TCP reset, and HAProxy sends TCP keepalives on both
+HAProxy health frontend over HTTP every five seconds and takes a VM out of the pool after one failed probe, so the VM in
+the other zone carries all traffic while one VM or zone is unavailable. A connection that reaches the load balancer idle timeout receives a TCP reset, and HAProxy sends TCP keepalives on both
 sides, so long-lived database sessions stay open through the load balancer, Private Link and firewall idle timers.
 
 ## Controlling outbound destinations
@@ -135,7 +139,7 @@ Resource names follow `<type>-<organization>-<workload>-<environment>-<purpose>-
 | `platform` | Azure Databricks workspace; with the default storage firewall enabled, the root Access Connector and the blob and dfs private endpoints of the root storage account |
 | `dbx-managed` | Created and managed by Azure Databricks: the workspace root storage account and classic compute resources |
 | `data` | Data storage account and containers, blob and dfs private endpoints, data Access Connector and its role assignments, storage availability alert |
-| `connectivity` | HAProxy network interfaces, VMs and disks, internal load balancer, Private Link Services, load balancer and HAProxy VM alerts |
+| `connectivity` | HAProxy network interfaces, VMs, disks and configuration extensions, patch maintenance configurations, internal load balancer, Private Link Services, load balancer and HAProxy VM alerts |
 | `ops` | Log Analytics workspace, alert action group when receivers are configured |
 | `tfstate` | Terraform state storage account, created by the bootstrap root |
 

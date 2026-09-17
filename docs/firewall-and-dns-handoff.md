@@ -39,8 +39,8 @@ To move either one to Terraform later, Baytex grants the matching role
 6. **Firewall rules from the spoke to the other Azure spokes**, for the traffic the aggregate route sends to the
    firewall.
 7. **Firewall rules from the proxy subnet to the Ubuntu package mirrors**, `archive.ubuntu.com` and
-   `security.ubuntu.com`, over TCP 80 and 443. The HAProxy VMs install HAProxy and take platform patches this way.
-   Until the rule exists, they retry the installation every two minutes, including across restarts.
+   `security.ubuntu.com`, over TCP 80 and 443. The HAProxy VMs install HAProxy this way when they are created, and
+   install updates this way in their weekend patch windows.
 8. **Return routes** from the on-premises networks to the environment's address space.
 9. **Corporate DNS resolution** from Azure to the on-premises domain names.
 10. **Path validation** that traffic follows the expected symmetric path.

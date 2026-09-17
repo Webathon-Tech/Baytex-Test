@@ -36,6 +36,7 @@ to be completed once.
 - [ ] GitHub Environments, variables and protection rules configured ([GitHub setup](github-setup.md))
 - [ ] State backend bootstrapped
 - [ ] Approved HAProxy SSH public key and administration path provided
+- [ ] HAProxy weekend patch windows accepted for the environment
 
 ## Quality gates
 

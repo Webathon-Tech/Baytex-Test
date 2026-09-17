@@ -1,20 +1,17 @@
 # ----------------------------------------------------------------------------------------------------------------------
 # HAProxy tier module
-# Two or three HAProxy VMs, each in its own availability zone, behind an internal Standard Load Balancer, with one frontend and one Private Link Service per on-premises destination.
+# Two HAProxy VMs, in availability zones 1 and 2, behind an internal Standard Load Balancer, with one frontend and one Private Link Service per on-premises destination.
 # Databricks serverless compute reaches each destination through its Private Link Service, and HAProxy forwards the connection to the on-premises host.
 # ----------------------------------------------------------------------------------------------------------------------
 
 locals {
-  # One VM per availability zone, each with a static private IP: the first address is placed in zone 1, the second in zone 2
-  # and an optional third in zone 3. The keys are 01, 02 and 03, so adding a third VM leaves the first two unchanged.
+  # One VM per availability zone, each with a static private IP: the first address is placed in zone 1 and the second in zone 2.
   proxy_nodes = {
     for index, private_ip in var.proxy_vm_private_ips : format("%02d", index + 1) => {
       private_ip = private_ip
       zone       = tostring(index + 1)
     }
   }
-
-  frontend_ips = [for endpoint in values(var.endpoints) : endpoint.frontend_ip]
 
   # VM sizes from the v6 generation onwards support only NVMe disk controllers.
   # Earlier sizes keep Azure's default SCSI controller.
@@ -26,78 +23,16 @@ locals {
     endpoints   = var.endpoints
   }), "\r\n", "\n")
 
-  # Desired state, published in each VM's user data and applied on the VM by baytex-haproxy-reconcile.
-  # User data is updated in place, so a change to the destinations or DNS servers reaches both VMs within about two minutes
-  # without replacing them.
-  desired_state = jsonencode({
-    haproxy_cfg  = local.haproxy_config
-    frontend_ips = sort(local.frontend_ips)
-  })
+  configure_script = replace(templatefile("${path.module}/templates/configure-haproxy.sh.tftpl", {
+    haproxy_cfg_base64 = base64encode(local.haproxy_config)
+    frontend_ips       = sort([for endpoint in values(var.endpoints) : endpoint.frontend_ip])
+  }), "\r\n", "\n")
 
-  # Bootstrap files that cloud-init installs from the VM custom data.
-  # None of them depends on an input, so the custom data stays the same from one apply to the next. Changing one of these
-  # files replaces the VMs, because custom data can be set only when a VM is created.
-  bootstrap_files = {
-    reconcile_script     = replace(file("${path.module}/files/baytex-haproxy-reconcile.sh"), "\r\n", "\n")
-    reconcile_service    = replace(file("${path.module}/files/baytex-haproxy-reconcile.service"), "\r\n", "\n")
-    reconcile_timer      = replace(file("${path.module}/files/baytex-haproxy-reconcile.timer"), "\r\n", "\n")
-    frontend_ips_service = replace(file("${path.module}/files/baytex-haproxy-frontend-ips.service"), "\r\n", "\n")
-    apt_network_config   = replace(file("${path.module}/files/apt-network.conf"), "\r\n", "\n")
+  # Weekly patch windows, one per availability zone, so the two HAProxy VMs are never patched or restarted at the same time.
+  patch_windows = {
+    "1" = "Saturday"
+    "2" = "Sunday"
   }
-
-  cloud_init = yamlencode({
-    write_files = [
-      {
-        path        = "/usr/local/sbin/baytex-haproxy-reconcile"
-        permissions = "0755"
-        owner       = "root:root"
-        content     = local.bootstrap_files.reconcile_script
-      },
-      {
-        path        = "/etc/systemd/system/baytex-haproxy-reconcile.service"
-        permissions = "0644"
-        owner       = "root:root"
-        content     = local.bootstrap_files.reconcile_service
-      },
-      {
-        path        = "/etc/systemd/system/baytex-haproxy-reconcile.timer"
-        permissions = "0644"
-        owner       = "root:root"
-        content     = local.bootstrap_files.reconcile_timer
-      },
-      {
-        path        = "/etc/systemd/system/baytex-haproxy-frontend-ips.service"
-        permissions = "0644"
-        owner       = "root:root"
-        content     = local.bootstrap_files.frontend_ips_service
-      },
-      {
-        path        = "/etc/apt/apt.conf.d/99-baytex-network"
-        permissions = "0644"
-        owner       = "root:root"
-        content     = local.bootstrap_files.apt_network_config
-      },
-      {
-        # The load balancer uses floating IP. Non-local bind lets HAProxy bind a frontend IP before it is added to dummy0.
-        path        = "/etc/sysctl.d/99-haproxy-nonlocal-bind.conf"
-        permissions = "0644"
-        owner       = "root:root"
-        content     = "net.ipv4.ip_nonlocal_bind = 1\n"
-      }
-    ]
-    # bootcmd runs on every boot. It enables the reconcile timer on a VM that restarted before runcmd ran on its first boot.
-    # On the first boot itself it does nothing, because bootcmd runs before write_files has created the timer.
-    bootcmd = [
-      ["sh", "-c", "if [ -f /etc/systemd/system/baytex-haproxy-reconcile.timer ]; then systemctl enable --now baytex-haproxy-reconcile.timer; fi"]
-    ]
-    # runcmd runs once, on the first boot. The timer then starts the first reconcile within 30 seconds of boot.
-    runcmd = [
-      ["sysctl", "--system"],
-      ["systemctl", "daemon-reload"],
-      ["systemctl", "enable", "baytex-haproxy-frontend-ips.service"],
-      ["systemctl", "enable", "--now", "baytex-haproxy-reconcile.timer"]
-    ]
-  })
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -122,8 +57,11 @@ resource "azurerm_network_interface" "proxy" {
   }
 }
 
-# Ubuntu LTS on Trusted Launch (secure boot and vTPM), SSH key authentication only, and platform-managed patching.
-# The custom data carries the bootstrap and the user data carries the HAProxy configuration, as described in the locals above.
+# Ubuntu LTS on Trusted Launch (secure boot and vTPM), with SSH key authentication only.
+# cloud-init installs HAProxy when the VM is created, and the haproxy_config extension below applies its configuration.
+# The custom data has no inputs, so it is the same on every apply; changing templates/cloud-init.yaml replaces the VMs, because custom data can be set only when a VM is created.
+#
+# Patches are installed by Azure Update Manager in the zone's weekly window below, rather than at times the platform chooses.
 resource "azurerm_linux_virtual_machine" "proxy" {
   for_each = local.proxy_nodes
 
@@ -137,15 +75,19 @@ resource "azurerm_linux_virtual_machine" "proxy" {
   admin_username                  = var.admin_username
   disable_password_authentication = true
   network_interface_ids           = [azurerm_network_interface.proxy[each.key].id]
-  custom_data                     = base64encode("#cloud-config\n${local.cloud_init}")
-  user_data                       = base64encode(local.desired_state)
+  custom_data                     = base64encode(replace(file("${path.module}/templates/cloud-init.yaml"), "\r\n", "\n"))
   secure_boot_enabled             = true
   vtpm_enabled                    = true
   provision_vm_agent              = true
-  patch_assessment_mode           = "AutomaticByPlatform"
-  patch_mode                      = "AutomaticByPlatform"
-  reboot_setting                  = "IfRequired"
-  tags                            = var.tags
+
+  # MaintenanceSchedule names the patch schedule for the VM's zone, and is the tag that schedule's dynamic scope matches.
+  tags = merge(var.tags, { MaintenanceSchedule = "mc-${var.name_prefix}-proxy-zone${each.value.zone}" })
+
+  # The bypass setting hands patch timing to the Update Manager schedule, as customer-managed schedules require.
+  patch_mode                                             = "AutomaticByPlatform"
+  patch_assessment_mode                                  = "AutomaticByPlatform"
+  reboot_setting                                         = "IfRequired"
+  bypass_platform_safety_checks_on_user_schedule_enabled = true
 
   admin_ssh_key {
     username   = var.admin_username
@@ -176,10 +118,86 @@ resource "azurerm_linux_virtual_machine" "proxy" {
   depends_on = [azurerm_network_interface_backend_address_pool_association.proxy]
 }
 
-# Shows the rendered HAProxy configuration as a readable diff in the plan. The VMs receive it through their user data,
-# which the plan can show only as an encoded value.
+# ----------------------------------------------------------------------------------------------------------------------
+# HAProxy configuration
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Applies the HAProxy configuration and the load balancer frontend IPs with the Custom Script Extension, from templates/configure-haproxy.sh.tftpl.
+# The extension runs when the VM is created and again whenever the destinations or DNS servers change, without replacing the VM.
+# HAProxy validates the new configuration before it is used, and a failed run fails the apply while HAProxy keeps its current configuration.
+# The settings are protected because they carry the whole script; terraform_data.haproxy_config shows the configuration itself in the plan.
+resource "azurerm_virtual_machine_extension" "haproxy_config" {
+  for_each = azurerm_linux_virtual_machine.proxy
+
+  name                       = "configure-haproxy"
+  virtual_machine_id         = each.value.id
+  publisher                  = "Microsoft.Azure.Extensions"
+  type                       = "CustomScript"
+  type_handler_version       = "2.1"
+  auto_upgrade_minor_version = true
+  tags                       = var.tags
+
+  protected_settings = jsonencode({
+    script = base64gzip(local.configure_script)
+  })
+}
+
+# Shows the rendered HAProxy configuration as a readable diff in the plan.
 resource "terraform_data" "haproxy_config" {
   input = local.haproxy_config
+}
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Patching
+# ----------------------------------------------------------------------------------------------------------------------
+
+# One Azure Update Manager schedule per availability zone: two hours from 02:00 Mountain Time, Saturday for zone 1 and Sunday for zone 2, installing critical and security updates and restarting only when an update requires it.
+# The maintenance configuration API accepts only lowercase tag keys, so the platform tags are not applied here.
+resource "azurerm_maintenance_configuration" "patching" {
+  for_each = local.patch_windows
+
+  name                     = "mc-${var.name_prefix}-proxy-zone${each.key}"
+  resource_group_name      = var.resource_group_name
+  location                 = var.location
+  scope                    = "InGuestPatch"
+  in_guest_user_patch_mode = "User"
+
+  window {
+    start_date_time = "2026-09-19 02:00"
+    duration        = "02:00"
+    time_zone       = "Mountain Standard Time"
+    recur_every     = "1Week ${each.value}"
+  }
+
+  install_patches {
+    reboot = "IfRequired"
+
+    linux {
+      classifications_to_include = ["Critical", "Security"]
+    }
+  }
+}
+
+# Each schedule applies to the Linux VMs in this resource group that carry its MaintenanceSchedule tag.
+# A dynamic scope is not tied to a VM resource, so a replaced VM is covered by its schedule as soon as it exists.
+resource "azurerm_maintenance_assignment_dynamic_scope" "patching" {
+  for_each = azurerm_maintenance_configuration.patching
+
+  name                         = "${var.name_prefix}-proxy-zone${each.key}"
+  maintenance_configuration_id = each.value.id
+
+  filter {
+    locations       = [var.location]
+    os_types        = ["Linux"]
+    resource_groups = [var.resource_group_name]
+    resource_types  = ["Microsoft.Compute/virtualMachines"]
+    tag_filter      = "All"
+
+    tags {
+      tag    = "MaintenanceSchedule"
+      values = [each.value.name]
+    }
+  }
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
