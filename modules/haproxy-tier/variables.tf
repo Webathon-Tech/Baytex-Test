@@ -37,12 +37,12 @@ variable "proxy_vm_size" {
 }
 
 variable "proxy_vm_private_ips" {
-  description = "Static private IPs of the HAProxy VMs, two or three, in zone order: the first VM is placed in zone 1, the second in zone 2 and a third in zone 3."
+  description = "Static private IPs of the two HAProxy VMs: the first VM is placed in zone 1 and the second in zone 2."
   type        = list(string)
 
   validation {
-    condition     = length(var.proxy_vm_private_ips) >= 2 && length(var.proxy_vm_private_ips) <= 3
-    error_message = "proxy_vm_private_ips must list two or three addresses, one per availability zone."
+    condition     = length(var.proxy_vm_private_ips) == 2
+    error_message = "proxy_vm_private_ips must list two addresses, one for the zone 1 VM and one for the zone 2 VM."
   }
 }
 

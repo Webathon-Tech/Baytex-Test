@@ -72,7 +72,8 @@ Names are composed from `organization`, `workload`, `environment`, `region_short
 | Data Access Connector | `ac-<org>-<workload>-<env>-data-<region>-<instance>` | `ac-bte-dbx-dev-data-cnc-001` |
 | Network Connectivity Configuration | `ncc-<prefix>` | `ncc-bte-dbx-dev-cnc-001` |
 | Databricks network policy | `np-<prefix>` | `np-bte-dbx-dev-cnc-001` |
-| HAProxy VMs | `vm-<prefix>-proxy-01` to `vm-<prefix>-proxy-03` | `vm-bte-dbx-dev-cnc-001-proxy-01` |
+| HAProxy VMs | `vm-<prefix>-proxy-01`, `vm-<prefix>-proxy-02` | `vm-bte-dbx-dev-cnc-001-proxy-01` |
+| HAProxy patch schedules | `mc-<prefix>-proxy-zone<zone>`, assigned by the dynamic scope `<prefix>-proxy-zone<zone>` | `mc-bte-dbx-dev-cnc-001-proxy-zone1` |
 | Load balancer | `lb-<prefix>-proxy` | `lb-bte-dbx-dev-cnc-001-proxy` |
 | Private Link Services | `pls-<prefix>-<destination>` | `pls-bte-dbx-dev-cnc-001-sql6` |
 | Storage private endpoints | `pe-<storage account>-blob`, `pe-<storage account>-dfs` | `pe-stbtedbxdevcnc001-dfs` |
@@ -96,6 +97,8 @@ Every resource that supports tags receives:
 | `CostCentre` | `cost_centre` |
 | `DataClassification` | `data_classification` |
 | `Project` | `Baytex Terraform Foundations` |
+
+Each HAProxy VM also carries `MaintenanceSchedule`, the name of the patch schedule for its availability zone.
 
 `additional_tags` are merged over these.
 
@@ -141,7 +144,7 @@ Inputs of `environments/<env>`, in the order of `variables.tf`. An input without
 | `databricks_container_subnet_cidr` | required | Address prefix of the Databricks container (private) subnet. Must be inside `vnet_cidr`. |
 | `private_endpoint_subnet_cidr` | required | Address prefix of the private endpoint subnet. Must be inside `vnet_cidr`. |
 | `proxy_subnet_cidr` | required | Address prefix of the proxy subnet, which holds the HAProxy VMs, load balancer frontends and Private Link Service NAT IPs. Must be inside `vnet_cidr`. |
-| `dns_servers` | required | DNS servers, in preference order, assigned to the VNet and used by the HAProxy resolver. A change reaches the HAProxy VMs in place, within about two minutes of the apply. |
+| `dns_servers` | required | DNS servers, in preference order, assigned to the VNet and used by the HAProxy resolver. A change is applied to the HAProxy VMs in place during the apply. |
 
 ### Hub peering and routing
 
@@ -202,8 +205,23 @@ every Allow rule.
 | `admin_ssh_source_cidrs` | `[]` | CIDRs allowed to SSH to the HAProxy VMs. An empty list creates no SSH rule, and the VMs remain reachable through `az vm run-command`. |
 | `ssh_public_key` | required | SSH public key for the `azureadmin` user on the HAProxy VMs. Password authentication is disabled. |
 | `proxy_vm_size` | `"Standard_D4s_v6"` | Azure VM size of every HAProxy VM. |
-| `proxy_vm_private_ips` | required | Static private IPs of the HAProxy VMs, two or three, in zone order: the first VM is placed in zone 1, the second in zone 2 and a third in zone 3. All must be inside `proxy_subnet_cidr`. A third VM keeps two VMs serving while one availability zone is unavailable. |
-| `on_prem_endpoints` | required | On-premises destinations, keyed by a short name. Each gets a load balancer frontend on `frontend_ip`, a Private Link Service with its NAT IP on `pls_nat_ip`, and an HAProxy listener on `listen_port` that forwards to `target_fqdn:target_port`. `domain_name` is the name serverless compute uses to reach the destination. A change reaches the HAProxy VMs in place, within about two minutes of the apply. |
+| `proxy_vm_private_ips` | required | Static private IPs of the two HAProxy VMs: the first VM is placed in zone 1 and the second in zone 2. Both must be inside `proxy_subnet_cidr`. |
+| `on_prem_endpoints` | required | On-premises destinations, keyed by a short name. Each gets a load balancer frontend on `frontend_ip`, a Private Link Service with its NAT IP on `pls_nat_ip`, and an HAProxy listener on `listen_port` that forwards to `target_fqdn:target_port`. `domain_name` is the name serverless compute uses to reach the destination. A change is applied to the HAProxy VMs in place during the apply. |
+
+#### HAProxy patching
+
+Azure Update Manager installs critical and security updates on the HAProxy VMs, restarting a VM only when an update
+requires it. Each VM has its own two-hour weekly window, in Mountain Time, so the two VMs are never patched at the same
+time:
+
+| VM | Window |
+| --- | --- |
+| Zone 1 (`proxy-01`) | Saturday 02:00–04:00 |
+| Zone 2 (`proxy-02`) | Sunday 02:00–04:00 |
+
+Each schedule applies to the Linux VMs in the connectivity resource group whose `MaintenanceSchedule` tag names it, so
+a VM that is replaced is covered by its schedule without further change. The windows are set in the `haproxy-tier`
+module. The VMs reach the Ubuntu package mirrors through the firewall during these windows and when a VM is created.
 
 ### Private Link Service access
 

@@ -13,7 +13,7 @@ GitHub Actions pipelines deploy every change from a reviewed plan, through an ap
 | **Networking** | A spoke VNet with Databricks host and container subnets, a private endpoint subnet and a proxy subnet; network security groups with the environment's own rules; a NAT Gateway for Databricks internet egress; two route tables that send on-premises traffic and traffic to the other Azure spokes to the Cisco firewall; and optional VNet peering with the hub in either or both directions |
 | **Databricks** | A Premium Azure Databricks workspace with VNet injection and secure cluster connectivity, so classic compute has no public IP addresses; a Network Connectivity Configuration (NCC) bound to the workspace; and a network policy that limits which internet destinations serverless compute may reach |
 | **Data foundation** | An ADLS Gen2 storage account with hierarchical namespace, zone-redundant storage, no public network access and no shared keys; `managed`, `external`, `landing` and `checkpoints` containers; a data Access Connector with the roles Unity Catalog needs; and blob and dfs private endpoints at fixed addresses, optionally registered in central Private DNS zones |
-| **On-premises connectivity for serverless compute** | Two or three HAProxy VMs, each in its own availability zone, behind an internal Standard Load Balancer, with one frontend and one Private Link Service per approved SQL Server or Oracle destination, reached from serverless compute through NCC private endpoint rules |
+| **On-premises connectivity for serverless compute** | Two HAProxy VMs, in availability zones 1 and 2, behind an internal Standard Load Balancer, with one frontend and one Private Link Service per approved SQL Server or Oracle destination, reached from serverless compute through NCC private endpoint rules |
 | **Operations** | A Log Analytics workspace, diagnostic settings for the workspace, storage, load balancer and NAT Gateway, platform alerts on the HAProxy tier, NAT Gateway and data storage account, an optional alert action group, and Terraform outputs for the firewall and Unity Catalog handoffs |
 | **Terraform state** | A dedicated state storage account with versioning, soft delete and Microsoft Entra ID-only access |
 
@@ -154,9 +154,10 @@ be moved to Terraform later by granting the deployment service principal one rol
    ownership of the hub.
 7. **Fail-closed Private Link Service visibility.** Terraform refuses to create the Private Link Services until
    explicit visibility subscriptions are provided or all-subscription visibility is deliberately enabled.
-8. **Configuration as code for HAProxy.** Both VMs use SSH-key authentication, Trusted Launch and platform patching.
-   Terraform publishes the HAProxy configuration in the VMs' user data, and a reconcile service on each VM installs
-   HAProxy and applies every validated configuration with a graceful reload, so destination changes need no rebuild.
+8. **Configuration as code for HAProxy.** Both VMs use SSH-key authentication and Trusted Launch. cloud-init installs
+   HAProxy when a VM is created, and the Custom Script Extension applies each validated configuration with a graceful
+   reload, so destination changes need no rebuild. Azure Update Manager patches each availability zone in its own
+   weekend window.
 9. **One NCC per environment.** A workspace can bind to only one NCC, so every storage and on-premises rule for an
    environment lives in one.
 10. **Unity Catalog stays with Baytex BI.** The platform outputs everything Baytex BI needs, and creates no Unity

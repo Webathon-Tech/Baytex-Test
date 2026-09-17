@@ -42,8 +42,9 @@ state list.
 | On-premises connectivity | Serverless and classic compute connect to every approved SQL Server and Oracle destination |
 | Spoke-to-spoke | Traffic from the Databricks subnets to another Azure spoke leaves through the firewall |
 | Serverless egress | Serverless compute reaches every approved internet destination and is refused everywhere else |
-| Resilience | Connections survive stopping HAProxy, and stopping each VM, in turn |
-| Configuration changes | A change to `on_prem_endpoints` or `dns_servers` reaches both HAProxy VMs without replacing them |
+| Resilience | Connections survive stopping HAProxy, and stopping each VM, in turn, and each restarted VM rejoins the load balancer pool without intervention |
+| Configuration changes | A change to `on_prem_endpoints` or `dns_servers` reaches both HAProxy VMs during the apply without replacing them |
+| Patching | Each HAProxy VM carries the `MaintenanceSchedule` tag of its zone's schedule, and appears under that schedule in Azure Update Manager |
 | Pipelines | A deploy runs through GitHub OIDC with the approval gate and evidence bundle |
 | Monitoring | Diagnostic logs and metrics arrive in Log Analytics, and no platform alert is raised |
 | Unity Catalog | Baytex BI's storage credential, external locations and catalog work from the workspace |

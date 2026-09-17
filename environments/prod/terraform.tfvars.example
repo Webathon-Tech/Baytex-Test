@@ -155,8 +155,10 @@ admin_ssh_source_cidrs = []
 
 ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMhki1LbqhnxgL8qjn0rcCIy6b/7NYAW6AT1D+6NvlNJ vkp-platform"
 
-# Two or three VM IPs, in zone order: zone 1, zone 2 and optionally zone 3. All must be inside proxy_subnet_cidr.
+# VM size of every HAProxy VM. v6 sizes use an NVMe disk controller, which the module sets automatically.
 proxy_vm_size = "Standard_D4s_v6"
+
+# The zone 1 VM IP, then the zone 2 VM IP. Both must be inside proxy_subnet_cidr.
 proxy_vm_private_ips = [
   "10.99.34.70",
   "10.99.34.71"
