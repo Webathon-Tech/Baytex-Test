@@ -3,14 +3,13 @@ name: Reusable - Terraform Apply
 # Applies the exact binary plan that _terraform-plan.yml produced earlier in the same run. It never re-plans, because a
 # plan taken after approval could differ from the one that was approved.
 #
-# One workflow covers both directions. A destroy plan is a plan like any other,
-# so "terraform apply tfplan" performs the teardown; only the verification that
-# follows differs (outputs for a deploy, an assertion that state is empty for a
-# destroy).
+# One workflow covers both directions. A destroy plan is a plan like any other, so "terraform apply tfplan" performs the
+# teardown. Only the steps that follow the apply differ: a deploy exports its outputs and approves the Databricks
+# private endpoint connections, and a destroy records how many resources were removed.
 #
 # This job runs in the "<env>-apply" GitHub Environment. That is the single place an approval gate belongs: attach
-# required reviewers to <env>-apply and every workflow that mutates that environment - deploy, destroy and bootstrap -
-# pauses here with a reviewable plan already published.
+# required reviewers to <env>-apply and every workflow that changes that environment - deploy, destroy, bootstrap and
+# unlock - pauses for approval before it changes anything.
 
 on:
   workflow_call:
@@ -126,8 +125,9 @@ jobs:
           terraform_version: ${{ vars.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
-      # TESTING ONLY: read from a repository VARIABLE so its content is visible in the GitHub UI while the platform is
-      # being validated. Switch to the commented line before any client deployment.
+      # TFVARS is read from an environment variable, which GitHub does not mask in logs. To hold it as an
+      # environment secret instead, swap which of the two lines below is commented, as described in
+      # docs/github-setup.md under "Variables or secrets".
       - name: Write terraform.tfvars
         env:
           # TFVARS: ${{ secrets.TFVARS }}
@@ -153,8 +153,38 @@ jobs:
             -backend-config="key=${{ vars.TF_STATE_KEY }}" \
             -backend-config="use_azuread_auth=true"
 
-      # Proves the plan about to be applied is the one this run produced and had approved, and records its checksum for
-      # the evidence bundle.
+      # Deleting an NCC private endpoint rule whose connection is established only deactivates it, and Databricks removes
+      # the private endpoint seven days later. Azure refuses to delete a Private Link Service that still has a
+      # connection, so before the apply, every Private Link Service that the approved plan deletes or replaces has its
+      # connections removed. Connections are not held in Terraform state, so the saved plan remains valid, and a plan
+      # that removes no Private Link Service changes nothing here.
+      - name: Clear connections from Private Link Services the plan removes
+        if: inputs.operation == 'deploy'
+        run: |
+          set -euo pipefail
+          PLS_IDS=$(terraform show -json tfplan | jq -r '
+            .resource_changes[]
+            | select(.type == "azurerm_private_link_service" and (.change.actions | index("delete")))
+            | .change.before.id')
+
+          if [ -z "$PLS_IDS" ]; then
+            echo "The plan removes no Private Link Service."
+            exit 0
+          fi
+
+          for PLS in $PLS_IDS; do
+            echo "Private Link Service removed by the plan: $(basename "$PLS")"
+            for CONN in $(az network private-endpoint-connection list --id "$PLS" --query "[].id" -o tsv); do
+              echo "  removing connection $(basename "$CONN")"
+              az network private-endpoint-connection delete --id "$CONN" --yes --only-show-errors -o none
+            done
+          done
+
+          # Azure needs a moment before the service reports zero connections.
+          sleep 20
+
+      # Applies the plan this run produced and had approved. Terraform refuses a saved plan whose state has changed
+      # since it was made, so nothing other than the reviewed actions can reach Azure.
       - name: Apply the approved deployment plan
         if: inputs.operation == 'deploy'
         run: |
@@ -208,6 +238,35 @@ jobs:
         if: inputs.operation == 'deploy'
         run: terraform output -json > outputs.json
 
+      # Every NCC private endpoint rule makes Databricks create a private endpoint to the data storage account or to a
+      # Private Link Service, and serverless compute cannot use it until the connection is approved. Databricks creates
+      # the endpoints a few minutes after the apply, so the script keeps reviewing the targets for up to 20 minutes.
+      #
+      # The endpoint names come from the outputs this apply produced, so only connections for the environment's current
+      # rules are approved. Connections that are already approved are left alone, and any other connection is reported
+      # without being changed, so re-running a deploy is safe.
+      #
+      # -Confirm:$false is required: the script asks for confirmation before each approval, which an unattended run
+      # cannot answer.
+      - name: Approve the NCC private endpoint connections
+        if: inputs.operation == 'deploy'
+        shell: pwsh
+        run: |
+          & "$env:GITHUB_WORKSPACE/scripts/Approve-BaytexDatabricksPrivateEndpoints.ps1" `
+            -TerraformOutputPath outputs.json `
+            -WaitMinutes 20 `
+            -IncludeAlreadyApproved `
+            -Confirm:$false *>&1 | Tee-Object -FilePath approve-private-endpoints.log
+          $code = $LASTEXITCODE
+
+          switch ($code) {
+            0 { exit 0 }
+            3 { Write-Output "::error::Expected NCC private endpoints did not appear within 20 minutes, or a rule has no endpoint name. See approve-private-endpoints.log in the evidence bundle." }
+            4 { Write-Output "::error::An NCC private endpoint connection is rejected or disconnected and cannot be approved. Recreate the matching NCC rule." }
+            default { Write-Output "::error::Approving the NCC private endpoint connections failed with exit code $code." }
+          }
+          exit $code
+
       - name: Record the resources now in state
         if: always()
         run: terraform state list > state-after.txt 2>/dev/null || true
@@ -220,6 +279,8 @@ jobs:
           WORKSPACE_ID=$(out databricks_workspace_id)
           STORAGE=$(out data_storage_account_name)
           NAT_IP=$(out nat_public_ip)
+          APPROVED=$(sed -n 's/^Approved by this run:[[:space:]]*\([0-9][0-9]*\).*/\1/p' approve-private-endpoints.log 2>/dev/null)
+          ALREADY=$(sed -n 's/^Already approved:[[:space:]]*\([0-9][0-9]*\).*/\1/p' approve-private-endpoints.log 2>/dev/null)
 
           {
             echo "### ${{ inputs.environment }} platform - deployed"
@@ -230,6 +291,7 @@ jobs:
             echo "| Workspace ID | \`$WORKSPACE_ID\` |"
             echo "| Data storage account | \`$STORAGE\` |"
             echo "| NAT Gateway public IP | \`$NAT_IP\` |"
+            echo "| NCC private endpoint connections | All approved: ${APPROVED:-0} by this run, ${ALREADY:-0} already approved |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       # Counted from the state lists taken either side of the destroy rather than from the apply log: after a retry the
@@ -293,6 +355,7 @@ jobs:
             environments/${{ inputs.environment }}/plan.txt
             environments/${{ inputs.environment }}/apply.log
             environments/${{ inputs.environment }}/outputs.json
+            environments/${{ inputs.environment }}/approve-private-endpoints.log
             environments/${{ inputs.environment }}/state-before.txt
             environments/${{ inputs.environment }}/state-after.txt
             environments/${{ inputs.environment }}/run-metadata.json

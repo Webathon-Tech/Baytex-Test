@@ -6,8 +6,8 @@ name: Terraform Bootstrap State Backend
 # to store state and will refuse to run.
 #
 # Structured as plan then apply, like every other mutating workflow, because this is the one root where a careless
-# change is unrecoverable: the storage account it manages holds the state for every environment. A reviewer must see the
-# plan before anything is applied.
+# change is unrecoverable: the storage account it manages holds the Terraform state of its environment. A reviewer must
+# see the plan before anything is applied.
 #
 # Re-running is safe. The plan job detects what already exists and records the mode in the artefact, so the apply
 # performs exactly the sequence that was reviewed:

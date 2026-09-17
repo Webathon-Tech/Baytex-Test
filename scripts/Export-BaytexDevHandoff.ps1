@@ -34,6 +34,7 @@ $selected = [ordered]@{
     StorageAccountName = $outputs.data_storage_account_name.value
     DataAccessConnectorId = $outputs.data_access_connector_id.value
     RootAccessConnectorId = $outputs.root_access_connector_id.value
+    WorkspaceRootPrivateEndpointIps = $outputs.workspace_root_private_endpoint_ips.value
     ContainerUrls      = $outputs.container_urls.value
     SpokeToHubPeeringId = $outputs.spoke_to_hub_peering_id.value
     HubToSpokePeeringId = $outputs.hub_to_spoke_peering_id.value

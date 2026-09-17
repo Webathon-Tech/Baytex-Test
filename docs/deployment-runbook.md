@@ -47,7 +47,8 @@ Before approving the first apply:
   peering flags are `true` and the service principal holds Network Contributor on the hub VNet.
 - **Private DNS:** the Baytex change that creates the zones and the record sets for the storage private endpoints is
   approved and scheduled against the static addresses in `TFVARS`, or the zone IDs are set and the service principal
-  holds Private DNS Zone Contributor on both zones.
+  holds Private DNS Zone Contributor on both zones. With the default storage firewall enabled, the change also covers
+  the root storage account's endpoints, at the addresses in the `workspace_root_private_endpoint_ips` output.
 - **Firewall:** the firewall objects and rules are approved and scheduled, covering the on-premises destinations,
   spoke-to-spoke traffic for the aggregate prefix in `firewall_routes`, and proxy subnet access to the Ubuntu package
   mirrors.
@@ -64,51 +65,52 @@ days.
 ## Gate 5 — Private Link approvals
 
 Databricks creates a private endpoint for every NCC rule from its own subscriptions, so each connection arrives as
-Pending and serverless compute cannot use it until it is approved. After every deploy that creates NCC rules, approve:
+Pending and serverless compute cannot use it until it is approved. Each environment has:
 
 - one connection on each Private Link Service
 - two connections on the data storage account, one for blob and one for dfs
 
-Approve only connections whose private endpoint name matches an `endpoint_name` in the `ncc_private_endpoint_rules`
-output, and reject anything else. `scripts/Approve-BaytexDatabricksPrivateEndpoints.ps1` does exactly that: it reads the
-targets and the expected endpoint names from the environment's outputs, approves the pending connections that match, and
-reports every other connection without touching it.
+The apply job of **Terraform Deploy Platform** approves them after every deploy, in its
+**Approve the NCC private endpoint connections** step
+([Workflows](workflows.md#32-deploy-the-platform)). The step runs
+`scripts/Approve-BaytexDatabricksPrivateEndpoints.ps1` against the outputs of the apply it follows:
 
-Export the outputs once the apply has finished, then run the script:
+- It approves only pending connections whose private endpoint name matches an `endpoint_name` in the
+  `ncc_private_endpoint_rules` output, so a connection for a new rule is approved on the deploy that creates the rule.
+- It leaves connections that are already approved unchanged, so re-running a deploy is safe.
+- It reports, without changing, any connection whose endpoint name is not in the output, such as the platform's own
+  storage private endpoints.
+- It waits up to 20 minutes for endpoints Databricks is still creating.
+
+When a deploy removes an on-premises destination, the same job first removes the connections from that destination's
+Private Link Service, so Azure can delete it in the same apply.
+
+Confirm in the step's log, kept in the evidence bundle as `approve-private-endpoints.log`, that every expected
+connection is approved, and that every private endpoint rule of the environment's Network Connectivity Configuration
+shows `ESTABLISHED` in the Databricks account console.
+
+The same script approves the connections after a deploy run from a workstation. It needs PowerShell 7.2 or later and
+an Azure CLI session with Contributor on the environment subscription:
 
 ```powershell
 terraform -chdir=environments/dev output -json > dev-outputs.json
-./scripts/Approve-BaytexDatabricksPrivateEndpoints.ps1 -TerraformOutputPath dev-outputs.json
+./scripts/Approve-BaytexDatabricksPrivateEndpoints.ps1 -TerraformOutputPath dev-outputs.json -WaitMinutes 20
 ```
 
-Add `-WhatIf` to see what it would approve without changing anything. When the outputs are read from a pipeline run
-instead, the same values can be passed directly:
-
-```powershell
-$parameters = @{
-    StorageAccountId            = '<data_storage_account_id>'
-    PrivateLinkServiceId        = '<private_link_service_ids values>'
-    ExpectedPrivateEndpointName = '<endpoint_name values from ncc_private_endpoint_rules>'
-}
-./scripts/Approve-BaytexDatabricksPrivateEndpoints.ps1 @parameters
-```
-
-Running it again is safe: connections approved by an earlier run are reported as already approved and left alone. The
-exit code says what happened.
+Add `-WhatIf` to see what it would approve without changing anything. The exit code says what happened:
 
 | Exit code | Meaning |
 | --- | --- |
 | `0` | Every expected connection is approved |
-| `2` | An expected connection is still pending |
-| `3` | An expected connection is missing, rejected or disconnected |
-
-Databricks can take a few minutes to create the endpoints after an apply, so an exit code of `3` shortly after a deploy
-usually clears on a second run. Afterwards, confirm every rule in `ncc_private_endpoint_rules` reports `ESTABLISHED`.
+| `2` | Expected connections are still pending, which happens only with `-WhatIf` |
+| `3` | Expected private endpoints did not appear within the wait, or a rule in the output has no private endpoint name |
+| `4` | An expected connection is rejected or disconnected; recreate the matching NCC rule to raise a fresh connection |
 
 ## Gate 6 — handoffs
 
 - Baytex Infrastructure completes the changes in [Firewall and DNS handoff](firewall-and-dns-handoff.md), using the
-  `firewall_handoff`, `data_private_endpoint_ips` and `private_link_service_ids` outputs. This covers the Private DNS
+  `firewall_handoff`, `data_private_endpoint_ips`, `workspace_root_private_endpoint_ips` and
+  `private_link_service_ids` outputs. This covers the Private DNS
   zones and record sets, the peering in both directions, the firewall rules and the connectivity tests.
 - Baytex BI attaches the workspace to the existing metastore and configures Unity Catalog, using the
   `unity_catalog_handoff` output and [Unity Catalog handoff](unity-catalog-handoff.md).
@@ -147,12 +149,13 @@ Before business adoption, an environment can be removed and rebuilt:
 
 1. Stop new workloads.
 2. Detach the serverless network policy: apply the environment once with `attach_serverless_network_policy = false`.
-   Azure Databricks refuses to delete a policy a running workspace still refers to, so the teardown fails without this.
+   Azure Databricks refuses to delete a policy a running workspace still refers to.
 3. Preserve the Terraform state and the evidence artefacts.
-3. Remove the Baytex-managed hub, firewall and DNS changes through the Baytex change process.
-4. Confirm that no Baytex data has been loaded, then run **Terraform Destroy Platform** for the environment. Peerings and
+4. Remove the Baytex-managed hub, firewall and DNS changes through the Baytex change process.
+5. Confirm that no Baytex data has been loaded, then run **Terraform Destroy Platform** for the environment. Peerings and
    DNS zone groups created by Terraform are removed with it.
-5. Other environments and existing resources remain unaffected.
+
+Other environments and existing resources remain unaffected.
 
 After Baytex BI begins using an environment's storage, never destroy it without explicit data-owner approval and a
 confirmed backup. For changes after adoption, roll forward as described in [Workflows](workflows.md#a-rollback).

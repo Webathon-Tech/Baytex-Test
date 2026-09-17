@@ -13,6 +13,9 @@ be managed by Terraform, and every environment is delivered with both switched o
 | VNet peering between the hub and the spoke, in either direction | `create_spoke_to_hub_peering`, `create_hub_to_spoke_peering` | `false`, so Baytex creates both directions | Network Contributor on the hub VNet |
 | A records for the storage private endpoints in the hub Private DNS zones | `blob_private_dns_zone_ids`, `dfs_private_dns_zone_ids` | Empty, so Baytex creates the zones and records | Private DNS Zone Contributor on each zone |
 
+The zone IDs apply to every storage private endpoint in the spoke: the data storage account's and, when the default
+storage firewall is enabled, the workspace root storage account's.
+
 To move either one to Terraform later, Baytex grants the matching role
 ([GitHub setup](github-setup.md#optional-roles-in-the-hub-subscription)) and the values are set in the environment's
 `TFVARS`. While both are off, Terraform makes no calls to the hub subscription at all.
@@ -21,7 +24,12 @@ To move either one to Terraform later, Baytex grants the matching role
 
 1. **Private DNS zones** in the hub or connectivity subscription, with their links to the VNets that resolve them.
 2. **Record sets** in those zones for the storage private endpoints, using the addresses in the `firewall_handoff`
-   output. The endpoints take static addresses, so these records stay correct when an environment is rebuilt.
+   output:
+   - `<data storage account>.blob.core.windows.net` and `.dfs.core.windows.net`, at the static addresses in
+     `private_endpoint_ips`, so these records stay correct when an environment is rebuilt.
+   - When the default storage firewall is enabled, `<root storage account>.blob.core.windows.net` and
+     `.dfs.core.windows.net`, at the addresses in `workspace_root_private_endpoint_ips`. Azure allocates these
+     addresses, so the records are updated whenever the workspace is replaced.
 3. **VNet peering in both directions** between the hub VNet and the spoke VNet, with forwarded traffic allowed. The
    spoke has no gateway of its own and reaches on-premises networks through the firewall, so gateway transit is not
    used.
@@ -46,7 +54,8 @@ After the environment's plan is approved, provide Baytex Infrastructure with the
 | --- | --- |
 | `vnet_id`, `vnet_cidr` | The spoke VNet and its address space |
 | `firewall_handoff` | Source subnets, next hop, routes, default-route subnets, private endpoint addresses, destination matrix and the required return route |
-| `data_private_endpoint_ips` | The addresses for the blob and dfs record sets |
+| `data_private_endpoint_ips` | The addresses for the data storage account's blob and dfs record sets |
+| `workspace_root_private_endpoint_ips` | The addresses for the root storage account's blob and dfs record sets, set only when the default storage firewall is enabled |
 | `private_link_service_ids` | The Private Link Services serverless compute connects through |
 | `network_security_group_names` | The network security groups on the Databricks and proxy subnets |
 | `hub_side_peering_command` | The Azure CLI command for the hub-side peering, set only when Terraform does not create it |

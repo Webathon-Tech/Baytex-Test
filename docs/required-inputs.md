@@ -25,7 +25,7 @@ format. Proposed values in the example files are not approvals.
 - Databricks host and container subnet CIDRs
 - Private endpoint subnet CIDR
 - Proxy subnet CIDR
-- Static addresses for the blob and dfs private endpoints, inside the private endpoint subnet
+- Static addresses for the data storage blob and dfs private endpoints, inside the private endpoint subnet
 - Existing hub VNet resource ID
 - Which peering directions Terraform creates (`create_spoke_to_hub_peering`, `create_hub_to_spoke_peering`), with Network
   Contributor on the hub VNet for any Terraform-managed direction
@@ -56,7 +56,8 @@ For each SQL Server or Oracle destination:
 ## Private Link Service and NCC
 
 - Visibility model: explicit subscription IDs, or approved all-subscription visibility with manual connection approval
-- Automatic or manual approval of private endpoint connections
+- Subscriptions whose connections to the Private Link Services Azure approves automatically; the deploy pipeline
+  approves the remaining Databricks connections
 
 ## Security and operations
 
@@ -68,7 +69,7 @@ For each SQL Server or Oracle destination:
 - Alert email receivers
 - Owner of Azure Monitor Agent, endpoint detection and Arctic Wolf onboarding for the HAProxy VMs
 - Approval for public workspace front-end access
-- Default storage firewall decision, off by default
+- Default storage firewall decision, off by default and fixed when the workspace is created
 
 ## Unity Catalog handoff
 

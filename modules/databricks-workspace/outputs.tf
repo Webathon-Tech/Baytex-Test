@@ -23,15 +23,23 @@ output "managed_resource_group_id" {
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Root Access Connector
+# Default storage firewall
 # ----------------------------------------------------------------------------------------------------------------------
 
 output "root_access_connector_id" {
-  description = "Resource ID of the root Access Connector. It is attached to the workspace only while the default storage firewall is on."
-  value       = azurerm_databricks_access_connector.root.id
+  description = "Resource ID of the root Access Connector, or null when the default storage firewall is disabled."
+  value       = one(azurerm_databricks_access_connector.root[*].id)
 }
 
 output "root_access_connector_principal_id" {
-  description = "Principal ID of the root Access Connector's managed identity, or null when the default storage firewall is off."
-  value       = var.default_storage_firewall_enabled ? azurerm_databricks_access_connector.root.identity[0].principal_id : null
+  description = "Principal ID of the root Access Connector's managed identity, or null when the default storage firewall is disabled."
+  value       = one(azurerm_databricks_access_connector.root[*].identity[0].principal_id)
+}
+
+output "root_private_endpoint_ips" {
+  description = "Private IP addresses of the root storage blob and dfs private endpoints, or null when the default storage firewall is disabled."
+  value = var.default_storage_firewall_enabled ? {
+    blob = azurerm_private_endpoint.root_blob[0].private_service_connection[0].private_ip_address
+    dfs  = azurerm_private_endpoint.root_dfs[0].private_service_connection[0].private_ip_address
+  } : null
 }

@@ -6,7 +6,8 @@ to be completed once.
 ## Baytex approvals
 
 - [ ] Environment address space and subnet CIDRs approved by Baytex networking
-- [ ] Static addresses for the blob and dfs private endpoints agreed, and the DNS records planned against them
+- [ ] Static addresses for the data storage blob and dfs private endpoints agreed, and the DNS records planned against
+      them
 - [ ] VNet peering ownership decided: Terraform-managed (both peering flags `true` and Network Contributor on the hub
       VNet granted) or Baytex-managed (change scheduled)
 - [ ] Cisco firewall source, destination and port matrix approved
@@ -19,7 +20,9 @@ to be completed once.
 - [ ] Baytex BI accepts ownership of the metastore assignment, catalogs, external locations, bindings, groups and grants
 - [ ] On-premises destination list approved, including each destination's domain name, port and address
 - [ ] Workspace public front-end access approved
-- [ ] Default storage firewall decision recorded; when it is enabled, the root Access Connector is created
+- [ ] Default storage firewall decision recorded before the first apply, because changing it later replaces the
+      workspace; when it is enabled, the DNS records for the root storage private endpoints and the Power BI data
+      gateway are planned
 - [ ] Private Link Service visibility and connection approval model approved
 
 ## Azure and Databricks prerequisites
@@ -46,7 +49,8 @@ to be completed once.
 
 ## Post-apply acceptance
 
-- [ ] NCC private endpoint connections approved and every rule `ESTABLISHED`
+- [ ] The deploy's approval step reports every NCC private endpoint connection approved, and every rule is
+      `ESTABLISHED`
 - [ ] VNet peering `Connected` on both the spoke and hub VNets
 - [ ] Classic compute starts without public IP addresses
 - [ ] Serverless and classic compute reach every approved on-premises destination

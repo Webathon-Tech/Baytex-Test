@@ -107,7 +107,7 @@ be used by `prod-apply`, by another repository, or by a workflow that does not d
 
 | Role | Why it is needed |
 | --- | --- |
-| **Contributor** | Creates and manages the platform resources and registers the resource providers they need |
+| **Contributor** | Creates and manages the platform resources, registers the resource providers they need, and approves the Databricks private endpoint connections on the data storage account and the Private Link Services |
 | **Storage Blob Data Contributor** | Maintains the storage account containers, and reads and writes the Terraform state; the backend authenticates with Microsoft Entra ID (`use_azuread_auth = true`), never with an account key |
 | **Role Based Access Control Administrator** | Assigns the data Access Connector its four roles on the data storage account |
 
@@ -147,8 +147,8 @@ effect.
 ### Databricks account console
 
 Each service principal, `app-bte-dbx-<env>-terraform-001`, must be added to the Databricks account **and granted the
-Account Admin role**. Without it, the
-Network Connectivity Configuration API returns *"API disabled without account admin"* and the deploy fails.
+Account Admin role**. Without it, the Network Connectivity Configuration API returns
+*"API disabled without account admin"* and the deploy fails.
 
 > Account console → **User management** → **Service principals** → add by Application ID → enable **Account admin**.
 

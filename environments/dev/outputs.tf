@@ -71,13 +71,18 @@ output "databricks_workspace_url" {
 }
 
 output "root_access_connector_id" {
-  description = "Resource ID of the root Access Connector. It is attached to the workspace only while the default storage firewall is on."
+  description = "Resource ID of the root Access Connector, or null when the default storage firewall is disabled."
   value       = module.databricks_workspace.root_access_connector_id
 }
 
 output "root_access_connector_principal_id" {
-  description = "Principal ID of the root Access Connector's managed identity."
+  description = "Principal ID of the root Access Connector's managed identity, or null when the default storage firewall is disabled."
   value       = module.databricks_workspace.root_access_connector_principal_id
+}
+
+output "workspace_root_private_endpoint_ips" {
+  description = "Private IP addresses of the blob and dfs private endpoints of the workspace root storage account, or null when the default storage firewall is disabled."
+  value       = module.databricks_workspace.root_private_endpoint_ips
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -156,7 +161,7 @@ output "serverless_egress_allowed_destinations" {
 
 # Everything Baytex Infrastructure needs for firewall rules and return routes.
 output "firewall_handoff" {
-  description = "Source subnets, routes, next hop and destination matrix for the firewall and on-premises routing changes."
+  description = "Source subnets, routes, next hop, private endpoint addresses and destination matrix for the firewall, DNS and on-premises routing changes."
   value = {
     source_vnet_cidr = var.vnet_cidr
     source_subnets = {
@@ -174,8 +179,9 @@ output "firewall_handoff" {
       blob = module.data_foundation.blob_private_endpoint_ip
       dfs  = module.data_foundation.dfs_private_endpoint_ip
     }
-    destination_matrix    = local.endpoint_matrix
-    required_return_route = var.vnet_cidr
+    workspace_root_private_endpoint_ips = module.databricks_workspace.root_private_endpoint_ips
+    destination_matrix                  = local.endpoint_matrix
+    required_return_route               = var.vnet_cidr
   }
 }
 

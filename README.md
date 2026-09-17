@@ -11,7 +11,7 @@ GitHub Actions pipelines deploy every change from a reviewed plan, through an ap
 | Area | Delivered |
 | --- | --- |
 | **Networking** | A spoke VNet with Databricks host and container subnets, a private endpoint subnet and a proxy subnet; network security groups with the environment's own rules; a NAT Gateway for Databricks internet egress; two route tables that send on-premises traffic and traffic to the other Azure spokes to the Cisco firewall; and optional VNet peering with the hub in either or both directions |
-| **Databricks** | A Premium Azure Databricks workspace with VNet injection and secure cluster connectivity, so classic compute has no public IP addresses; a Network Connectivity Configuration (NCC) bound to the workspace; a network policy that limits which internet destinations serverless compute may reach; and a root Access Connector, attached to the workspace when the default storage firewall is enabled |
+| **Databricks** | A Premium Azure Databricks workspace with VNet injection and secure cluster connectivity, so classic compute has no public IP addresses; a Network Connectivity Configuration (NCC) bound to the workspace; a network policy that limits which internet destinations serverless compute may reach; and, when the default storage firewall is enabled, a root Access Connector and blob and dfs private endpoints to the workspace root storage account |
 | **Data foundation** | An ADLS Gen2 storage account with hierarchical namespace, zone-redundant storage, no public network access and no shared keys; `managed`, `external`, `landing` and `checkpoints` containers; a data Access Connector with the roles Unity Catalog needs; and blob and dfs private endpoints at fixed addresses, optionally registered in central Private DNS zones |
 | **On-premises connectivity for serverless compute** | Two or three HAProxy VMs, each in its own availability zone, behind an internal Standard Load Balancer, with one frontend and one Private Link Service per approved SQL Server or Oracle destination, reached from serverless compute through NCC private endpoint rules |
 | **Operations** | A Log Analytics workspace, diagnostic settings for the workspace, storage, load balancer and NAT Gateway, platform alerts on the HAProxy tier, NAT Gateway and data storage account, an optional alert action group, and Terraform outputs for the firewall and Unity Catalog handoffs |
@@ -19,8 +19,9 @@ GitHub Actions pipelines deploy every change from a reviewed plan, through an ap
 
 ### Across all environments
 
-- **Pipelines** — pull request checks, state backend bootstrap, deployment with enforced dev → test → prod promotion,
-  teardown and state lock recovery, all authenticated with GitHub OIDC and gated at the apply step.
+- **Pipelines** — pull request checks, state backend bootstrap, deployment with enforced dev → test → prod promotion
+  and automatic approval of the Databricks private endpoint connections, teardown and state lock recovery, all
+  authenticated with GitHub OIDC and gated at the apply step.
 - **Evidence** — every run that touches Azure uploads its plan, logs and run metadata as an artefact.
 - **Operational scripts** — private endpoint approval, connectivity testing and handoff export, in `scripts/`.
 - **Unity Catalog reference** — a separate, optional Terraform configuration that shows Baytex BI how to attach a
@@ -42,8 +43,9 @@ GitHub Actions pipelines deploy every change from a reviewed plan, through an ap
   |  Databricks host and container subnets                                   |
   |     - on-premises and other Azure spokes -> firewall                     |
   |     - everything else      -> NAT Gateway -> internet and Databricks     |
-  |  Private endpoint subnet: data storage (blob, dfs)                       |
-  |  Proxy subnet: Private Link Services -> load balancer -> 2 x HAProxy     |
+  |  Private endpoint subnet: data storage (blob, dfs), and workspace        |
+  |     root storage (blob, dfs) when its storage firewall is enabled        |
+  |  Proxy subnet: Private Link Services -> load balancer -> HAProxy VMs     |
   |     - all traffic          -> firewall -> on-premises destinations       |
   +--------------------------------------^-----------------------------------+
                                          |  NCC private endpoints
@@ -62,7 +64,7 @@ Full design, traffic flows and resource inventory: [docs/architecture-and-bounda
 ├── modules/
 │   ├── spoke-network/                       # VNet, subnets, NSGs, NAT Gateway, route tables, hub peering
 │   ├── data-foundation/                     # Data storage, data Access Connector, private endpoints
-│   ├── databricks-workspace/                # Workspace and root Access Connector
+│   ├── databricks-workspace/                # Workspace, root Access Connector and root storage private endpoints
 │   ├── haproxy-tier/                        # HAProxy VMs, load balancer, Private Link Services
 │   └── ncc/                                 # Network Connectivity Configuration, private endpoint rules and the serverless egress policy
 ├── baytex-bi-owned-unity-catalog-example/   # Optional Unity Catalog reference with its own state
@@ -83,7 +85,7 @@ carries a description, and every resource that supports a description or comment
 | 2 | Collect and approve the inputs for each environment | [Required inputs](docs/required-inputs.md), [Configuration reference](docs/configuration-reference.md) |
 | 3 | Create the deployment identities, GitHub Environments, variables and protection rules | [GitHub setup](docs/github-setup.md) |
 | 4 | Complete the pre-deployment sign-off | [Pre-deployment checklist](docs/pre-deployment-checklist.md) |
-| 5 | Bootstrap state, deploy and approve private endpoints, environment by environment | [Deployment runbook](docs/deployment-runbook.md), [Workflows](docs/workflows.md) |
+| 5 | Bootstrap state and deploy, environment by environment | [Deployment runbook](docs/deployment-runbook.md), [Workflows](docs/workflows.md) |
 | 6 | Complete the network and Unity Catalog handoffs | [Firewall and DNS handoff](docs/firewall-and-dns-handoff.md), [Unity Catalog handoff](docs/unity-catalog-handoff.md) |
 | 7 | Validate and accept the environment | [Validation and acceptance](docs/validation-notes.md) |
 
@@ -112,7 +114,7 @@ attached to `<env>-apply` gate every deploy, destroy, bootstrap and unlock for t
 | --- | --- | --- |
 | `Terraform Pull Request Checks` | Every pull request | Formats and validates the code, reports root parity, and plans the environments or state backends the change affects |
 | `Terraform Bootstrap State Backend` | Manual, `main` or `hotfix/*` | Creates an environment's state storage account; safe to re-run |
-| `Terraform Deploy Platform` | Manual, `main` or `hotfix/*` | Builds or updates the ticked environments in dev → test → prod order |
+| `Terraform Deploy Platform` | Manual, `main` or `hotfix/*` | Builds or updates the ticked environments in dev → test → prod order, and approves their Databricks private endpoint connections |
 | `Terraform Destroy Platform` | Manual, `main` only | Tears down the ticked environments after the names are retyped; keeps the state backend |
 | `Terraform Unlock State` | Manual, `main` only | Releases a state lock left by a cancelled or killed run |
 

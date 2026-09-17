@@ -4,8 +4,9 @@ How to plan and apply a platform environment from your own workstation, signed i
 same state file the pipelines use. Local runs suit development and troubleshooting, normally in dev; test and prod
 changes go through the gated pipelines described in [Workflows](workflows.md).
 
-The commands are PowerShell and work in Windows PowerShell 5.1 and PowerShell 7. Run them in order, in one window opened
-at the repository root, because later blocks use variables that earlier blocks set. Every environment-specific value —
+The commands are PowerShell and work in Windows PowerShell 5.1 and PowerShell 7; the scripts in `scripts/` need
+PowerShell 7.2 or later. Run them in order, in one window opened at the repository root, because later blocks use
+variables that earlier blocks set. Every environment-specific value —
 tenant, subscription, state backend and `terraform.tfvars` — is read from the environment's `<env>-plan` GitHub
 Environment.
 
@@ -137,13 +138,37 @@ terraform plan -lock-timeout=10m -out=tfplan
 Read the plan before applying. An environment that matches `main` and `TFVARS` reports `No changes`. Any
 `must be replaced` deletes and recreates that resource, so find out why first.
 
+When the plan removes an on-premises destination, remove the connections from its Private Link Service first, as the
+deploy pipeline does. Databricks keeps the private endpoint of a deleted NCC rule for seven days, and Azure refuses to
+delete a Private Link Service that still has a connection:
+
+```powershell
+# Every Private Link Service the saved plan deletes or replaces. Nothing is removed when the list is empty.
+$plan = terraform show -json tfplan | ConvertFrom-Json
+$removed = @($plan.resource_changes | Where-Object { $_.type -eq "azurerm_private_link_service" -and $_.change.actions -contains "delete" })
+foreach ($pls in $removed.change.before.id) {
+  foreach ($conn in (az network private-endpoint-connection list --id $pls --query "[].id" -o tsv)) {
+    az network private-endpoint-connection delete --id $conn --yes -o none
+  }
+}
+```
+
 ```powershell
 # Applies exactly the saved plan, without asking again.
 terraform apply -lock-timeout=10m tfplan
 ```
 
-After an apply that creates or recreates NCC rules, approve the Databricks private endpoint connections as described in
-the [deployment runbook](deployment-runbook.md#gate-5--private-link-approvals).
+A pipeline deploy approves the Databricks private endpoint connections after its apply. After a local apply, run the
+same step from PowerShell 7 in this directory:
+
+```powershell
+terraform output -json > outputs.json
+..\..\scripts\Approve-BaytexDatabricksPrivateEndpoints.ps1 -TerraformOutputPath outputs.json -WaitMinutes 20
+```
+
+The script approves only the connections named in the outputs and leaves approved connections unchanged, so running it
+after an apply that changed no NCC rule changes nothing. Its exit codes are listed in the
+[deployment runbook](deployment-runbook.md#gate-5--private-link-approvals).
 
 To look without changing anything, this plan neither waits on nor blocks a pipeline run, and cannot be applied:
 
@@ -209,6 +234,6 @@ approved and recorded like the run it interrupts.
 ```powershell
 # The saved plan holds every variable value in clear text, and removing terraform.tfvars makes the next session fetch
 # the current TFVARS rather than reuse an old copy. Both files are gitignored.
-Remove-Item tfplan, terraform.tfvars -ErrorAction SilentlyContinue
+Remove-Item tfplan, terraform.tfvars, outputs.json -ErrorAction SilentlyContinue
 Set-Location ..\..
 ```
