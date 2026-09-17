@@ -22,8 +22,7 @@ Environment spoke subscription (one per environment)
   Spoke VNet with Databricks, private endpoint and proxy subnets
   Azure Databricks workspace (Premium, VNet-injected)
   ADLS Gen2 data storage with a data Access Connector
-  Root Access Connector, attached to the workspace when the default storage firewall is enabled
-  Two-node HAProxy tier, internal load balancer and Private Link Services
+  Two zonal HAProxy VMs, internal load balancer and Private Link Services
   Network Connectivity Configuration (Databricks account level)
   Log Analytics and diagnostic settings
   Terraform state storage account
@@ -48,6 +47,8 @@ Each environment uses its own non-overlapping address space, typically a `/20`, 
   adds the environment's own rules to both. The proxy group allows the load balancer health probe, Private Link Service
   traffic on each listener port and, optionally, SSH from approved ranges, takes any further rules from
   `proxy_nsg_rules`, and then denies everything else arriving from the virtual network.
+- **No implicit outbound access** — every subnet disables Azure's default outbound access, so traffic leaves only
+  through the NAT Gateway or the firewall.
 
 ### What a network security group can and cannot close
 
@@ -64,8 +65,6 @@ route from outside the spoke and by the firewall rules that govern what may reac
 The private endpoint subnet has no network security group. Private endpoint network policies are disabled on it, which is
 the documented Azure pattern for a subnet that holds only private endpoints, and a network security group would not be
 applied to the endpoints while they are disabled.
-- **No implicit outbound access** — every subnet disables Azure's default outbound access, so traffic leaves only
-  through the NAT Gateway or the firewall.
 
 ### Reaching the other Azure spokes
 
@@ -91,16 +90,20 @@ HAProxy resolves each destination's fully qualified domain name through the corp
 destinations therefore return traffic to the proxy subnet, whose address range Baytex adds to its on-premises return
 routes.
 
-Terraform delivers the HAProxy configuration and the load balancer frontend IPs to both VMs through their user data. A
-reconcile service on each VM applies them shortly after boot and every two minutes after that. It installs HAProxy once
-the package mirrors are reachable, validates each new configuration with `haproxy -c` before a graceful reload, and
-keeps the running configuration when a new one is rejected, so a change to the destinations or DNS servers updates the
-VMs in place.
+Each HAProxy VM is prepared by cloud-init when it is created, which installs HAProxy. The Custom Script Extension then
+applies the HAProxy configuration and the load balancer frontend IPs, and runs again during any apply that changes the
+destinations or DNS servers, so those changes update the VMs in place. A new configuration replaces the running one only
+after `haproxy -c` accepts it, and HAProxy reloads without dropping established connections. The configuration, the
+frontend IPs and the HAProxy service are all persistent operating system settings, so a restarted VM rejoins the pool
+as soon as it has booted.
+
+Azure Update Manager installs critical and security updates on the HAProxy VMs in a two-hour weekly window, Mountain
+Time: Saturday 02:00 for the zone 1 VM and Sunday 02:00 for the zone 2 VM. A VM restarts only when an update requires
+it, and the two VMs are never patched at the same time.
 
 The tier is built to keep serving through the loss of a VM or an availability zone. The load balancer requests the
-HAProxy health frontend over HTTP every five seconds and takes a VM out of the pool after one failed probe. A third
-address in `proxy_vm_private_ips` adds a VM in the third zone, so two VMs keep serving while one zone is unavailable. A
-connection that reaches the load balancer idle timeout receives a TCP reset, and HAProxy sends TCP keepalives on both
+HAProxy health frontend over HTTP every five seconds and takes a VM out of the pool after one failed probe, so the VM in
+the other zone carries all traffic while one VM or zone is unavailable. A connection that reaches the load balancer idle timeout receives a TCP reset, and HAProxy sends TCP keepalives on both
 sides, so long-lived database sessions stay open through the load balancer, Private Link and firewall idle timers.
 
 ## Controlling outbound destinations
@@ -130,25 +133,24 @@ Resource names follow `<type>-<organization>-<workload>-<environment>-<purpose>-
 | Resource group | Contents |
 | --- | --- |
 | `network` | Spoke VNet, subnets, network security groups, NAT Gateway and its public IP, route tables, spoke-side peering, NAT Gateway alerts |
-| `platform` | Azure Databricks workspace, root Access Connector |
-| `dbx-managed` | Created and managed by Azure Databricks: the workspace root storage account and classic compute resources |
+| `platform` | Azure Databricks workspace |
+| `dbx-managed` | Created and managed by Azure Databricks: the workspace root storage account, with the network access Azure Databricks gives it, and classic compute resources |
 | `data` | Data storage account and containers, blob and dfs private endpoints, data Access Connector and its role assignments, storage availability alert |
-| `connectivity` | HAProxy network interfaces, VMs and disks, internal load balancer, Private Link Services, load balancer and HAProxy VM alerts |
+| `connectivity` | HAProxy network interfaces, VMs, disks and configuration extensions, patch maintenance configurations, internal load balancer, Private Link Services, load balancer and HAProxy VM alerts |
 | `ops` | Log Analytics workspace, alert action group when receivers are configured |
 | `tfstate` | Terraform state storage account, created by the bootstrap root |
 
 At the Databricks account level, each environment also has a Network Connectivity Configuration with its workspace
 binding, its private endpoint rules and the network policy attached to the workspace. All of them are created by the
-`ncc` module, because they are account-level resources bound to the same workspace. In the hub subscription, Terraform manages only the optional hub-side peering and
-Private DNS records described below.
+`ncc` module, because they are account-level resources bound to the same workspace. In the hub subscription, Terraform
+manages only the optional hub-side peering and Private DNS records described below.
 
 ### Identities and access
 
 | Identity | Access | Purpose |
 | --- | --- | --- |
-| Deployment service principal, `app-bte-dbx-<env>-terraform-001` (one per environment) | Contributor, Storage Blob Data Contributor and Role Based Access Control Administrator on the environment subscription; Databricks account admin | Runs every pipeline through GitHub OIDC, with no client secret |
+| Deployment service principal, `app-bte-dbx-<env>-terraform-001` (one per environment) | Contributor, Storage Blob Data Contributor and Role Based Access Control Administrator on the environment subscription; Databricks account admin | Runs every pipeline through GitHub OIDC, with no client secret, and approves the NCC private endpoint connections after each deploy |
 | Data Access Connector | Storage Blob Data Contributor, Storage Account Contributor, Storage Queue Data Contributor and EventGrid EventSubscription Contributor on the data storage account | Backs the Unity Catalog storage credential and Auto Loader file events |
-| Root Access Connector | Granted by Azure Databricks on the root storage account while it is attached | Accesses the workspace root storage when its firewall is enabled |
 | HAProxy VMs | System-assigned managed identities with no role assignments | Available for agent onboarding |
 
 ## Hub-subscription integration
@@ -182,7 +184,7 @@ storage private endpoints. The storage private endpoints take static addresses f
   zone IDs are supplied
 - The Databricks network policy that limits serverless internet egress, and its attachment to the workspace
 - HAProxy VMs, load balancer and Private Link Services
-- Databricks Network Connectivity Configuration and private endpoint rules
+- Databricks Network Connectivity Configuration, private endpoint rules and the approval of their connections
 - Log Analytics and platform diagnostics
 - Terraform modules, state, outputs and pipelines
 

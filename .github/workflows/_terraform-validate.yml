@@ -2,9 +2,8 @@ name: Reusable - Terraform Validate
 
 # Formatting and syntax checks for every Terraform root in the repository.
 #
-# Deliberately needs no Azure credentials and no state access. "terraform init
-# -backend=false" is enough for validate, so this is safe to run on a branch
-# opened by someone with no deployment rights, and it finishes in seconds.
+# Deliberately needs no Azure credentials and no state access. "terraform init -backend=false" is enough for validate,
+# so this is safe to run on a branch opened by someone with no deployment rights, and it finishes in seconds.
 #
 # The plan jobs depend on this rather than running beside it. A plan against an environment with no state backend
 # reports a clean skip, so without this gate a syntax error could pass unnoticed as three green skips.
@@ -37,9 +36,8 @@ jobs:
           terraform_version: ${{ vars.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
-      # Scoped to the code this pipeline deploys. "terraform fmt" takes a single
-      # target, so the deployed paths are walked in turn rather than recursing
-      # from the repository root - which would also grade roots that are never
+      # Scoped to the code this pipeline deploys. "terraform fmt" takes a single target, so the deployed paths are
+      # walked in turn rather than recursing from the repository root - which would also grade roots that are never
       # planned or applied from here.
       - name: Check Terraform formatting
         run: |

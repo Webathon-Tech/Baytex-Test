@@ -12,9 +12,8 @@ name: Terraform Destroy Platform
 # Peerings Terraform created, in either direction, are destroyed with the environment.
 #
 # Two guards before anything is touched:
-#   1. main only. Deploys may run from a hotfix branch; a teardown may not.
-#      Removing an environment is never the urgent action a hotfix exists for,
-#      so it must come from reviewed, merged code.
+#   1. main only. Deploys may run from a hotfix branch; a teardown may not. Removing an environment is never the urgent
+#      action a hotfix exists for, so it must come from reviewed, merged code.
 #   2. The ticked environments have to be retyped exactly.
 #
 # The structure matches Terraform Deploy Platform - plan in <env>-plan, apply in <env>-apply - so required reviewers

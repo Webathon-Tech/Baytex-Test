@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Applies the HAProxy configuration and the load balancer frontend IPs to one HAProxy VM.
+# Run by the Custom Script Extension from the haproxy-tier Terraform module when the VM is created and whenever the
+# destinations or DNS servers change. Every step can be repeated safely, and any failure fails the extension and the apply.
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+# On a new VM, cloud-init installs HAProxy; waiting for it avoids competing for the package manager.
+cloud-init status --wait >/dev/null 2>&1 || true
+
+if ! dpkg-query -W -f='$${db:Status-Status}' haproxy 2>/dev/null | grep -qx installed; then
+  apt-get -o DPkg::Lock::Timeout=600 update
+  apt-get -o DPkg::Lock::Timeout=600 install --yes haproxy
+fi
+
+# ----------------------------------------------------------------------------------------------------------------------
+# HAProxy configuration
+# ----------------------------------------------------------------------------------------------------------------------
+
+# The new configuration replaces the current one only after haproxy -c accepts it.
+candidate=$(mktemp /etc/haproxy/haproxy.cfg.XXXXXX)
+trap 'rm -f "$candidate"' EXIT
+base64 --decode >"$candidate" <<'HAPROXY_CFG'
+${haproxy_cfg_base64}
+HAPROXY_CFG
+haproxy -c -f "$candidate"
+install -m 0644 -o root -g root "$candidate" /etc/haproxy/haproxy.cfg
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Load balancer frontend IPs
+# ----------------------------------------------------------------------------------------------------------------------
+
+# The load balancer uses floating IP, so each frontend IP must be local to the VM.
+# systemd-networkd holds them on a dummy interface and recreates it at every boot.
+cat >/etc/systemd/network/60-haproxy-frontends.netdev <<'NETDEV'
+[NetDev]
+Name=dummy0
+Kind=dummy
+NETDEV
+
+cat >/etc/systemd/network/60-haproxy-frontends.network <<'NETWORK'
+[Match]
+Name=dummy0
+
+[Link]
+RequiredForOnline=no
+
+[Network]
+%{ for ip in frontend_ips ~}
+Address=${ip}/32
+%{ endfor ~}
+NETWORK
+
+networkctl reload
+for _ in $(seq 1 30); do
+  ip link show dummy0 >/dev/null 2>&1 && break
+  sleep 1
+done
+networkctl reconfigure dummy0
+
+# ----------------------------------------------------------------------------------------------------------------------
+# HAProxy service
+# ----------------------------------------------------------------------------------------------------------------------
+
+# A running HAProxy reloads without dropping established connections.
+systemctl enable haproxy
+systemctl reload-or-restart haproxy
+systemctl is-active --quiet haproxy

@@ -143,9 +143,22 @@ Read the plan in the summary of the matching **Plan** job, then **Approve and de
 The plan summary gives the result line and a **Replacements** count. Anything other than `none` means a resource will be
 deleted and recreated; find out which one, and why, before approving.
 
-**When it finishes**, the summary lists the workspace URL and ID, the data storage account and the NAT Gateway public
-IP. After every deploy that creates Databricks private endpoint rules, approve their connections as described in the
-[deployment runbook](deployment-runbook.md#gate-5--private-link-approvals).
+**Before the apply**, the job removes the private endpoint connections of any Private Link Service the approved plan
+deletes, in its **Clear connections from Private Link Services the plan removes** step. Deleting an NCC rule whose
+connection is established only deactivates it, and Databricks keeps its private endpoint for seven days, while Azure
+refuses to delete a Private Link Service that still has a connection. This is what lets a deploy remove an on-premises
+destination in one pass; a plan that removes no Private Link Service is not affected.
+
+**After the apply**, the job approves the Databricks private endpoint connections in its
+**Approve the NCC private endpoint connections** step. Databricks creates a private endpoint for every NCC rule, to the
+data storage account or to a Private Link Service, and serverless compute cannot use it until the connection is
+approved. The step reads the endpoint names from the outputs of the apply, approves the pending connections that match,
+leaves approved connections unchanged and reports any other connection without changing it. It waits up to 20 minutes
+for endpoints Databricks is still creating, so a deploy that adds an on-premises destination finishes with its
+connection approved. The details are in the [deployment runbook](deployment-runbook.md#gate-5--private-link-approvals).
+
+**When it finishes**, the summary lists the workspace URL and ID, the data storage account, the NAT Gateway public IP
+and the number of private endpoint connections approved.
 
 ### 3.3 Destroy an environment
 
@@ -247,8 +260,8 @@ A lock left by a run from a workstation is released by that user, as described i
 2. Run **Terraform Bootstrap State Backend** for the environment
 3. Run **Terraform Deploy Platform** for the same environment
 4. Approve the apply when it pauses
-5. Approve the Databricks private endpoint connections and complete the handoffs in the
-   [deployment runbook](deployment-runbook.md)
+5. Complete the handoffs in the [deployment runbook](deployment-runbook.md); the deploy has already approved the
+   Databricks private endpoint connections
 
 ### A routine change
 
@@ -281,8 +294,9 @@ reviewer sees it before it applies.
 
 ### Re-running after a failure
 
-Use **Re-run failed jobs** only when the cause was transient. If the code or variables changed, start a new run: a
-re-run reuses the plan the original run saved.
+Use **Re-run failed jobs** only when the cause was transient and the failed job changed nothing in Azure, because a
+re-run reuses the plan the original run saved. When an apply failed part-way, or the code or variables changed, start a
+new run so it plans against the current state.
 
 ### Concurrent runs
 
@@ -304,7 +318,7 @@ Every job that touches Azure uploads an artefact, **including when it fails**.
 | Pull request plan | `evidence-plan-<env>-<run>` | The plan text | 14 days |
 | Pull request state backend plan | `evidence-bootstrap-plan-<env>-<run>` | The plan text and detected mode | 14 days |
 | Deploy plan | `tfplan-deploy-<env>-<run>` | Binary plan, plan text, provider lock | 5 days |
-| Deploy apply | `evidence-deploy-<env>-<run>` | Plan, apply log, outputs, final state list | **30 days** |
+| Deploy apply | `evidence-deploy-<env>-<run>` | Plan, apply log, outputs, private endpoint approval log, final state list | **30 days** |
 | Destroy plan | `tfplan-destroy-<env>-<run>` | Binary plan, plan text, state before | 5 days |
 | Destroy apply | `evidence-destroy-<env>-<run>` | Plan, apply log, state before and after | **30 days** |
 | Bootstrap plan | `tfplan-bootstrap-<env>-<run>` | Binary plan, plan text, detected mode | 5 days |
@@ -340,10 +354,11 @@ Download artefacts from the bottom of a run's summary page.
 | A hub-side peering created outside Terraform shows `Disconnected` | The spoke VNet was destroyed and rebuilt | The hub owner deletes the old peering and peers the new VNet with the command in the `hub_side_peering_command` output |
 | Destroy log shows `cannot delete mws network connectivity config ... attached to one or more workspaces`, then succeeds | Expected: unbinding and deleting the NCC are separate Databricks calls, and the unbind takes a moment to register | Nothing; the apply retries automatically and `apply.log` records each attempt |
 | A HAProxy VM needs inspecting | SSH is closed unless `admin_ssh_source_cidrs` is set | Run `az vm run-command invoke -g <rg> -n <vm> --command-id RunShellScript --scripts "systemctl status haproxy"`; it needs only Virtual Machine Contributor |
-| HAProxy is not running on a VM, or a HAProxy health probe alert is raised | The VM installs HAProxy once the package mirrors are reachable through the hub peering and the firewall rule, and retries every two minutes, including after a restart | Complete the peering and the firewall rule; follow progress with `az vm run-command invoke -g <rg> -n <vm> --command-id RunShellScript --scripts "journalctl -u baytex-haproxy-reconcile -n 30 --no-pager"` |
-| A change to `on_prem_endpoints` or `dns_servers` has not reached HAProxy | The VMs apply user data changes within about two minutes, and keep the running configuration when `haproxy -c` rejects the new one | Read the same journal; a rejected configuration is kept at `/var/lib/baytex-haproxy/rejected-haproxy.cfg` for inspection |
-| HAProxy starts again after being stopped for maintenance | The reconcile service keeps HAProxy running | Stop `baytex-haproxy-reconcile.timer` before stopping HAProxy, and start the timer again afterwards |
-| Serverless compute cannot reach an on-premises name or the data storage | The Databricks private endpoint connections are still Pending | Approve them as described in the [deployment runbook](deployment-runbook.md#gate-5--private-link-approvals) |
+| Apply fails on `azurerm_virtual_machine_extension.haproxy_config` | The configuration script failed on that VM, for example because `haproxy -c` rejected the configuration or the package mirrors were unreachable while HAProxy was installed. HAProxy keeps its current configuration | Read the script output with `az vm run-command invoke -g <rg> -n <vm> --command-id RunShellScript --scripts "tail -n 50 /var/lib/waagent/custom-script/download/*/stderr"`, correct the cause and deploy again |
+| HAProxy is not running on a VM, or a HAProxy health probe alert is raised | HAProxy was stopped on the VM, or its configuration extension failed | Check `az vm extension show -g <rg> --vm-name <vm> -n configure-haproxy --instance-view` and `systemctl status haproxy` through run-command. A deploy applies the configuration again |
+| Serverless compute cannot reach an on-premises name or the data storage | A Databricks private endpoint connection is not approved, or its rule is not `ESTABLISHED` yet | Read `approve-private-endpoints.log` in the deploy's evidence bundle, and run the approval script as described in the [deployment runbook](deployment-runbook.md#gate-5--private-link-approvals) |
+| **Approve the NCC private endpoint connections** fails with exit code `3` | An expected private endpoint did not appear on its target within 20 minutes, or a rule in the outputs has no endpoint name | Check the rule's state in the Databricks account console. When it is still being created, start a new **Terraform Deploy Platform** run for the environment: its plan has nothing to change, and the step approves the connection once it appears. **Re-run failed jobs** does not help here, because the saved plan has already been applied |
+| **Approve the NCC private endpoint connections** fails with exit code `4` | An expected connection was rejected or disconnected, which Azure does not allow to be approved | Recreate the matching NCC rule so Databricks raises a fresh connection, then deploy again |
 | `Error acquiring the state lock` | Another run holds the lock | Wait; runs queue by design. If a run was killed mid-apply, release the lock with **Terraform Unlock State** (§3.5) |
 | A run is queued behind another | Deploy, Destroy and Unlock share a concurrency group | Expected; it starts when the other run finishes |
 

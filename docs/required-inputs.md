@@ -56,19 +56,19 @@ For each SQL Server or Oracle destination:
 ## Private Link Service and NCC
 
 - Visibility model: explicit subscription IDs, or approved all-subscription visibility with manual connection approval
-- Automatic or manual approval of private endpoint connections
+- Subscriptions whose connections to the Private Link Services Azure approves automatically; the deploy pipeline
+  approves the remaining Databricks connections
 
 ## Security and operations
 
 - HAProxy SSH public key
 - Approved SSH source CIDRs, or confirmation that administration uses `az vm run-command` only
 - HAProxy VM size
-- Number of HAProxy VMs: two, or three to keep two serving while one availability zone is unavailable
+- Acceptance of the HAProxy weekend patch windows
 - Log Analytics retention
 - Alert email receivers
 - Owner of Azure Monitor Agent, endpoint detection and Arctic Wolf onboarding for the HAProxy VMs
 - Approval for public workspace front-end access
-- Default storage firewall decision, off by default
 
 ## Unity Catalog handoff
 

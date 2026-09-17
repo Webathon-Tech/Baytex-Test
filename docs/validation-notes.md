@@ -14,8 +14,9 @@ Every pull request runs **Terraform Pull Request Checks** ([Workflows](workflows
 Input rules in `variables.tf` reject malformed values when a plan is created, before any resource is touched
 ([Configuration reference](configuration-reference.md#input-validation)).
 
-Every deploy then plans before it applies, the apply uses the reviewed plan, and the evidence bundle records the plan,
-apply log, outputs and state list.
+Every deploy then plans before it applies, the apply uses the reviewed plan, the Databricks private endpoint connections
+are approved against the apply's outputs, and the evidence bundle records the plan, apply log, outputs, approval log and
+state list.
 
 ## Checks before the first apply
 
@@ -37,12 +38,13 @@ apply log, outputs and state list.
 | Peering | The peering is `Connected` on both the spoke and the hub VNet |
 | DNS | On-premises names and the storage private endpoint names resolve to private addresses |
 | Data storage | Blob and dfs access works privately from classic and serverless compute, and is refused from public networks |
-| NCC | The workspace is bound and every private endpoint rule is `ESTABLISHED` |
+| NCC | The workspace is bound, the deploy approved every private endpoint connection, and every rule is `ESTABLISHED` |
 | On-premises connectivity | Serverless and classic compute connect to every approved SQL Server and Oracle destination |
 | Spoke-to-spoke | Traffic from the Databricks subnets to another Azure spoke leaves through the firewall |
 | Serverless egress | Serverless compute reaches every approved internet destination and is refused everywhere else |
-| Resilience | Connections survive stopping HAProxy, and stopping each VM, in turn |
-| Configuration changes | A change to `on_prem_endpoints` or `dns_servers` reaches both HAProxy VMs without replacing them |
+| Resilience | Connections survive stopping HAProxy, and stopping each VM, in turn, and each restarted VM rejoins the load balancer pool without intervention |
+| Configuration changes | A change to `on_prem_endpoints` or `dns_servers` reaches both HAProxy VMs during the apply without replacing them |
+| Patching | Each HAProxy VM carries the `MaintenanceSchedule` tag of its zone's schedule, and appears under that schedule in Azure Update Manager |
 | Pipelines | A deploy runs through GitHub OIDC with the approval gate and evidence bundle |
 | Monitoring | Diagnostic logs and metrics arrive in Log Analytics, and no platform alert is raised |
 | Unity Catalog | Baytex BI's storage credential, external locations and catalog work from the workspace |

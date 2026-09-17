@@ -95,9 +95,3 @@ resource "databricks_workspace_network_option" "this" {
   workspace_id      = var.workspace_id
   network_policy_id = var.attach_network_policy ? databricks_account_network_policy.this[0].network_policy_id : var.account_default_network_policy_id
 }
-
-# The attachment used to be created only alongside the policy.
-moved {
-  from = databricks_workspace_network_option.this[0]
-  to   = databricks_workspace_network_option.this
-}

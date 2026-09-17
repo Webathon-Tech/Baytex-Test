@@ -446,12 +446,12 @@ variable "proxy_vm_size" {
 }
 
 variable "proxy_vm_private_ips" {
-  description = "Static private IPs of the HAProxy VMs, two or three, in zone order: the first VM is placed in zone 1, the second in zone 2 and a third in zone 3. All must be inside proxy_subnet_cidr."
+  description = "Static private IPs of the two HAProxy VMs: the first VM is placed in zone 1 and the second in zone 2. Both must be inside proxy_subnet_cidr."
   type        = list(string)
 
   validation {
-    condition     = length(var.proxy_vm_private_ips) >= 2 && length(var.proxy_vm_private_ips) <= 3 && length(distinct(var.proxy_vm_private_ips)) == length(var.proxy_vm_private_ips)
-    error_message = "Two or three different HAProxy VM private IPs are required, one per availability zone."
+    condition     = length(var.proxy_vm_private_ips) == 2 && length(distinct(var.proxy_vm_private_ips)) == 2
+    error_message = "Two different HAProxy VM private IPs are required, one for the zone 1 VM and one for the zone 2 VM."
   }
 
   validation {
@@ -562,12 +562,6 @@ variable "workspace_public_network_access_enabled" {
   description = "Allow users, Power BI and GitHub to reach the workspace front end from public networks. Classic compute has no public IPs either way."
   type        = bool
   default     = true
-}
-
-variable "workspace_default_storage_firewall_enabled" {
-  description = "Firewall the Databricks-managed root storage account. When true, the root Access Connector is created and attached to the workspace."
-  type        = bool
-  default     = false
 }
 
 variable "workspace_infrastructure_encryption_enabled" {

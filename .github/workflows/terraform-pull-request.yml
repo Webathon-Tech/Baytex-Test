@@ -164,9 +164,8 @@ jobs:
           fi
 
   # ------------------------------------------------------------------- platform plans
-  # All three environments are
-  # planned, not just dev. The roots are separate copies of the same .tf files, so a change can be valid for dev and
-  # break prod - a name collision, or an address range that does not fit prod's allocation.
+  # All three environments are planned, not just dev. The roots are separate copies of the same .tf files, so a change
+  # can be valid for dev and break prod - a name collision, or an address range that does not fit prod's allocation.
   #
   # save_plan: false is what makes these review-only. No binary plan is uploaded, so nothing can apply what they show.
   plan-dev:
@@ -203,9 +202,8 @@ jobs:
     secrets: inherit
 
   # -------------------------------------------------------------- state backend plans
-  # The storage account these manage
-  # holds the state for its environment, so a change forcing its replacement would destroy the state it is tracked in.
-  # Before this check existed that was only visible after somebody triggered the bootstrap workflow by hand.
+  # The storage account each of these manages holds the state for its environment, so a change forcing its replacement
+  # would destroy the state it is tracked in. Planning it on the pull request shows that before the change is merged.
   plan-bootstrap-dev:
     name: Plan dev bootstrap storage account (review only)
     needs: [validate, detect]

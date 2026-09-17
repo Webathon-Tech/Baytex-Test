@@ -1,5 +1,5 @@
-# HAProxy configuration, rendered by Terraform and delivered to the VMs through their user data.
-# baytex-haproxy-reconcile applies it with a graceful reload once haproxy -c accepts it.
+# HAProxy configuration, rendered by Terraform and applied to each VM by the Custom Script Extension.
+# The extension replaces the running configuration only after haproxy -c accepts it, and reloads HAProxy gracefully.
 # One TCP frontend and backend per on-premises destination, plus an HTTP health frontend on port 8404 for the load balancer probe.
 
 global

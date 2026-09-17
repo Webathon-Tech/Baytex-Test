@@ -8,9 +8,8 @@ name: Reusable - Terraform Plan
 #   operation: destroy  terraform plan -destroy   -> what will be removed
 #   save_plan: false    review only, never applied (pull requests)
 #
-# A destroy plan is applied with "terraform apply" exactly like a deploy plan, so
-# splitting them into separate workflows would duplicate everything in order to
-# change two command-line flags.
+# A destroy plan is applied with "terraform apply" exactly like a deploy plan, so splitting them into separate workflows
+# would duplicate everything in order to change two command-line flags.
 #
 # This job runs in the "<env>-plan" GitHub Environment, which holds the credentials for the environment and carries no
 # approval gate. Approval belongs on the apply, once there is a plan to approve.
@@ -120,13 +119,12 @@ jobs:
           terraform_version: ${{ vars.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
-      # Runs before terraform.tfvars is written. "terraform fmt -check
-      # -recursive" also inspects .tfvars files, so writing the variables file
-      # first would make this gate report on the content of a GitHub variable
-      # instead of on repository code.
+      # Runs before terraform.tfvars is written. "terraform fmt -check -recursive" also inspects .tfvars files, so
+      # writing the variables file first would make this gate report on the content of a GitHub variable instead of on
+      # repository code.
       #
-      # Scoped to the code this pipeline deploys. "terraform fmt" takes a single
-      # target, so the deployed paths are walked in turn.
+      # Scoped to the code this pipeline deploys. "terraform fmt" takes a single target, so the deployed paths are
+      # walked in turn.
       - name: Check Terraform formatting
         if: env.SKIP != 'true'
         working-directory: .
@@ -187,9 +185,9 @@ jobs:
       # The complete variables file for this environment lives in GitHub rather than in git, so one set of .tf files
       # serves all three environments.
       #
-      # TESTING ONLY: read from a repository VARIABLE so its content is visible in the GitHub UI while the platform is
-      # being validated. Switch to the commented line before any client deployment - GitHub masks secrets in logs and
-      # does not mask variables.
+      # TFVARS is read from an environment variable, which GitHub does not mask in logs. To hold it as an
+      # environment secret instead, swap which of the two lines below is commented, as described in
+      # docs/github-setup.md under "Variables or secrets".
       - name: Write terraform.tfvars
         if: env.SKIP != 'true'
         env:

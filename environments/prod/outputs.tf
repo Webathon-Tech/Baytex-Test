@@ -70,16 +70,6 @@ output "databricks_workspace_url" {
   value       = "https://${module.databricks_workspace.workspace_url}"
 }
 
-output "root_access_connector_id" {
-  description = "Resource ID of the root Access Connector. It is attached to the workspace only while the default storage firewall is on."
-  value       = module.databricks_workspace.root_access_connector_id
-}
-
-output "root_access_connector_principal_id" {
-  description = "Principal ID of the root Access Connector's managed identity."
-  value       = module.databricks_workspace.root_access_connector_principal_id
-}
-
 # ----------------------------------------------------------------------------------------------------------------------
 # Serverless connectivity
 # ----------------------------------------------------------------------------------------------------------------------
@@ -156,7 +146,7 @@ output "serverless_egress_allowed_destinations" {
 
 # Everything Baytex Infrastructure needs for firewall rules and return routes.
 output "firewall_handoff" {
-  description = "Source subnets, routes, next hop and destination matrix for the firewall and on-premises routing changes."
+  description = "Source subnets, routes, next hop, private endpoint addresses and destination matrix for the firewall, DNS and on-premises routing changes."
   value = {
     source_vnet_cidr = var.vnet_cidr
     source_subnets = {
