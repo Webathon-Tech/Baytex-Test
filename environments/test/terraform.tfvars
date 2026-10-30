@@ -206,7 +206,7 @@ dfs_private_endpoint_ip  = "10.40.194.5"
 
 # Installs HAProxy on the proxy VMs and applies its configuration. The VMs install it from the Ubuntu package mirrors, which the proxy subnet reaches through the firewall.
 # While it is false the VMs serve no traffic and stay out of the load balancer backend pool. Changing it replaces both VMs.
-configure_haproxy = false
+configure_haproxy = true
 
 # One Allow-SSH rule per CIDR on the proxy NSG.
 # Empty creates none, and the VMs remain reachable through az vm run-command. Example:
