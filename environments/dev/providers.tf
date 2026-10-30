@@ -36,6 +36,11 @@ provider "databricks" {
   # The Azure CLI token is requested for this tenant.
   # Without it the provider uses the multi-tenant "common" endpoint, which cannot issue a token without an interactive sign-in.
   azure_tenant_id = var.tenant_id
+
+  # How long one account API request may take before the provider gives up; the default is 60 seconds.
+  # The NCC private endpoint rules are created in parallel and can take over a minute to be acknowledged. A create that
+  # times out is not retried, and the rule it created is left in Databricks without being recorded in state.
+  http_timeout_seconds = 300
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
