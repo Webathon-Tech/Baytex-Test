@@ -1,6 +1,7 @@
 # ----------------------------------------------------------------------------------------------------------------------
 # HAProxy tier module
 # Two HAProxy VMs, in availability zones 1 and 2, behind an internal Standard Load Balancer, with one frontend and one Private Link Service per on-premises destination.
+# Azure allows at most 8 Private Link Services per load balancer, so destinations beyond that are placed on additional load balancers in front of the same VMs.
 # Databricks serverless compute reaches each destination through its Private Link Service, and HAProxy forwards the connection to the on-premises host.
 # ----------------------------------------------------------------------------------------------------------------------
 
@@ -12,6 +13,11 @@ locals {
       zone       = tostring(index + 1)
     }
   }
+
+  # Each destination's load balancer, as a two-digit number: "01" is azurerm_lb.this, and each higher number is an
+  # additional load balancer in front of the same HAProxy VMs.
+  endpoint_load_balancer    = { for key, endpoint in var.endpoints : key => format("%02d", endpoint.load_balancer) }
+  additional_load_balancers = toset([for number in values(local.endpoint_load_balancer) : number if number != "01"])
 
   # VM sizes from the v6 generation onwards support only NVMe disk controllers.
   # Earlier sizes keep Azure's default SCSI controller.
@@ -28,10 +34,15 @@ locals {
     frontend_ips       = sort([for endpoint in values(var.endpoints) : endpoint.frontend_ip])
   }), "\r\n", "\n")
 
-  # Weekly patch windows, one per availability zone, so the two HAProxy VMs are never patched or restarted at the same time.
+  cloud_init = replace(templatefile("${path.module}/templates/cloud-init.yaml.tftpl", {
+    configure_haproxy = var.configure_haproxy
+  }), "\r\n", "\n")
+
+  # Sunday patch windows, one per availability zone, keyed by zone with the local start time in Alberta Time.
+  # The zone 2 window opens two hours after the zone 1 window closes, so the two HAProxy VMs are never patched or restarted at the same time, and a zone 1 VM that has not come back raises the health probe alert before zone 2 is touched.
   patch_windows = {
-    "1" = "Saturday"
-    "2" = "Sunday"
+    "1" = "14:00"
+    "2" = "18:00"
   }
 }
 
@@ -58,8 +69,8 @@ resource "azurerm_network_interface" "proxy" {
 }
 
 # Ubuntu LTS on Trusted Launch (secure boot and vTPM), with SSH key authentication only.
-# cloud-init installs HAProxy when the VM is created, and the haproxy_config extension below applies its configuration.
-# The custom data has no inputs, so it is the same on every apply; changing templates/cloud-init.yaml replaces the VMs, because custom data can be set only when a VM is created.
+# When configure_haproxy is true, cloud-init installs HAProxy as the VM is created and the haproxy_config extension below applies its configuration.
+# Custom data can be set only when a VM is created, so changing templates/cloud-init.yaml.tftpl or configure_haproxy replaces the VMs.
 #
 # Patches are installed by Azure Update Manager in the zone's weekly window below, rather than at times the platform chooses.
 resource "azurerm_linux_virtual_machine" "proxy" {
@@ -75,7 +86,7 @@ resource "azurerm_linux_virtual_machine" "proxy" {
   admin_username                  = var.admin_username
   disable_password_authentication = true
   network_interface_ids           = [azurerm_network_interface.proxy[each.key].id]
-  custom_data                     = base64encode(replace(file("${path.module}/templates/cloud-init.yaml"), "\r\n", "\n"))
+  custom_data                     = base64encode(local.cloud_init)
   secure_boot_enabled             = true
   vtpm_enabled                    = true
   provision_vm_agent              = true
@@ -115,7 +126,10 @@ resource "azurerm_linux_virtual_machine" "proxy" {
   boot_diagnostics {}
 
   # Creating the VM and adding its NIC to the backend pool both update the NIC, and neither resource locks the other.
-  depends_on = [azurerm_network_interface_backend_address_pool_association.proxy]
+  depends_on = [
+    azurerm_network_interface_backend_address_pool_association.proxy,
+    azurerm_network_interface_backend_address_pool_association.additional,
+  ]
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -126,8 +140,10 @@ resource "azurerm_linux_virtual_machine" "proxy" {
 # The extension runs when the VM is created and again whenever the destinations or DNS servers change, without replacing the VM.
 # HAProxy validates the new configuration before it is used, and a failed run fails the apply while HAProxy keeps its current configuration.
 # The settings are protected because they carry the whole script; terraform_data.haproxy_config shows the configuration itself in the plan.
+#
+# The script installs HAProxy from the Ubuntu package mirrors when it is not already present, so the extension exists only while configure_haproxy is true.
 resource "azurerm_virtual_machine_extension" "haproxy_config" {
-  for_each = azurerm_linux_virtual_machine.proxy
+  for_each = var.configure_haproxy ? azurerm_linux_virtual_machine.proxy : {}
 
   name                       = "configure-haproxy"
   virtual_machine_id         = each.value.id
@@ -151,7 +167,10 @@ resource "terraform_data" "haproxy_config" {
 # Patching
 # ----------------------------------------------------------------------------------------------------------------------
 
-# One Azure Update Manager schedule per availability zone: two hours from 02:00 Mountain Time, Saturday for zone 1 and Sunday for zone 2, installing critical and security updates and restarting only when an update requires it.
+# One Azure Update Manager schedule per availability zone, every Sunday in Alberta Time: 14:00-16:00 for zone 1 and 18:00-20:00 for zone 2, installing critical and security updates and restarting only when an update requires it.
+# Alberta stays on UTC-6 all year from 1 November 2026. Azure Update Manager does not yet offer the Windows "Alberta Standard Time" zone, so the schedules use "Canada Central Standard Time" (Saskatchewan), which is also UTC-6 all year.
+# "Mountain Standard Time" would follow US daylight saving and move the windows one hour later in Alberta every winter.
+# start_date_time is the first Sunday the schedule runs; after that only its time of day matters.
 # The maintenance configuration API accepts only lowercase tag keys, so the platform tags are not applied here.
 resource "azurerm_maintenance_configuration" "patching" {
   for_each = local.patch_windows
@@ -163,10 +182,10 @@ resource "azurerm_maintenance_configuration" "patching" {
   in_guest_user_patch_mode = "User"
 
   window {
-    start_date_time = "2026-09-19 02:00"
+    start_date_time = "2026-10-04 ${each.value}"
     duration        = "02:00"
-    time_zone       = "Mountain Standard Time"
-    recur_every     = "1Week ${each.value}"
+    time_zone       = "Canada Central Standard Time"
+    recur_every     = "1Week Sunday"
   }
 
   install_patches {
@@ -204,7 +223,7 @@ resource "azurerm_maintenance_assignment_dynamic_scope" "patching" {
 # Internal load balancer
 # ----------------------------------------------------------------------------------------------------------------------
 
-# One static frontend IP per on-premises destination.
+# One static frontend IP per on-premises destination on load balancer 1, the destinations whose load_balancer is 1.
 resource "azurerm_lb" "this" {
   name                = "lb-${var.name_prefix}-proxy"
   location            = var.location
@@ -213,7 +232,7 @@ resource "azurerm_lb" "this" {
   tags                = var.tags
 
   dynamic "frontend_ip_configuration" {
-    for_each = var.endpoints
+    for_each = { for key, endpoint in var.endpoints : key => endpoint if local.endpoint_load_balancer[key] == "01" }
     content {
       name                          = "fe-${frontend_ip_configuration.key}"
       subnet_id                     = var.proxy_subnet_id
@@ -252,6 +271,77 @@ resource "azurerm_lb_probe" "haproxy" {
   probe_threshold     = 1
 }
 
+# Load balancers 2 and up, for the destinations beyond the 8 Private Link Services one load balancer can hold.
+# Each has its own frontends, backend pool and health probe, in front of the same HAProxy VMs, and is keyed by its
+# two-digit number.
+# Each is written after load balancer 1, so an address load balancer 1 releases in an apply can be reused here.
+resource "azurerm_lb" "additional" {
+  for_each = local.additional_load_balancers
+
+  name                = "lb-${var.name_prefix}-proxy-${each.key}"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  sku                 = "Standard"
+  tags                = var.tags
+
+  dynamic "frontend_ip_configuration" {
+    for_each = { for key, endpoint in var.endpoints : key => endpoint if local.endpoint_load_balancer[key] == each.key }
+    content {
+      name                          = "fe-${frontend_ip_configuration.key}"
+      subnet_id                     = var.proxy_subnet_id
+      private_ip_address            = frontend_ip_configuration.value.frontend_ip
+      private_ip_address_allocation = "Static"
+    }
+  }
+
+  depends_on = [azurerm_lb.this]
+}
+
+resource "azurerm_lb_backend_address_pool" "additional" {
+  for_each = azurerm_lb.additional
+
+  name            = "be-${var.name_prefix}-proxy-${each.key}"
+  loadbalancer_id = each.value.id
+}
+
+# The same HTTP probe as load balancer 1's, so a VM serves a destination only while HAProxy itself answers.
+resource "azurerm_lb_probe" "additional" {
+  for_each = azurerm_lb.additional
+
+  name                = "probe-haproxy-8404"
+  loadbalancer_id     = each.value.id
+  protocol            = "Http"
+  port                = 8404
+  request_path        = "/"
+  interval_in_seconds = 5
+  number_of_probes    = 2
+  probe_threshold     = 1
+}
+
+# Each HAProxy NIC joins the backend pool of every additional load balancer, keyed "<load balancer>-<node>".
+resource "azurerm_network_interface_backend_address_pool_association" "additional" {
+  for_each = {
+    for pair in setproduct(local.additional_load_balancers, keys(local.proxy_nodes)) : "${pair[0]}-${pair[1]}" => {
+      load_balancer = pair[0]
+      node          = pair[1]
+    }
+  }
+
+  network_interface_id    = azurerm_network_interface.proxy[each.value.node].id
+  ip_configuration_name   = "ipconfig1"
+  backend_address_pool_id = azurerm_lb_backend_address_pool.additional[each.value.load_balancer].id
+
+  # Waits for the probe for the same reason as the load balancer 1 association.
+  depends_on = [azurerm_lb_probe.additional]
+}
+
+locals {
+  # Load balancer, backend pool and probe IDs keyed by load balancer number, for the rules and Private Link Services.
+  load_balancer_ids = merge({ "01" = azurerm_lb.this.id }, { for key, lb in azurerm_lb.additional : key => lb.id })
+  backend_pool_ids  = merge({ "01" = azurerm_lb_backend_address_pool.this.id }, { for key, pool in azurerm_lb_backend_address_pool.additional : key => pool.id })
+  probe_ids         = merge({ "01" = azurerm_lb_probe.haproxy.id }, { for key, probe in azurerm_lb_probe.additional : key => probe.id })
+}
+
 # Floating IP keeps the frontend IP as the destination address, so each HAProxy frontend binds to its own frontend IP and port.
 # Outbound SNAT is disabled because the load balancer carries no outbound traffic.
 # TCP reset is sent to both ends of a connection that reaches the idle timeout, so clients reconnect straight away instead
@@ -260,13 +350,13 @@ resource "azurerm_lb_rule" "endpoint" {
   for_each = var.endpoints
 
   name                           = "rule-${each.key}"
-  loadbalancer_id                = azurerm_lb.this.id
+  loadbalancer_id                = local.load_balancer_ids[local.endpoint_load_balancer[each.key]]
   frontend_ip_configuration_name = "fe-${each.key}"
   protocol                       = "Tcp"
   frontend_port                  = each.value.listen_port
   backend_port                   = each.value.listen_port
-  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.this.id]
-  probe_id                       = azurerm_lb_probe.haproxy.id
+  backend_address_pool_ids       = [local.backend_pool_ids[local.endpoint_load_balancer[each.key]]]
+  probe_id                       = local.probe_ids[local.endpoint_load_balancer[each.key]]
   floating_ip_enabled            = true
   disable_outbound_snat          = true
   idle_timeout_in_minutes        = 30
@@ -277,6 +367,7 @@ resource "azurerm_lb_rule" "endpoint" {
   # the rules. Run in parallel, Azure rejects a rule with ConflictingConcurrentWriteNotAllowed.
   depends_on = [
     azurerm_network_interface_backend_address_pool_association.proxy,
+    azurerm_network_interface_backend_address_pool_association.additional,
     azurerm_linux_virtual_machine.proxy,
   ]
 }
@@ -285,7 +376,7 @@ resource "azurerm_lb_rule" "endpoint" {
 # Private Link Services
 # ----------------------------------------------------------------------------------------------------------------------
 
-# One Private Link Service per destination, on that destination's load balancer frontend.
+# One Private Link Service per destination, on that destination's frontend on its own load balancer.
 # The Databricks NCC creates a private endpoint to each one, and the connection must be approved unless its subscription is in auto_approval_subscription_ids.
 resource "azurerm_private_link_service" "endpoint" {
   for_each = var.endpoints
@@ -296,7 +387,7 @@ resource "azurerm_private_link_service" "endpoint" {
   # The frontend's resource ID is composed from the load balancer ID rather than read back from its frontend_ip_configuration attribute.
   # Azure reports that attribute as computed, so while a destination is being added or renamed it still holds the previous set and no frontend would match the new name.
   load_balancer_frontend_ip_configuration_ids = [
-    "${azurerm_lb.this.id}/frontendIPConfigurations/fe-${each.key}"
+    "${local.load_balancer_ids[local.endpoint_load_balancer[each.key]]}/frontendIPConfigurations/fe-${each.key}"
   ]
   visibility_subscription_ids    = var.allow_all_subscriptions_visibility ? [] : var.visibility_subscription_ids
   auto_approval_subscription_ids = var.auto_approval_subscription_ids

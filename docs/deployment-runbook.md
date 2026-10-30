@@ -8,19 +8,17 @@ prod — completing every gate before moving to the next.
 - Confirm the architecture and ownership boundaries in [Architecture and boundaries](architecture-and-boundaries.md).
 - Confirm the environment's IP address plan with Baytex networking.
 - Confirm the exact matrix of on-premises destinations, ports and domain names.
-- Decide whether Terraform manages the VNet peering and the Private DNS registration of the storage private endpoints.
-  For each one Terraform manages, Baytex grants the hub role in
-  [GitHub setup](github-setup.md#optional-roles-in-the-hub-subscription).
-- Submit the firewall, return-route and DNS changes, and the hub peering change if Terraform does not manage it
-  ([Firewall and DNS handoff](firewall-and-dns-handoff.md)).
-- Confirm the deployment identity's Azure roles, including any hub-subscription roles, and its Databricks account admin
-  access.
+- Submit the Baytex changes for the VNet peering in both directions, the Private DNS zones and record sets, the firewall
+  rules and the return routes ([Firewall and DNS handoff](firewall-and-dns-handoff.md)).
+- Confirm the deployment identity's Azure roles, its Databricks account admin access, and its `CREATE STORAGE
+  CREDENTIAL` and `CREATE EXTERNAL LOCATION` privileges on the metastore.
 - Complete the [pre-deployment checklist](pre-deployment-checklist.md).
 
 ## Gate 1 — state backend
 
-1. Set `BOOTSTRAP_TFVARS` on `<env>-plan` and `<env>-apply` from `bootstrap/<env>/baytex.terraform.tfvars.example`, and
-   the `TF_STATE_*` variables to the same names ([GitHub setup](github-setup.md#4-variables-per-environment)).
+1. Confirm `bootstrap/<env>/terraform.tfvars` on `main` holds the approved state backend names, and set the
+   `TF_STATE_*` variables on `<env>-plan` to the same names
+   ([GitHub setup](github-setup.md#4-variables-per-environment)).
 2. Run **Terraform Bootstrap State Backend** for the environment and approve the apply
    ([Workflows](workflows.md#31-bootstrap-the-state-backend)).
 3. Confirm the summary shows the expected storage account, container and state key.
@@ -30,30 +28,39 @@ deleted.
 
 ## Gate 2 — plan
 
-1. Set `TFVARS` on `<env>-plan` and `<env>-apply` from the approved values, following
-   `environments/<env>/baytex.terraform.tfvars.example`.
-2. Open a pull request for any code change, or run **Terraform Deploy Platform** for the environment and stop at the
-   approval gate.
+1. Merge the approved values into `environments/<env>/terraform.tfvars` through a pull request.
+2. Read the pull request plan for the environment, or run **Terraform Deploy Platform** for the environment and stop at
+   the approval gate.
 3. In the plan, confirm that:
    - every action creates a new resource for this environment, or updates one as intended
-   - no existing Baytex resource is referenced other than the approved hub VNet, Private DNS zones and shared inputs
+   - no existing Baytex resource is referenced other than the hub VNet ID and other approved shared inputs
    - the **Replacements** count is `none`, unless a replacement is expected and understood
 
 ## Gate 3 — network prerequisites
 
 Before approving the first apply:
 
-- **VNet peering:** the Baytex change that creates the peering in both directions is approved and scheduled, or both
-  peering flags are `true` and the service principal holds Network Contributor on the hub VNet.
+- **VNet peering:** the Baytex change that creates the peering in both directions is approved and scheduled.
 - **Private DNS:** the Baytex change that creates the zones and the record sets for the storage private endpoints is
-  approved and scheduled against the static addresses in `TFVARS`, or the zone IDs are set and the service principal
-  holds Private DNS Zone Contributor on both zones.
+  approved and scheduled against the static addresses in `terraform.tfvars`.
 - **Firewall:** the firewall objects and rules are approved and scheduled, covering the on-premises destinations,
   spoke-to-spoke traffic for the aggregate prefix in `firewall_routes`, and proxy subnet access to the Ubuntu package
   mirrors.
 - **Routing:** the on-premises return routes to the environment's address space are approved and scheduled.
 - **Outbound destinations:** the approved list is in `serverless_allowed_internet_destinations`, and the enforcement
   mode is the agreed one.
+
+The network changes above do not have to be complete before the first apply. `configure_haproxy` decides whether the
+apply depends on them:
+
+| `configure_haproxy` | What the apply needs | Result |
+| --- | --- | --- |
+| `false` | Nothing from the network changes | The whole environment is deployed. The HAProxy VMs carry no HAProxy, fail the health probe and stay out of the backend pool, so the tier serves no traffic |
+| `true` | Proxy subnet access to the Ubuntu package mirrors, and the names resolving | The HAProxy VMs install HAProxy and the tier serves traffic |
+
+Deploy with `configure_haproxy = false` while the network changes are outstanding, then set it to `true` and deploy
+again once proxy subnet access to the package mirrors is in place. The second apply replaces both HAProxy VMs, which is
+how they come back with HAProxy installed.
 
 ## Gate 4 — apply
 
@@ -110,8 +117,9 @@ Add `-WhatIf` to see what it would approve without changing anything. The exit c
 - Baytex Infrastructure completes the changes in [Firewall and DNS handoff](firewall-and-dns-handoff.md), using the
   `firewall_handoff`, `data_private_endpoint_ips` and `private_link_service_ids` outputs. This covers the Private DNS
   zones and record sets, the peering in both directions, the firewall rules and the connectivity tests.
-- Baytex BI attaches the workspace to the existing metastore and configures Unity Catalog, using the
-  `unity_catalog_handoff` output and [Unity Catalog handoff](unity-catalog-handoff.md).
+- Baytex BI creates the environment's catalogs with their managed storage in the platform's external location, and
+  configures their schemas, bindings and grants, using the `unity_catalog_handoff` output and
+  [Unity Catalog handoff](unity-catalog-handoff.md).
 
 ## Gate 7 — technical validation
 
@@ -123,6 +131,8 @@ Work through the acceptance criteria in [Validation and acceptance](validation-n
 - VNet peering connected in both directions
 - DNS resolution of on-premises names and storage private endpoints
 - Private access to the data storage account
+- **Test connection** passing on the external location `el_bte_dbx_<env>_data_cnc_<instance>` in Catalog Explorer; it is
+  saved without validation, so this is the first check of its storage access
 - NCC binding and every private endpoint rule established
 - Serverless and classic compute connectivity to each approved SQL Server and Oracle destination
 - Traffic from the Databricks subnets to another Azure spoke leaving through the firewall
@@ -150,8 +160,10 @@ Before business adoption, an environment can be removed and rebuilt:
    Azure Databricks refuses to delete a policy a running workspace still refers to.
 3. Preserve the Terraform state and the evidence artefacts.
 4. Remove the Baytex-managed hub, firewall and DNS changes through the Baytex change process.
-5. Confirm that no Baytex data has been loaded, then run **Terraform Destroy Platform** for the environment. Peerings and
-   DNS zone groups created by Terraform are removed with it.
+5. Confirm that no Baytex data has been loaded, and that no catalog keeps its managed storage in the platform's
+   external location: the location is not deleted while one does, and the destroy stops there. Then run
+   **Terraform Destroy Platform** for the environment. Peerings and DNS zone groups created by Terraform are removed
+   with it.
 
 Other environments and existing resources remain unaffected.
 

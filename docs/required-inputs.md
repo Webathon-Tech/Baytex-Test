@@ -1,9 +1,9 @@
 # Required Inputs
 
-The decisions and values to collect and approve for each environment before its first plan. They become the
-environment's `TFVARS` and `BOOTSTRAP_TFVARS`; every input is described in the
-[configuration reference](configuration-reference.md), and `baytex.terraform.tfvars.example` in each root shows the
-format. Proposed values in the example files are not approvals.
+The decisions and values to collect and approve for each environment before its first plan. They are recorded in the
+environment's `environments/<env>/terraform.tfvars` and `bootstrap/<env>/terraform.tfvars`, which show the format;
+every input is described in the [configuration reference](configuration-reference.md). A value is approved when the
+pull request that sets it is approved.
 
 ## Azure and Databricks
 
@@ -12,6 +12,8 @@ format. Proposed values in the example files are not approvals.
 - Azure Databricks account ID
 - Existing Canada Central Unity Catalog metastore ID
 - Confirmation that the deployment service principal is in the Databricks account with the Account Admin role
+- Confirmation that a metastore admin has granted the deployment service principal `CREATE STORAGE CREDENTIAL` and
+  `CREATE EXTERNAL LOCATION` on the metastore
 
 ## Naming and tagging
 
@@ -26,14 +28,14 @@ format. Proposed values in the example files are not approvals.
 - Private endpoint subnet CIDR
 - Proxy subnet CIDR
 - Static addresses for the blob and dfs private endpoints, inside the private endpoint subnet
-- Existing hub VNet resource ID
-- Which peering directions Terraform creates (`create_spoke_to_hub_peering`, `create_hub_to_spoke_peering`), with Network
-  Contributor on the hub VNet for any Terraform-managed direction
+- Existing hub VNet resource ID, used for the hub-side peering command in the outputs
+- Confirmation that Baytex Infrastructure creates the VNet peering in both directions; the Terraform peering flags stay
+  `false`
 - Cisco firewall private IP
 - The prefixes the Databricks subnets route to the firewall: the aggregate covering the other Azure spokes, the
   on-premises ranges and any vendor VPN host
 - Corporate DNS servers
-- Blob and dfs Private DNS zone IDs with Private DNS Zone Contributor on those zones, or an approved manual DNS change
+- Confirmation that Baytex Infrastructure creates the blob and dfs Private DNS record sets; the zone ID lists stay empty
 - Owner and change reference for the on-premises return routes
 
 ## Outbound destinations
@@ -55,16 +57,17 @@ For each SQL Server or Oracle destination:
 
 ## Private Link Service and NCC
 
-- Visibility model: explicit subscription IDs, or approved all-subscription visibility with manual connection approval
-- Subscriptions whose connections to the Private Link Services Azure approves automatically; the deploy pipeline
-  approves the remaining Databricks connections
+- Visibility model: all-subscription visibility by default, because Azure Databricks does not publish the subscriptions
+  its NCC private endpoints come from; explicit subscription IDs only if Baytex requires them
+- Auto-approval subscriptions, normally none: the deploy pipeline approves the Databricks connections by private
+  endpoint name
 
 ## Security and operations
 
-- HAProxy SSH public key
+- HAProxy SSH public key, from a key pair created for this environment, with the private key held in a Baytex vault
 - Approved SSH source CIDRs, or confirmation that administration uses `az vm run-command` only
 - HAProxy VM size
-- Acceptance of the HAProxy weekend patch windows
+- Acceptance of the HAProxy patch windows: Sunday 14:00–16:00 and 18:00–20:00 Alberta Time
 - Log Analytics retention
 - Alert email receivers
 - Owner of Azure Monitor Agent, endpoint detection and Arctic Wolf onboarding for the HAProxy VMs
@@ -73,7 +76,11 @@ For each SQL Server or Oracle destination:
 ## Unity Catalog handoff
 
 - Metastore administrator
-- Catalog and storage location naming for the environment
+- The container the platform's external location covers, `unity-catalog` unless another name is agreed; it cannot be
+  changed safely once catalogs use it
+- The account-level groups, if any, that the platform grants privileges on the external location through
+  `unity_catalog_external_location_grants`
+- Catalog naming for the environment
 - Account-level groups and owners
 - Workspace binding model and cross-environment access
 - Representative workload and its acceptance criteria

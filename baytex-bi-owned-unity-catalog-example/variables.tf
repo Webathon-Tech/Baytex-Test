@@ -1,75 +1,31 @@
 # ----------------------------------------------------------------------------------------------------------------------
-# Databricks account and workspace
+# Platform workspace and storage
 # Take these values from the platform's unity_catalog_handoff output.
 # ----------------------------------------------------------------------------------------------------------------------
 
-variable "databricks_account_id" {
-  description = "Existing Baytex Azure Databricks account ID."
-  type        = string
-}
-
-variable "metastore_id" {
-  description = "Existing regional Unity Catalog metastore ID."
-  type        = string
-}
-
 variable "workspace_id" {
-  description = "Numeric ID of the platform workspace, from the databricks_workspace_id platform output."
+  description = "Numeric ID of the platform workspace, from workspace_id in the unity_catalog_handoff platform output."
   type        = number
 }
 
 variable "workspace_url" {
-  description = "URL of the platform workspace including https://, from the databricks_workspace_url platform output."
+  description = "URL of the platform workspace including https://, from workspace_url in the unity_catalog_handoff platform output."
   type        = string
+}
+
+variable "external_location_url" {
+  description = "abfss:// URL of the platform's external location, from external_location_url in the unity_catalog_handoff platform output. The catalog's managed storage is a folder under it."
+  type        = string
+
+  validation {
+    condition     = can(regex("^abfss://[a-z0-9-]+@[a-z0-9]+\\.dfs\\.core\\.windows\\.net/?$", var.external_location_url))
+    error_message = "external_location_url must be an abfss:// container URL, such as abfss://unity-catalog@stbtedbxdevcnc001.dfs.core.windows.net/."
+  }
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Platform storage
+# Catalog
 # ----------------------------------------------------------------------------------------------------------------------
-
-variable "access_connector_id" {
-  description = "Resource ID of the data Access Connector, from the data_access_connector_id platform output."
-  type        = string
-}
-
-variable "storage_account_name" {
-  description = "Name of the ADLS Gen2 data storage account, from the data_storage_account_name platform output."
-  type        = string
-}
-
-variable "managed_container_name" {
-  description = "Container that backs the managed external location."
-  type        = string
-  default     = "managed"
-}
-
-variable "external_container_name" {
-  description = "Container that backs the general-purpose external location."
-  type        = string
-  default     = "external"
-}
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Unity Catalog object names
-# ----------------------------------------------------------------------------------------------------------------------
-
-variable "storage_credential_name" {
-  description = "Name of the storage credential."
-  type        = string
-  default     = "sc_bte_dev"
-}
-
-variable "managed_external_location_name" {
-  description = "Name of the external location for managed catalog storage."
-  type        = string
-  default     = "el_bte_dev_managed"
-}
-
-variable "external_location_name" {
-  description = "Name of the general-purpose external location."
-  type        = string
-  default     = "el_bte_dev_external"
-}
 
 variable "catalog_name" {
   description = "Name of the environment catalog."
@@ -77,22 +33,8 @@ variable "catalog_name" {
   default     = "bte_dev"
 }
 
-# ----------------------------------------------------------------------------------------------------------------------
-# Ownership
-# ----------------------------------------------------------------------------------------------------------------------
-
 variable "catalog_owner" {
   description = "Existing Databricks account group that owns the catalog."
-  type        = string
-}
-
-variable "storage_credential_owner" {
-  description = "Existing Databricks account group that owns the storage credential."
-  type        = string
-}
-
-variable "external_location_owner" {
-  description = "Existing Databricks account group that owns both external locations."
   type        = string
 }
 
@@ -125,24 +67,6 @@ variable "schema_grants" {
   default     = {}
 }
 
-variable "managed_external_location_grants" {
-  description = "Privileges on the managed external location, usually limited to platform or catalog owners."
-  type        = map(set(string))
-  default     = {}
-}
-
-variable "external_location_grants" {
-  description = "Privileges on the general-purpose external location, keyed by principal."
-  type        = map(set(string))
-  default     = {}
-}
-
-variable "storage_credential_grants" {
-  description = "Storage credential privileges, keyed by existing account group or service principal application ID."
-  type        = map(set(string))
-  default     = {}
-}
-
 # ----------------------------------------------------------------------------------------------------------------------
 # Additional workspace bindings
 # ----------------------------------------------------------------------------------------------------------------------
@@ -162,20 +86,4 @@ variable "additional_catalog_workspace_bindings" {
     ])
     error_message = "Catalog binding_type must be BINDING_TYPE_READ_ONLY or BINDING_TYPE_READ_WRITE."
   }
-}
-
-variable "additional_external_location_workspace_bindings" {
-  description = "Other workspaces bound read-write to both external locations."
-  type = map(object({
-    workspace_id = number
-  }))
-  default = {}
-}
-
-variable "additional_storage_credential_workspace_bindings" {
-  description = "Other workspaces bound read-write to the storage credential."
-  type = map(object({
-    workspace_id = number
-  }))
-  default = {}
 }

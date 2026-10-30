@@ -127,6 +127,19 @@ output "container_urls" {
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
+# Unity Catalog storage
+# ----------------------------------------------------------------------------------------------------------------------
+
+output "unity_catalog_external_location" {
+  description = "Name and URL of the Unity Catalog external location over the data storage account, and the storage credential behind it, or null when create_unity_catalog_external_location is false."
+  value = var.create_unity_catalog_external_location ? {
+    name                    = module.ncc.external_location_name
+    url                     = module.ncc.external_location_url
+    storage_credential_name = module.ncc.storage_credential_name
+  } : null
+}
+
+# ----------------------------------------------------------------------------------------------------------------------
 # Serverless egress
 # ----------------------------------------------------------------------------------------------------------------------
 
@@ -169,9 +182,9 @@ output "firewall_handoff" {
   }
 }
 
-# Everything Baytex BI needs to attach the workspace to Unity Catalog.
+# Everything Baytex BI needs to create catalogs whose managed storage sits in the data storage account.
 output "unity_catalog_handoff" {
-  description = "Workspace, metastore, data Access Connector and storage details for the Baytex BI Unity Catalog configuration."
+  description = "Workspace, metastore, data Access Connector, storage and external location details for the Baytex BI Unity Catalog configuration."
   value = {
     databricks_account_id         = var.databricks_account_id
     existing_metastore_id         = var.existing_metastore_id
@@ -183,6 +196,9 @@ output "unity_catalog_handoff" {
     storage_account_id            = module.data_foundation.storage_account_id
     storage_account_name          = module.data_foundation.storage_account_name
     storage_locations             = module.data_foundation.container_urls
+    storage_credential_name       = module.ncc.storage_credential_name
+    external_location_name        = module.ncc.external_location_name
+    external_location_url         = module.ncc.external_location_url
     environment                   = var.environment
     owner                         = "Baytex BI"
     terraform_state_boundary      = "Separate from the AMTRA platform state"

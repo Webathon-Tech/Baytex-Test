@@ -36,9 +36,9 @@ jobs:
           terraform_version: ${{ vars.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
-      # Scoped to the code this pipeline deploys. "terraform fmt" takes a single target, so the deployed paths are
-      # walked in turn rather than recursing from the repository root - which would also grade roots that are never
-      # planned or applied from here.
+      # Scoped to the code this pipeline deploys, including each environment's terraform.tfvars. "terraform fmt" takes a
+      # single target, so the deployed paths are walked in turn rather than recursing from the repository root - which
+      # would also grade roots that are never planned or applied from here.
       - name: Check Terraform formatting
         run: |
           set -uo pipefail

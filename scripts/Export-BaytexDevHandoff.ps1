@@ -1,4 +1,28 @@
 #Requires -Version 7.2
+
+<#
+.SYNOPSIS
+    Exports the Terraform outputs Baytex Infrastructure and Baytex BI need for an environment's handoffs.
+
+.DESCRIPTION
+    Reads the outputs of an environment root and writes the handoff values to <env>-platform-handoff.json in the output
+    directory: the workspace, the NCC and its private endpoint rules, the data storage account and Access Connector, the
+    peering IDs, and the firewall and Unity Catalog handoff outputs. When Terraform does not create the hub-side peering,
+    the Azure CLI command for it is written to hub-side-peering-command.ps1 as well.
+
+    The root must already be initialised against its state backend, as described in docs/local-runs.md. The output
+    directory, handoff/ by default, is gitignored.
+
+.PARAMETER EnvironmentPath
+    Path to the environment root, for example ./environments/prod. Its folder name names the output file.
+
+.PARAMETER OutputDirectory
+    Directory the handoff files are written to. It is created when it does not exist.
+
+.EXAMPLE
+    ./scripts/Export-BaytexDevHandoff.ps1 -EnvironmentPath ./environments/prod -OutputDirectory ./handoff
+#>
+
 [CmdletBinding()]
 param(
     [string]$EnvironmentPath = "../environments/dev",
@@ -13,6 +37,7 @@ if (-not (Get-Command terraform -ErrorAction SilentlyContinue)) {
 }
 
 $resolvedEnvironment = (Resolve-Path $EnvironmentPath).Path
+$environmentName = Split-Path $resolvedEnvironment -Leaf
 New-Item -Path $OutputDirectory -ItemType Directory -Force | Out-Null
 
 Push-Location $resolvedEnvironment
@@ -40,7 +65,7 @@ $selected = [ordered]@{
     UnityCatalogHandoff = $outputs.unity_catalog_handoff.value
 }
 
-$selected | ConvertTo-Json -Depth 20 | Set-Content -Path (Join-Path $OutputDirectory 'dev-platform-handoff.json') -Encoding utf8
+$selected | ConvertTo-Json -Depth 20 | Set-Content -Path (Join-Path $OutputDirectory "$environmentName-platform-handoff.json") -Encoding utf8
 
 # The command is null when Terraform manages the hub-side peering or hub_vnet_id is not set.
 if ($outputs.hub_side_peering_command.value) {

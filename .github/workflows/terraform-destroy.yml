@@ -128,7 +128,6 @@ jobs:
       environment: ${{ matrix.environment }}
       operation: destroy
       save_plan: true
-    secrets: inherit
 
   # The apply legs wait for every plan leg, not just their own - GitHub does not pair matrix legs across jobs. If any
   # environment fails to plan, nothing is destroyed: a clean stop is easier to reason about mid-teardown than a partial
@@ -145,4 +144,3 @@ jobs:
       environment: ${{ matrix.environment }}
       operation: destroy
       allowed_refs: refs/heads/main
-    secrets: inherit

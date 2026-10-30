@@ -11,8 +11,14 @@ name: Reusable - Terraform Plan
 # A destroy plan is applied with "terraform apply" exactly like a deploy plan, so splitting them into separate workflows
 # would duplicate everything in order to change two command-line flags.
 #
-# This job runs in the "<env>-plan" GitHub Environment, which holds the credentials for the environment and carries no
-# approval gate. Approval belongs on the apply, once there is a plan to approve.
+# This job runs in the "<env>-plan" GitHub Environment, which holds the environment's identity and state backend
+# variables and carries no approval gate. Approval belongs on the apply, once there is a plan to approve.
+#
+# The environment's Terraform values are in environments/<env>/terraform.tfvars, which Terraform loads automatically.
+#
+# A saved plan's artefact also carries the identity and state backend the plan was made with, in plan-config.json. The
+# apply job signs in and opens the state with those values, from the same commit, so it can only ever work against what
+# was planned.
 
 on:
   workflow_call:
@@ -97,7 +103,7 @@ jobs:
           fi
 
           if [ "${{ inputs.save_plan }}" = "true" ]; then
-            echo "::error::Environment '${{ inputs.environment }}' is not configured. Missing:$MISSING. Create its service principal and set these variables on the ${{ inputs.environment }}-plan and ${{ inputs.environment }}-apply GitHub Environments."
+            echo "::error::Environment '${{ inputs.environment }}' is not configured. Missing:$MISSING. Create its service principal and set these variables on the ${{ inputs.environment }}-plan GitHub Environment."
             exit 1
           fi
 
@@ -119,12 +125,8 @@ jobs:
           terraform_version: ${{ vars.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
-      # Runs before terraform.tfvars is written. "terraform fmt -check -recursive" also inspects .tfvars files, so
-      # writing the variables file first would make this gate report on the content of a GitHub variable instead of on
-      # repository code.
-      #
-      # Scoped to the code this pipeline deploys. "terraform fmt" takes a single target, so the deployed paths are
-      # walked in turn.
+      # Scoped to the code this pipeline deploys, including each environment's terraform.tfvars. "terraform fmt" takes a
+      # single target, so the deployed paths are walked in turn.
       - name: Check Terraform formatting
         if: env.SKIP != 'true'
         working-directory: .
@@ -181,21 +183,6 @@ jobs:
 
           echo "SKIP=true" >> "$GITHUB_ENV"
           echo "::notice::Skipping ${{ inputs.environment }} - it has no state backend yet."
-
-      # The complete variables file for this environment lives in GitHub rather than in git, so one set of .tf files
-      # serves all three environments.
-      #
-      # TFVARS is read from an environment variable, which GitHub does not mask in logs. To hold it as an
-      # environment secret instead, swap which of the two lines below is commented, as described in
-      # docs/github-setup.md under "Variables or secrets".
-      - name: Write terraform.tfvars
-        if: env.SKIP != 'true'
-        env:
-          # TFVARS: ${{ secrets.TFVARS }}
-          TFVARS: ${{ vars.TFVARS }}
-        run: |
-          test -n "$TFVARS" || { echo "::error::TFVARS is empty for ${{ inputs.environment }}-plan. Set it on that GitHub Environment."; exit 1; }
-          printf '%s\n' "$TFVARS" > terraform.tfvars
 
       # use_azuread_auth makes the backend authenticate as the signed-in service principal via its Storage Blob Data
       # Contributor role. No storage account key is fetched, stored, or passed to Terraform.
@@ -321,6 +308,30 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # The apply job signs in, opens the state and re-plans a destroy retry with the values recorded here, so it uses
+      # the identity and backend this plan was made with, even if a variable on <env>-plan changes before it runs.
+      - name: Record the configuration the plan was made with
+        if: inputs.save_plan && env.SKIP != 'true'
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+          STATE_SA: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+          STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
+          STATE_KEY: ${{ vars.TF_STATE_KEY }}
+        run: |
+          jq -n \
+            --arg AZURE_CLIENT_ID          "$AZURE_CLIENT_ID" \
+            --arg AZURE_TENANT_ID          "$AZURE_TENANT_ID" \
+            --arg AZURE_SUBSCRIPTION_ID    "$AZURE_SUBSCRIPTION_ID" \
+            --arg TF_STATE_RESOURCE_GROUP  "$STATE_RG" \
+            --arg TF_STATE_STORAGE_ACCOUNT "$STATE_SA" \
+            --arg TF_STATE_CONTAINER       "$STATE_CONTAINER" \
+            --arg TF_STATE_KEY             "$STATE_KEY" \
+            '$ARGS.named' > plan-config.json
+          cat plan-config.json
+
       - name: Record run metadata
         if: always() && env.SKIP != 'true'
         run: |
@@ -348,8 +359,12 @@ jobs:
       # and short-lived because it is a working file rather than a record - the durable record is the evidence bundle
       # the apply job uploads.
       #
+      # It carries everything the apply job needs beyond the repository: the binary plan, and the lock file and
+      # plan-config.json the plan was made with. The apply job checks out the same commit, so it reads the same
+      # terraform.tfvars.
+      #
       # if-no-files-found: error, because an apply job silently finding no plan is far worse than a plan job failing
-      # loudly.
+      # loudly. include-hidden-files, because upload-artifact leaves out .terraform.lock.hcl without it.
       - name: Upload the plan for approval
         if: inputs.save_plan && env.SKIP != 'true'
         uses: actions/upload-artifact@v7
@@ -361,8 +376,10 @@ jobs:
             environments/${{ inputs.environment }}/state-before.txt
             environments/${{ inputs.environment }}/run-metadata.json
             environments/${{ inputs.environment }}/.terraform.lock.hcl
+            environments/${{ inputs.environment }}/plan-config.json
           retention-days: 5
           if-no-files-found: error
+          include-hidden-files: true
 
       - name: Upload the review evidence bundle
         if: ${{ !inputs.save_plan && env.SKIP != 'true' }}

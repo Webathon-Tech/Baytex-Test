@@ -97,7 +97,6 @@ jobs:
       environment: dev
       operation: deploy
       save_plan: true
-    secrets: inherit
 
   dev-apply:
     name: Apply dev platform
@@ -107,7 +106,6 @@ jobs:
       environment: dev
       operation: deploy
       allowed_refs: refs/heads/main refs/heads/hotfix/*
-    secrets: inherit
 
   # ------------------------------------------------------------------ test
   # always() is required because on a dev-only run the dev jobs are SKIPPED, and a skipped dependency would otherwise
@@ -126,7 +124,6 @@ jobs:
       environment: test
       operation: deploy
       save_plan: true
-    secrets: inherit
 
   test-apply:
     name: Apply test platform
@@ -137,7 +134,6 @@ jobs:
       environment: test
       operation: deploy
       allowed_refs: refs/heads/main refs/heads/hotfix/*
-    secrets: inherit
 
   # ------------------------------------------------------------------ prod
   # prod depends on BOTH earlier stages, not just test. With dev and prod ticked but not test, test drops out - and if
@@ -156,7 +152,6 @@ jobs:
       environment: prod
       operation: deploy
       save_plan: true
-    secrets: inherit
 
   prod-apply:
     name: Apply prod platform
@@ -167,4 +162,3 @@ jobs:
       environment: prod
       operation: deploy
       allowed_refs: refs/heads/main refs/heads/hotfix/*
-    secrets: inherit

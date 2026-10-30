@@ -29,8 +29,8 @@ reason: run the sequence once per environment.
 Each environment has **one app registration** with **two federated credentials**, one for the `<env>-plan` GitHub
 Environment and one for `<env>-apply`.
 
-No client secret is created. GitHub Actions presents a short-lived OIDC token, which Entra exchanges for an access
-token, so there is no credential to rotate, store or leak.
+GitHub Actions signs in with a short-lived OIDC token, which Entra exchanges for an access token, so there is no
+credential to rotate, store or leak.
 
 > **Environments can be onboarded one at a time.** Until an environment's variables exist, pull request plans for it
 > report *"not configured yet"* and pass rather than fail. They begin planning as soon as §2 and §4 are complete for
@@ -48,7 +48,7 @@ SUBSCRIPTION_ID=<subscription-id>      # this environment's subscription
 
 APP_NAME="app-bte-dbx-${ENVIRONMENT}-terraform-001"
 
-# 1. App registration and service principal. No client secret is created.
+# 1. App registration and service principal.
 APP_ID=$(az ad app create --display-name "$APP_NAME" --query appId -o tsv)
 az ad sp create --id "$APP_ID"
 
@@ -119,7 +119,8 @@ Administrator.
 
 The roles above cover the environment's own subscription only. Two integrations act on resources in the Baytex hub
 subscription, and each needs one more role. Grant them only for the integrations Terraform should manage. Without them,
-leave the matching values at their defaults, and Terraform makes no calls to the hub subscription.
+leave the matching values at their defaults, and Terraform makes no calls to the hub subscription. The delivered
+configuration leaves both integrations to Baytex, so these roles are not needed unless that changes.
 
 | Integration | tfvars | Role | Scope |
 | --- | --- | --- | --- |
@@ -141,8 +142,8 @@ for ZONE_ID in "$BLOB_ZONE_ID" "$DFS_ZONE_ID"; do
 done
 ```
 
-Then set the values in the environment's `TFVARS` and deploy. A new role assignment can take a few minutes to take
-effect.
+Then set the values in `environments/<env>/terraform.tfvars`, merge the change and deploy. A new role assignment can
+take a few minutes to take effect.
 
 ### Databricks account console
 
@@ -151,6 +152,20 @@ Account Admin role**. Without it, the Network Connectivity Configuration API ret
 *"API disabled without account admin"* and the deploy fails.
 
 > Account console → **User management** → **Service principals** → add by Application ID → enable **Account admin**.
+
+### Unity Catalog metastore
+
+Each environment's service principal also creates a storage credential and an external location in the metastore,
+through its environment's workspace. Account admin does not include that. A metastore admin grants the two privileges
+to each service principal, by its application ID, from the SQL editor of any workspace assigned to the metastore:
+
+```sql
+GRANT CREATE STORAGE CREDENTIAL, CREATE EXTERNAL LOCATION ON METASTORE TO `<application-id>`;
+```
+
+Without them, the deploy fails with a permission error when it creates the storage credential. The service principal
+needs no separate workspace access: its Contributor role on the subscription lets Azure Databricks add it to the
+workspace as an admin on its first call.
 
 ---
 
@@ -167,56 +182,45 @@ prod-plan    prod-apply
 The plan job and the apply job run in different GitHub Environments so that approval can be attached to the apply alone.
 Planning changes nothing and needs no sign-off; applying is the decision.
 
+| GitHub Environment | Holds | Used by |
+| --- | --- | --- |
+| `<env>-plan` | The environment's variables (§4) and its deployment branch policy | Plan jobs, and the configuration check in Unlock |
+| `<env>-apply` | Required reviewers and the deployment branch policy | Apply jobs, and the unlock itself |
+
+The plan job records the identity and state backend it used in the plan artefact, and the apply job reads them from
+there and runs from the same commit, so an apply always works with the values its plan was made with.
+
 ---
 
 ## 4. Variables, per environment
 
-Set these on **every one of the six environments** (Settings → Environments → pick one → **Environment variables**).
-The plan and apply jobs each read the full set.
+Set these on each **`<env>-plan`** environment (Settings → Environments → `<env>-plan` → **Environment variables**).
 
 | Variable | Holds | Where the value comes from |
 | --- | --- | --- |
 | `AZURE_CLIENT_ID` | Service principal application ID | Printed at the end of §2 |
 | `AZURE_TENANT_ID` | Entra tenant ID | Printed at the end of §2 |
 | `AZURE_SUBSCRIPTION_ID` | Environment subscription | Printed at the end of §2 |
-| `TF_STATE_RESOURCE_GROUP` | Resource group of the state storage account | `resource_group_name` in `BOOTSTRAP_TFVARS` |
-| `TF_STATE_STORAGE_ACCOUNT` | State storage account name | `storage_account_name` in `BOOTSTRAP_TFVARS` |
-| `TF_STATE_CONTAINER` | Blob container for state | `container_name` in `BOOTSTRAP_TFVARS`, normally `tfstate` |
+| `TF_STATE_RESOURCE_GROUP` | Resource group of the state storage account | `resource_group_name` in `bootstrap/<env>/terraform.tfvars` |
+| `TF_STATE_STORAGE_ACCOUNT` | State storage account name | `storage_account_name` in `bootstrap/<env>/terraform.tfvars` |
+| `TF_STATE_CONTAINER` | Blob container for state | `container_name` in `bootstrap/<env>/terraform.tfvars`, normally `tfstate` |
 | `TF_STATE_KEY` | Blob name of the platform state | `<env>/platform.tfstate` |
-| `TFVARS` | **The entire `terraform.tfvars`** for `environments/<env>` | `environments/<env>/baytex.terraform.tfvars.example` |
-| `BOOTSTRAP_TFVARS` | **The entire `terraform.tfvars`** for `bootstrap/<env>` | `bootstrap/<env>/baytex.terraform.tfvars.example` |
 
 A repository variable, `TERRAFORM_VERSION`, sets the Terraform version every workflow installs. Set it once under
 Settings → Secrets and variables → Actions → **Variables**.
 
-### Why whole files live in variables
+### Terraform values
 
-`TFVARS` holds the complete contents of `environments/<env>/terraform.tfvars`, and the workflow writes it to disk at run
-time. This is what lets one set of `.tf` files serve three environments with no environment-specific values in git.
-The format, every input and the example files are described in the [configuration reference](configuration-reference.md).
+The environment's Terraform values are in `environments/<env>/terraform.tfvars` for the platform and
+`bootstrap/<env>/terraform.tfvars` for the state backend. A change to them is reviewed in a pull request like any other
+change. The format and every input are described in the [configuration reference](configuration-reference.md).
 
-`BOOTSTRAP_TFVARS` does the same for `bootstrap/<env>`. It must name the **same** resource group, storage account and
-container as the `TF_STATE_*` variables. If they disagree, the bootstrap workflow creates one storage account and stores
-its state in another.
+The `TF_STATE_*` variables must name the **same** resource group, storage account and container as
+`bootstrap/<env>/terraform.tfvars`. If they disagree, the bootstrap workflow creates one storage account and stores its
+state in another.
 
-### Variables or secrets
-
-The workflows read `TFVARS` and `BOOTSTRAP_TFVARS` as environment variables. Variables are visible to anyone who can view
-the repository settings, and GitHub does not mask them in logs; secrets are masked. To store them as secrets, each
-reusable workflow already carries the alternative line, commented out directly above the one in use:
-
-```yaml
-# TFVARS: ${{ secrets.TFVARS }}
-TFVARS: ${{ vars.TFVARS }}
-```
-
-Swap which line is commented in these four files, then move the values from Environment *variables* to Environment
-*secrets*:
-
-- `.github/workflows/_terraform-plan.yml`
-- `.github/workflows/_terraform-apply.yml`
-- `.github/workflows/_bootstrap-plan.yml` (uses `BOOTSTRAP_TFVARS`)
-- `.github/workflows/_bootstrap-apply.yml` (uses `BOOTSTRAP_TFVARS`)
+Anyone who can read the repository can read these files, so they hold only IDs, names, addresses and the HAProxy SSH
+public key.
 
 ---
 
@@ -271,7 +275,7 @@ done
 
 **Include the `-plan` environments.** Without a policy there, a run started from an unapproved branch still signs in to
 Azure, takes the state lock and produces a full plan before anything refuses it. With the policy set, the job never
-starts.
+starts, and the environment's variables are never released to it.
 
 #### Why the workflows check branches as well
 
@@ -326,13 +330,15 @@ JSON
 
 ## 7. Before the first production deployment
 
-- [ ] `TFVARS` and `BOOTSTRAP_TFVARS` stored as secrets, if that is the chosen model (§4)
+- [ ] All seven variables set on each `<env>-plan` (§4)
+- [ ] The environment's two `terraform.tfvars` files hold its approved values, merged to `main`
 - [ ] Repository visibility is private or internal; on a public repository every Actions log and artefact, including
       plan output, is world-readable
 - [ ] Required reviewers set on `test-apply` and `prod-apply`
 - [ ] Deployment branch policies set on all six environments
 - [ ] Branch protection on `main` requires `Validate Terraform code / validate` and includes administrators
 - [ ] Each service principal holds **Account admin** in Databricks
+- [ ] Each service principal holds `CREATE STORAGE CREDENTIAL` and `CREATE EXTERNAL LOCATION` on the metastore (§2)
 - [ ] Where Terraform manages the hub peering or Private DNS registration, each service principal holds the hub roles
       in §2
 - [ ] `TERRAFORM_VERSION` is set as a repository variable
@@ -349,8 +355,8 @@ REPO=<org>/<repo>
 echo "== environments =="
 gh api repos/$REPO/environments --jq '.environments[].name'
 
-echo "== variables per environment =="
-for e in dev-plan dev-apply test-plan test-apply prod-plan prod-apply; do
+echo "== variables on the plan environments (expected: all seven) =="
+for e in dev-plan test-plan prod-plan; do
   echo "-- $e"
   gh api repos/$REPO/environments/$e/variables --jq '.variables[].name' | sort | tr '\n' ' '
   echo
@@ -384,7 +390,7 @@ gh api repos/$REPO/branches/main/protection \
 | Check | Expected |
 | --- | --- |
 | Environments | All six present |
-| Variables | All nine on every configured environment |
+| Variables on plan environments | All seven on each configured `<env>-plan` |
 | Repository variables | `TERRAFORM_VERSION` |
 | Reviewers | Set on `test-apply` and `prod-apply` |
 | Deployment branch policies | `main, hotfix/*` on all six |

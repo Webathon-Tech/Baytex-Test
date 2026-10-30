@@ -24,6 +24,7 @@ Environment spoke subscription (one per environment)
   ADLS Gen2 data storage with a data Access Connector
   Two zonal HAProxy VMs, internal load balancer and Private Link Services
   Network Connectivity Configuration (Databricks account level)
+  Unity Catalog storage credential and external location on the data storage account
   Log Analytics and diagnostic settings
   Terraform state storage account
 ```
@@ -46,21 +47,23 @@ Each environment uses its own non-overlapping address space, typically a `/20`, 
 - **Network security groups** — the host and container groups are maintained by Databricks, and `databricks_nsg_rules`
   adds the environment's own rules to both. The proxy group allows the load balancer health probe, Private Link Service
   traffic on each listener port and, optionally, SSH from approved ranges, takes any further rules from
-  `proxy_nsg_rules`, and then denies everything else arriving from the virtual network.
+  `proxy_nsg_rules`, and, while `proxy_deny_other_vnet_inbound` is `true` (the default), denies everything else arriving
+  from the virtual network.
 - **No implicit outbound access** — every subnet disables Azure's default outbound access, so traffic leaves only
   through the NAT Gateway or the firewall.
 
 ### What a network security group can and cannot close
 
 Azure admits traffic from the `VirtualNetwork` tag by default, and that tag covers the spoke, the hub and every network
-reached through it. The platform closes that on the proxy subnet with a deny rule at the last available priority, so only
-the flows listed above reach the HAProxy VMs.
+reached through it. With `proxy_deny_other_vnet_inbound` set to `true`, the default, the platform closes that on the
+proxy subnet with a deny rule at the last available priority, so only the flows listed above reach the HAProxy VMs.
 
 The Databricks subnets are different. Azure Databricks maintains its own rule on them, at priority 100, that allows any
 traffic from the `VirtualNetwork` tag to any port, and a rule below priority 100 cannot be written. That rule is part of
 VNet injection and Databricks restores it if it is removed, so inbound traffic from the virtual network to the Databricks
-subnets cannot be restricted with a network security group. Those subnets are protected instead by having no inbound
-route from outside the spoke and by the firewall rules that govern what may reach them.
+subnets cannot be restricted with a network security group. Traffic into them from the hub, the other spokes and
+on-premises networks is controlled instead by Baytex's routing and Cisco firewall rules, and classic compute has no
+public IP addresses.
 
 The private endpoint subnet has no network security group. Private endpoint network policies are disabled on it, which is
 the documented Azure pattern for a subnet that holds only private endpoints, and a network security group would not be
@@ -90,21 +93,30 @@ HAProxy resolves each destination's fully qualified domain name through the corp
 destinations therefore return traffic to the proxy subnet, whose address range Baytex adds to its on-premises return
 routes.
 
-Each HAProxy VM is prepared by cloud-init when it is created, which installs HAProxy. The Custom Script Extension then
-applies the HAProxy configuration and the load balancer frontend IPs, and runs again during any apply that changes the
-destinations or DNS servers, so those changes update the VMs in place. A new configuration replaces the running one only
-after `haproxy -c` accepts it, and HAProxy reloads without dropping established connections. The configuration, the
-frontend IPs and the HAProxy service are all persistent operating system settings, so a restarted VM rejoins the pool
-as soon as it has booted.
+Each HAProxy VM is prepared by cloud-init when it is created. HAProxy itself comes from the Ubuntu package mirrors,
+which the proxy subnet reaches through the firewall, so both the cloud-init install and the Custom Script Extension are
+governed by `configure_haproxy`. While it is `false` the tier is deployed in full — VMs, load balancer, frontends and
+Private Link Services — but HAProxy is not installed, the VMs fail the health probe and stay out of the backend pool,
+and the tier serves no traffic. Every other part of the platform is unaffected, so an environment can be built before
+the proxy subnet has outbound access.
 
-Azure Update Manager installs critical and security updates on the HAProxy VMs in a two-hour weekly window, Mountain
-Time: Saturday 02:00 for the zone 1 VM and Sunday 02:00 for the zone 2 VM. A VM restarts only when an update requires
-it, and the two VMs are never patched at the same time.
+With `configure_haproxy` set to `true`, cloud-init installs HAProxy as the VM is created and the Custom Script Extension
+applies the HAProxy configuration and the load balancer frontend IPs. The extension runs again during any apply that
+changes the destinations or DNS servers, so those changes update the VMs in place. A new configuration replaces the
+running one only after `haproxy -c` accepts it, and HAProxy reloads without dropping established connections. The
+configuration, the frontend IPs and the HAProxy service are all persistent operating system settings, so a restarted VM
+rejoins the pool as soon as it has booted.
+
+Azure Update Manager installs critical and security updates on the HAProxy VMs every Sunday afternoon, Alberta Time,
+one VM after the other: 14:00–16:00 for the zone 1 VM and 18:00–20:00 for the zone 2 VM. A VM restarts only when an
+update requires it. The two VMs are never patched at the same time, and a zone 1 VM that has not come back raises the
+health probe alert before the zone 2 window opens.
 
 The tier is built to keep serving through the loss of a VM or an availability zone. The load balancer requests the
 HAProxy health frontend over HTTP every five seconds and takes a VM out of the pool after one failed probe, so the VM in
-the other zone carries all traffic while one VM or zone is unavailable. A connection that reaches the load balancer idle timeout receives a TCP reset, and HAProxy sends TCP keepalives on both
-sides, so long-lived database sessions stay open through the load balancer, Private Link and firewall idle timers.
+the other zone carries all traffic while one VM or zone is unavailable. A connection that reaches the load balancer
+idle timeout receives a TCP reset, and HAProxy sends TCP keepalives on both sides, so long-lived database sessions stay
+open through the load balancer, Private Link and firewall idle timers.
 
 ## Controlling outbound destinations
 
@@ -145,18 +157,35 @@ binding, its private endpoint rules and the network policy attached to the works
 `ncc` module, because they are account-level resources bound to the same workspace. In the hub subscription, Terraform
 manages only the optional hub-side peering and Private DNS records described below.
 
+In the Unity Catalog metastore, the same module creates two objects through the workspace:
+
+| Object | Name | Purpose |
+| --- | --- | --- |
+| Storage credential | `sc_bte_dbx_<env>_data_cnc_<instance>` | Backed by the data Access Connector |
+| External location | `el_bte_dbx_<env>_data_cnc_<instance>` | Covers `abfss://unity-catalog@<data storage account>.dfs.core.windows.net/`, where catalogs and schemas can keep their managed storage, and where external tables and volumes can live |
+
+Every environment's workspace is assigned to the same metastore, so both objects are isolated to their own
+environment's workspace. The platform creates no catalogs or schemas. The workspace catalog Azure Databricks creates
+with each new workspace stays in the workspace's default storage.
+
+Both objects are created through the workspace, with its own URL, so Terraform creates them only after the workspace
+exists and the platform has confirmed it is assigned to `existing_metastore_id`, and destroys them before the
+workspace. Replacing the workspace needs them switched off first, as described in the
+[configuration reference](configuration-reference.md#switching-the-unity-catalog-objects-off).
+
 ### Identities and access
 
 | Identity | Access | Purpose |
 | --- | --- | --- |
-| Deployment service principal, `app-bte-dbx-<env>-terraform-001` (one per environment) | Contributor, Storage Blob Data Contributor and Role Based Access Control Administrator on the environment subscription; Databricks account admin | Runs every pipeline through GitHub OIDC, with no client secret, and approves the NCC private endpoint connections after each deploy |
-| Data Access Connector | Storage Blob Data Contributor, Storage Account Contributor, Storage Queue Data Contributor and EventGrid EventSubscription Contributor on the data storage account | Backs the Unity Catalog storage credential and Auto Loader file events |
+| Deployment service principal, `app-bte-dbx-<env>-terraform-001` (one per environment) | Contributor, Storage Blob Data Contributor and Role Based Access Control Administrator on the environment subscription; Databricks account admin; `CREATE STORAGE CREDENTIAL` and `CREATE EXTERNAL LOCATION` on the metastore | Runs every pipeline through GitHub OIDC, approves the NCC private endpoint connections after each deploy, and owns the storage credential and external location it creates |
+| Data Access Connector | Storage Blob Data Contributor, Storage Account Contributor, Storage Queue Data Contributor and EventGrid EventSubscription Contributor on the data storage account | Backs the platform's Unity Catalog storage credential; the last three roles cover Auto Loader file events, which are off on the external location |
 | HAProxy VMs | System-assigned managed identities with no role assignments | Available for agent onboarding |
 
 ## Hub-subscription integration
 
-Two integrations with the hub subscription are optional and are enabled in each environment's `TFVARS`. Each needs one
-role for that environment's deployment service principal, granted by Baytex Infrastructure:
+Two integrations with the hub subscription are optional. Both are off by default, and either can be enabled in an
+environment's `terraform.tfvars`. Each needs one role for that environment's deployment service principal, granted by
+Baytex Infrastructure:
 
 | Integration | tfvars | Role and scope |
 | --- | --- | --- |
@@ -167,8 +196,8 @@ Terraform addresses the hub VNet and the zones by their full resource IDs, so th
 access to the hub subscription. With both peering flags `false` and both zone lists empty, Terraform makes no calls to
 the hub subscription at all. The grant commands are in [GitHub setup](github-setup.md#optional-roles-in-the-hub-subscription).
 
-Baytex owns both integrations, so every environment is configured with the peering flags `false` and the zone lists
-empty. Baytex creates the peering in both directions, creates the Private DNS zones and adds the record sets for the
+Baytex owns both integrations, so every environment leaves them at their defaults: the peering flags `false` and the
+zone lists empty. Baytex creates the peering in both directions, creates the Private DNS zones and adds the record sets for the
 storage private endpoints. The storage private endpoints take static addresses from `blob_private_endpoint_ip` and
 `dfs_private_endpoint_ip`, so those records stay correct when an environment is rebuilt.
 
@@ -177,24 +206,26 @@ storage private endpoints. The storage private endpoints take static addresses f
 ### AMTRA — platform foundation in this repository
 
 - Environment resource groups, VNet, subnets, network security groups, route tables and NAT Gateway
-- VNet peering with the hub, for each direction enabled in `TFVARS`
+- VNet peering with the hub, only for a direction enabled in `terraform.tfvars` (none by default)
 - Azure Databricks workspace and its Azure settings
 - ADLS Gen2 data foundation, Access Connectors and their Azure role assignments
 - Private endpoints in the spoke, at the static addresses configured for them, and their Private DNS zone groups when
-  zone IDs are supplied
+  zone IDs are supplied (none by default)
 - The Databricks network policy that limits serverless internet egress, and its attachment to the workspace
 - HAProxy VMs, load balancer and Private Link Services
 - Databricks Network Connectivity Configuration, private endpoint rules and the approval of their connections
+- The Unity Catalog storage credential and external location over each environment's data storage account, and any
+  grants on the location listed in `terraform.tfvars` (none by default)
 - Log Analytics and platform diagnostics
 - Terraform modules, state, outputs and pipelines
 
 ### Baytex Infrastructure — shared network and governance
 
 - Existing hub VNet, and the VNet peering between the hub and each spoke in both directions
-- The Private DNS zones and the record sets for the storage private endpoints
+- Corporate DNS, and the central Private DNS zones with their VNet links and the record sets for the storage private
+  endpoints
 - Cisco firewall policy and rules, including spoke traffic to on-premises resources and to the other spokes
 - VPN and on-premises connectivity, including return routes to each spoke
-- Corporate DNS and central Private DNS zones, including their VNet links
 - Connectivity testing from Databricks once the network changes are in place
 - Hub-subscription role assignments for the deployment service principals, when Terraform manages peering or DNS
   registration
@@ -203,9 +234,10 @@ storage private endpoints. The storage private endpoints take static addresses f
 
 ### Baytex BI — data governance and workloads
 
-- Existing regional Unity Catalog metastore and its assignment to each workspace
-- Catalogs, schemas, grants and workspace bindings
-- Storage credentials and external locations
+- Existing regional Unity Catalog metastore, which Azure Databricks assigns each new workspace to automatically
+- Catalogs, schemas, grants and workspace bindings, with catalog managed storage placed in the platform's external
+  location
+- Any further storage credentials and external locations
 - Microsoft Entra groups used in Unity Catalog
 - Databricks Asset Bundles, notebooks, jobs and pipelines
 - Data migration, business validation and report migration

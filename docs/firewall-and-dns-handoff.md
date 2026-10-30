@@ -8,14 +8,14 @@ manage instead.
 Terraform does not modify the Cisco firewall, the VPN or the on-premises network. Two items in the hub subscription can
 be managed by Terraform, and every environment is delivered with both switched off, so Baytex owns them:
 
-| Item | tfvars | Delivered as | Role Terraform would need |
+| Item | tfvars | Default | Role Terraform would need |
 | --- | --- | --- | --- |
 | VNet peering between the hub and the spoke, in either direction | `create_spoke_to_hub_peering`, `create_hub_to_spoke_peering` | `false`, so Baytex creates both directions | Network Contributor on the hub VNet |
 | A records for the storage private endpoints in the hub Private DNS zones | `blob_private_dns_zone_ids`, `dfs_private_dns_zone_ids` | Empty, so Baytex creates the zones and records | Private DNS Zone Contributor on each zone |
 
 To move either one to Terraform later, Baytex grants the matching role
 ([GitHub setup](github-setup.md#optional-roles-in-the-hub-subscription)) and the values are set in the environment's
-`TFVARS`. While both are off, Terraform makes no calls to the hub subscription at all.
+`terraform.tfvars`. While both are off, Terraform makes no calls to the hub subscription at all.
 
 ## Changes Baytex Infrastructure completes
 
@@ -31,9 +31,12 @@ To move either one to Terraform later, Baytex grants the matching role
    approved SQL Server and Oracle destination and port, following the destination matrix.
 6. **Firewall rules from the spoke to the other Azure spokes**, for the traffic the aggregate route sends to the
    firewall.
-7. **Firewall rules from the proxy subnet to the Ubuntu package mirrors**, `archive.ubuntu.com` and
-   `security.ubuntu.com`, over TCP 80 and 443. The HAProxy VMs install HAProxy this way when they are created, and
-   install updates this way in their weekend patch windows.
+7. **Firewall rules from the proxy subnet to the Ubuntu package mirrors**, `azure.archive.ubuntu.com`,
+   `archive.ubuntu.com` and `security.ubuntu.com`, over TCP 80 and 443. Ubuntu images on Azure use
+   `azure.archive.ubuntu.com` by default. The HAProxy VMs install HAProxy this way when they are created, and install
+   updates this way in their Sunday patch windows. This access is what `configure_haproxy` depends on: an environment
+   is deployed with it `false` and the tier is configured by setting it to `true` once the rules are in place
+   ([Deployment runbook](deployment-runbook.md#gate-3--network-prerequisites)).
 8. **Return routes** from the on-premises networks to the environment's address space.
 9. **Corporate DNS resolution** from Azure to the on-premises domain names.
 10. **Path validation** that traffic follows the expected symmetric path.
@@ -41,7 +44,8 @@ To move either one to Terraform later, Baytex grants the matching role
 
 ## Terraform outputs for the handoff
 
-After the environment's plan is approved, provide Baytex Infrastructure with these outputs:
+Most of these values are known from `terraform.tfvars` before the first apply. Once the environment is deployed,
+confirm them from these outputs, which are in `outputs.json` in the deploy's evidence bundle:
 
 | Output | Use |
 | --- | --- |

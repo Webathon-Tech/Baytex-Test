@@ -15,6 +15,11 @@ name: Reusable - Bootstrap Plan
 # The decision looks at the STATE BLOB, not just the storage account. If an earlier run created the account but stopped
 # before migrating, checking only the account would take the "remote" path against an empty backend, and Terraform would
 # then try to create a storage account whose name is already taken. Importing recovers from that cleanly.
+#
+# The backend's Terraform values are in bootstrap/<env>/terraform.tfvars, which Terraform loads automatically.
+#
+# The artefact also carries the identity and state backend the plan was made with, in plan-config.json. The apply job
+# signs in, imports and migrates with those values, from the same commit, so it performs exactly what was reviewed.
 
 on:
   workflow_call:
@@ -73,7 +78,6 @@ jobs:
           STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
           STATE_SA: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
           STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
-          BOOTSTRAP_TFVARS: ${{ vars.BOOTSTRAP_TFVARS }}
         run: |
           set -uo pipefail
           MISSING=""
@@ -84,7 +88,6 @@ jobs:
           need TF_STATE_RESOURCE_GROUP  "${STATE_RG:-}"
           need TF_STATE_STORAGE_ACCOUNT "${STATE_SA:-}"
           need TF_STATE_CONTAINER       "${STATE_CONTAINER:-}"
-          need BOOTSTRAP_TFVARS         "${BOOTSTRAP_TFVARS:-}"
 
           if [ -z "$MISSING" ]; then
             echo "Environment ${{ inputs.environment }} is configured."
@@ -92,7 +95,7 @@ jobs:
           fi
 
           if [ "${{ inputs.save_plan }}" = "true" ]; then
-            echo "::error::Environment '${{ inputs.environment }}' is not configured. Missing:$MISSING. Create its service principal and set these variables on the ${{ inputs.environment }}-plan and ${{ inputs.environment }}-apply GitHub Environments."
+            echo "::error::Environment '${{ inputs.environment }}' is not configured. Missing:$MISSING. Create its service principal and set these variables on the ${{ inputs.environment }}-plan GitHub Environment."
             exit 1
           fi
 
@@ -114,11 +117,8 @@ jobs:
           terraform_version: ${{ vars.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
-      # Runs before terraform.tfvars is written, so the formatting gate reports on repository code rather than on the
-      # content of a GitHub variable.
-      #
-      # Scoped to the code this pipeline deploys. "terraform fmt" takes a single target, so the deployed paths are
-      # walked in turn.
+      # Scoped to the code this pipeline deploys, including each environment's terraform.tfvars. "terraform fmt" takes a
+      # single target, so the deployed paths are walked in turn.
       - name: Check Terraform formatting
         if: env.SKIP != 'true'
         working-directory: .
@@ -135,23 +135,7 @@ jobs:
           [ "$FAILED" -eq 0 ] || { echo "::error::Formatting issues listed above. Run 'terraform fmt -recursive' on the reported directories and commit the result."; exit 1; }
           echo "All Terraform files are correctly formatted."
 
-      # The whole variables file for this environment's backend. Nothing about the environment - not the region, not the
-      # account name - is hardcoded in this workflow.
-      #
-      # BOOTSTRAP_TFVARS is read from an environment variable, which GitHub does not mask in logs. To hold it as an
-      # environment secret instead, swap which of the two lines below is commented, as described in
-      # docs/github-setup.md under "Variables or secrets".
-      - name: Write terraform.tfvars
-        if: env.SKIP != 'true'
-        env:
-          # BOOTSTRAP_TFVARS: ${{ secrets.BOOTSTRAP_TFVARS }}
-          BOOTSTRAP_TFVARS: ${{ vars.BOOTSTRAP_TFVARS }}
-        run: |
-          test -n "$BOOTSTRAP_TFVARS" || { echo "::error::BOOTSTRAP_TFVARS is empty for ${{ inputs.environment }}. Set it on that GitHub Environment."; exit 1; }
-          printf '%s\n' "$BOOTSTRAP_TFVARS" > terraform.tfvars
-          terraform fmt terraform.tfvars
-
-      # This root is configured from two independent places: BOOTSTRAP_TFVARS describes the resources Terraform will
+      # This root is configured from two independent places: terraform.tfvars describes the resources Terraform will
       # CREATE, and TF_STATE_* describes the backend every workflow READS AND WRITES. They name the same storage
       # account, so they can drift - and if they do, this pipeline creates one storage account and then stores its state
       # in a different one.
@@ -265,6 +249,31 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # The apply job signs in, imports and migrates with the values recorded here, so it uses the identity and backend
+      # this plan was made with. TF_STATE_KEY is the platform's key, not this root's; the apply only reports it for the
+      # platform workflows.
+      - name: Record the configuration the plan was made with
+        if: inputs.save_plan && env.SKIP != 'true'
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+          STATE_SA: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+          STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
+          STATE_KEY: ${{ vars.TF_STATE_KEY }}
+        run: |
+          jq -n \
+            --arg AZURE_CLIENT_ID          "$AZURE_CLIENT_ID" \
+            --arg AZURE_TENANT_ID          "$AZURE_TENANT_ID" \
+            --arg AZURE_SUBSCRIPTION_ID    "$AZURE_SUBSCRIPTION_ID" \
+            --arg TF_STATE_RESOURCE_GROUP  "$STATE_RG" \
+            --arg TF_STATE_STORAGE_ACCOUNT "$STATE_SA" \
+            --arg TF_STATE_CONTAINER       "$STATE_CONTAINER" \
+            --arg TF_STATE_KEY             "$STATE_KEY" \
+            '$ARGS.named' > plan-config.json
+          cat plan-config.json
+
       - name: Record run metadata
         if: always() && env.SKIP != 'true'
         run: |
@@ -289,6 +298,9 @@ jobs:
           EOF
           echo "Evidence header written to run-metadata.json"
 
+      # The apply job checks out the same commit, so the terraform.tfvars it needs to re-plan in "import" mode is the
+      # one this plan was made with. include-hidden-files, because upload-artifact leaves out .terraform.lock.hcl
+      # without it.
       - name: Upload the plan for approval
         if: inputs.save_plan && env.SKIP != 'true'
         uses: actions/upload-artifact@v7
@@ -301,8 +313,10 @@ jobs:
             bootstrap/${{ inputs.environment }}/state_key.txt
             bootstrap/${{ inputs.environment }}/run-metadata.json
             bootstrap/${{ inputs.environment }}/.terraform.lock.hcl
+            bootstrap/${{ inputs.environment }}/plan-config.json
           retention-days: 5
           if-no-files-found: error
+          include-hidden-files: true
 
       # No binary plan, so nothing downstream can apply what a pull request produced. The rendered plan and the detected
       # mode are kept for review.

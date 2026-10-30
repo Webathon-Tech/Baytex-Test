@@ -92,8 +92,9 @@ module "data_foundation" {
   resource_group_name = azurerm_resource_group.data.name
   tags                = local.tags
 
-  storage_account_name  = var.data_storage_account_name
-  containers            = var.data_containers
+  storage_account_name = var.data_storage_account_name
+  # The container behind the Unity Catalog external location is always created, whatever data_containers holds.
+  containers            = setunion(var.data_containers, [var.unity_catalog_container_name])
   access_connector_name = local.names.access_connector_data
 
   private_endpoint_subnet_id = module.network.private_endpoint_subnet_id
@@ -125,6 +126,7 @@ module "haproxy" {
   admin_username       = "azureadmin"
   ssh_public_key       = var.ssh_public_key
   dns_servers          = var.dns_servers
+  configure_haproxy    = var.configure_haproxy
 
   endpoints = var.on_prem_endpoints
 
@@ -164,13 +166,16 @@ module "databricks_workspace" {
 # ----------------------------------------------------------------------------------------------------------------------
 # Network Connectivity Configuration
 # Serverless private endpoint rules to the data storage account and to every Private Link Service, and the network policy that limits which internet destinations serverless compute may reach.
+# Also the Unity Catalog storage credential and external location over the data storage account, so catalogs can keep their managed storage there rather than in the workspace's default storage.
+# The workspace is assigned to the existing metastore automatically when it is created; no catalog is created here, and catalogs, schemas and their grants stay with Baytex BI.
 # ----------------------------------------------------------------------------------------------------------------------
 
 module "ncc" {
   source = "../../modules/ncc"
 
   providers = {
-    databricks = databricks.account
+    databricks           = databricks.account
+    databricks.workspace = databricks.workspace
   }
 
   name                  = local.names.ncc
@@ -186,6 +191,14 @@ module "ncc" {
   egress_restriction_mode       = var.serverless_egress_restriction_mode
   egress_enforcement_mode       = var.serverless_egress_enforcement_mode
   allowed_internet_destinations = var.serverless_allowed_internet_destinations
+
+  create_unity_catalog_external_location = var.create_unity_catalog_external_location
+  metastore_id                           = var.existing_metastore_id
+  access_connector_id                    = module.data_foundation.access_connector_id
+  storage_credential_name                = local.names.storage_credential_data
+  external_location_name                 = local.names.external_location_data
+  external_location_url                  = module.data_foundation.container_urls[var.unity_catalog_container_name]
+  external_location_grants               = var.unity_catalog_external_location_grants
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -307,6 +320,21 @@ resource "azurerm_monitor_diagnostic_setting" "load_balancer" {
 
   name                       = "diag-${local.resource_name_prefix}-load-balancer"
   target_resource_id         = module.haproxy.load_balancer_id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.this.id
+
+  enabled_metric {
+    category = "AllMetrics"
+  }
+
+  depends_on = [module.haproxy]
+}
+
+# Internal load balancers 2 and up, which exist only when a destination's load_balancer is above 1.
+resource "azurerm_monitor_diagnostic_setting" "load_balancer_additional" {
+  for_each = var.enable_diagnostics ? module.haproxy.additional_load_balancer_ids : {}
+
+  name                       = "diag-${local.resource_name_prefix}-load-balancer-${each.key}"
+  target_resource_id         = each.value
   log_analytics_workspace_id = azurerm_log_analytics_workspace.this.id
 
   enabled_metric {

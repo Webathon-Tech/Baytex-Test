@@ -121,3 +121,50 @@ variable "allowed_internet_destinations" {
     error_message = "allowed_internet_destinations must list at least one domain name when egress_restriction_mode is RESTRICTED_ACCESS."
   }
 }
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Unity Catalog storage credential and external location
+# Both are created through the databricks.workspace provider, in the metastore the workspace is assigned to.
+# ----------------------------------------------------------------------------------------------------------------------
+
+variable "create_unity_catalog_external_location" {
+  description = "Create the storage credential, the external location and its grants. They are read through the workspace on every plan, so they must be removed, in an apply of their own, before the workspace is replaced or recreated."
+  type        = bool
+  default     = true
+}
+
+variable "metastore_id" {
+  description = "Metastore the workspace must be assigned to. The storage credential and external location are created only once the workspace is confirmed to be assigned to it."
+  type        = string
+}
+
+variable "access_connector_id" {
+  description = "Resource ID of the data Access Connector that backs the storage credential."
+  type        = string
+}
+
+variable "storage_credential_name" {
+  description = "Name of the storage credential, unique within the metastore."
+  type        = string
+}
+
+variable "external_location_name" {
+  description = "Name of the external location, unique within the metastore."
+  type        = string
+}
+
+variable "external_location_url" {
+  description = "abfss:// URL of the container in the data storage account that the external location covers."
+  type        = string
+
+  validation {
+    condition     = can(regex("^abfss://[a-z0-9-]+@[a-z0-9]+\\.dfs\\.core\\.windows\\.net/$", var.external_location_url))
+    error_message = "external_location_url must be the root of a container, in the form abfss://<container>@<storage account>.dfs.core.windows.net/."
+  }
+}
+
+variable "external_location_grants" {
+  description = "Privileges on the external location, keyed by Databricks account group name or service principal application ID."
+  type        = map(set(string))
+  default     = {}
+}

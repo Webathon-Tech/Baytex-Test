@@ -44,15 +44,21 @@ Every workflow that changes Azure is split into **two jobs in two GitHub Environ
    ─────────────────                  ──────────────────
    GitHub Environment:                GitHub Environment:
        dev-plan                           dev-apply
+   Holds the variables.               Holds the reviewers.
                                           ▲
    Runs terraform plan.               THE APPROVAL GATE LIVES HERE
    Saves the plan as a file.
-   Uploads it as an artefact.  ────►  Downloads that exact file
-                                      and applies it. Never re-plans.
+   Uploads it as an artefact,  ────►  Downloads that exact file
+   with the identity and              and applies it from the same
+   backend it used.                   commit. Never re-plans.
 ```
 
 **The approval gate has one home.** Required reviewers on `dev-apply`, `test-apply` or `prod-apply` pause every workflow
 that changes that environment: deploy, destroy, bootstrap and unlock.
+
+**The apply uses the plan's settings.** Each environment's identity and state backend are variables on `<env>-plan`,
+and its Terraform values are in its `terraform.tfvars`. The apply job takes the identity and state backend from the plan
+artefact and runs from the same commit, so it always works with the values the reviewed plan was made with.
 
 **What is approved is what runs.** The apply job applies the saved binary plan. Nothing can change between the plan a
 reviewer read and the actions Azure receives.
@@ -189,6 +195,9 @@ Peerings Terraform created, in either direction, are destroyed with the environm
 Terraform shows as `Disconnected` once its spoke is destroyed; the hub owner deletes it, and after the next deploy peers
 the new VNet with the command in the `hub_side_peering_command` output.
 
+The Unity Catalog external location is not deleted while a catalog, schema or table still keeps its storage in it, so
+the destroy stops with an error at that point. Baytex BI drops those objects first.
+
 **When it finishes**, the summary shows how many resources were destroyed and confirms that none remain.
 
 ### 3.4 Pull request checks
@@ -208,9 +217,9 @@ Which checks run depends on what the pull request changed:
 
 | Change in | Checks that run |
 | --- | --- |
-| `environments/**` | Validate, detect, environment parity, the three platform plans |
+| `environments/**`, including an environment's `terraform.tfvars` | Validate, detect, environment parity, the three platform plans |
 | `modules/**` | Validate, detect, the three platform plans |
-| `bootstrap/**` | Validate, detect, bootstrap parity, the three bootstrap plans |
+| `bootstrap/**`, including an environment's `terraform.tfvars` | Validate, detect, bootstrap parity, the three bootstrap plans |
 | Anything else — docs, workflows, scripts | Validate and detect only |
 
 A check that does not apply shows as **Skipped**, which does not block a merge. All three environments are planned
@@ -245,6 +254,14 @@ Use this only when a run was cancelled or killed mid-apply and a later run fails
 Copy the lock ID from that error, and confirm from its `Created` time and `Operation` that the run holding it has
 stopped. The unlock runs in the `<env>-apply` environment, so the reviewers who gate a deployment also gate a recovery.
 
+**Jobs**
+
+```
+Check the run is allowed
+Read dev configuration     ← in dev-plan, reads the environment's variables
+Unlock dev state           ← in dev-apply, pauses here if reviewers are set
+```
+
 The lock ID is checked against the lock actually held, so a stale or mistyped ID releases nothing. The summary says
 whether the lock was released.
 
@@ -271,8 +288,8 @@ A lock left by a run from a workstation is released by that user, as described i
 4. Run **Terraform Deploy Platform** from `main`, ticking dev first
 5. Once dev is verified, run it for test, then prod — or tick all three and approve at each gate
 
-A change to an environment's values is made in its `TFVARS` variable rather than in git, followed by a deploy of that
-environment.
+A change to an environment's values follows the same steps: edit its `terraform.tfvars`, open a pull request, merge and
+deploy that environment.
 
 ### A hotfix
 
@@ -295,8 +312,9 @@ reviewer sees it before it applies.
 ### Re-running after a failure
 
 Use **Re-run failed jobs** only when the cause was transient and the failed job changed nothing in Azure, because a
-re-run reuses the plan the original run saved. When an apply failed part-way, or the code or variables changed, start a
-new run so it plans against the current state.
+re-run reuses the plan the original run saved. When an apply failed part-way, or the code, values or variables changed,
+start a new run so it plans against the current state. A re-run also reuses the original run's commit and the variable
+values its plan recorded, so a correction takes effect only in a new run.
 
 ### Concurrent runs
 
@@ -317,15 +335,17 @@ Every job that touches Azure uploads an artefact, **including when it fails**.
 | Validate | `evidence-validate-<run>` | Validation output | 14 days |
 | Pull request plan | `evidence-plan-<env>-<run>` | The plan text | 14 days |
 | Pull request state backend plan | `evidence-bootstrap-plan-<env>-<run>` | The plan text and detected mode | 14 days |
-| Deploy plan | `tfplan-deploy-<env>-<run>` | Binary plan, plan text, provider lock | 5 days |
+| Deploy plan | `tfplan-deploy-<env>-<run>` | Binary plan, plan text, provider lock, and the `plan-config.json` the apply uses | 5 days |
 | Deploy apply | `evidence-deploy-<env>-<run>` | Plan, apply log, outputs, private endpoint approval log, final state list | **30 days** |
-| Destroy plan | `tfplan-destroy-<env>-<run>` | Binary plan, plan text, state before | 5 days |
+| Destroy plan | `tfplan-destroy-<env>-<run>` | Binary plan, plan text, state before, provider lock, `plan-config.json` | 5 days |
 | Destroy apply | `evidence-destroy-<env>-<run>` | Plan, apply log, state before and after | **30 days** |
-| Bootstrap plan | `tfplan-bootstrap-<env>-<run>` | Binary plan, plan text, detected mode | 5 days |
+| Bootstrap plan | `tfplan-bootstrap-<env>-<run>` | Binary plan, plan text, detected mode, provider lock, `plan-config.json` | 5 days |
 | Bootstrap apply | `evidence-bootstrap-<env>-<run>` | Plan, apply log, state list, backend settings | **30 days** |
 | Unlock | `evidence-unlock-<env>-<run>` | Unlock log | 14 days |
 
-`tfplan-*` artefacts pass a plan from a plan job to its apply job. `evidence-*` artefacts are the record.
+`tfplan-*` artefacts pass a plan from a plan job to its apply job, together with the identity and state backend in
+`plan-config.json`. The apply job checks out the same commit, so it reads the same `terraform.tfvars`. `evidence-*`
+artefacts are the record.
 
 Every artefact contains **`run-metadata.json`**: the commit SHA, branch, run ID and attempt, the person who triggered it,
 the Terraform version, the timestamp and a link to the run. It answers what changed, when, from which commit and who
@@ -343,11 +363,14 @@ Download artefacts from the bottom of a run's summary page.
 | `Refusing to deploy from 'refs/heads/...'` | The run was started from a feature branch | Merge to `main`, or use a `hotfix/*` branch |
 | `Refusing to destroy from ...` | Destroy was started from a branch other than `main` | Run destroy from `main` |
 | `Confirmation '...' does not match` | The `confirm` box does not match the ticked boxes | Retype exactly, for example `dev,prod` |
-| `Environment '<env>' is not configured. Missing: ...` | A deploy, destroy or bootstrap was started for an environment without its variables | Set them — [GitHub setup](github-setup.md) §2 and §4 |
+| `Environment '<env>' is not configured. Missing: ...` | A deploy, destroy, bootstrap or unlock was started for an environment without its variables on `<env>-plan` | Set them — [GitHub setup](github-setup.md) §2 and §4 |
 | A pull request plan says `not configured yet` | Expected before that environment's service principal exists | Nothing; it plans once §2 and §4 are complete |
-| `TFVARS is empty for <env>-plan` | The variable is missing on that GitHub Environment | Set it — [GitHub setup](github-setup.md) §4 |
-| Plan fails with `Invalid value for variable` | A `TFVARS` value breaks an input rule in `variables.tf`, such as an address outside its subnet or a peering flag without `hub_vnet_id` | Correct the value the error message names |
-| Plan shows the workspace **must be replaced** | A setting fixed at creation changed: the workspace name, managed resource group, VNet, subnets, root storage account name or infrastructure encryption. Tags and other settings update in place | Find which setting changed before approving |
+| Plan fails with `Invalid value for variable` | A value in `terraform.tfvars` breaks an input rule in `variables.tf`, such as an address outside its subnet or a peering flag without `hub_vnet_id` | Correct the value the error message names |
+| Plan shows the workspace **must be replaced** | A setting fixed at creation changed: the workspace name, managed resource group, VNet, subnets, root storage account name or infrastructure encryption. Tags and other settings update in place | Find which setting changed before approving. A replacement needs the Unity Catalog objects switched off in an apply of their own first ([Configuration reference](configuration-reference.md#switching-the-unity-catalog-objects-off)) |
+| Plan fails with `cannot read storage credential` or `cannot read external location`, ending `auth: not configured` | The plan replaces or recreates the workspace, so its address is not known while Terraform reads the Unity Catalog objects through it | Revert the change, apply once with `create_unity_catalog_external_location = false`, then make the change ([Configuration reference](configuration-reference.md#switching-the-unity-catalog-objects-off)). If the workspace was deleted outside Terraform, remove `module.ncc.databricks_grant.external_location`, `module.ncc.databricks_external_location.data` and `module.ncc.databricks_storage_credential.data` from the state, have a metastore admin delete the two objects, and deploy |
+| Apply fails because the workspace `is assigned to metastore ..., not to ...` | `existing_metastore_id` does not match the metastore Azure Databricks assigned the workspace to | Correct `existing_metastore_id` in `terraform.tfvars`, or have a Databricks account admin assign the workspace to the expected metastore, then deploy |
+| Plan or apply fails with `No metastore assigned for the current workspace` | Azure Databricks did not assign the new workspace to the regional metastore | A Databricks account admin assigns the workspace to the metastore in the account console, then deploy again |
+| Apply fails creating the storage credential or external location with a permission error | The service principal lacks `CREATE STORAGE CREDENTIAL` or `CREATE EXTERNAL LOCATION` on the metastore | Have a metastore admin grant them ([GitHub setup](github-setup.md#unity-catalog-metastore)), or deploy with `create_unity_catalog_external_location = false` until they are in place |
 | Apply fails with `LinkedAuthorizationFailed` for `Microsoft.Network/virtualNetworks/peer/action` | `create_spoke_to_hub_peering` is `true`, but the service principal has no role on the hub VNet | Grant Network Contributor on the hub VNet ([GitHub setup](github-setup.md#optional-roles-in-the-hub-subscription)), or set the flag to `false` |
 | Apply fails with `AuthorizationFailed` for `Microsoft.Network/virtualNetworks/virtualNetworkPeerings/write` | `create_hub_to_spoke_peering` is `true`, but the service principal has no role on the hub VNet | Grant Network Contributor on the hub VNet, or set the flag to `false` |
 | Apply fails with `LinkedAuthorizationFailed` for `Microsoft.Network/privateDnsZones/join/action` | DNS zone IDs are set, but the service principal has no role on those zones | Grant Private DNS Zone Contributor on each zone, or set `blob_private_dns_zone_ids` and `dfs_private_dns_zone_ids` to `[]` |
@@ -355,7 +378,7 @@ Download artefacts from the bottom of a run's summary page.
 | Destroy log shows `cannot delete mws network connectivity config ... attached to one or more workspaces`, then succeeds | Expected: unbinding and deleting the NCC are separate Databricks calls, and the unbind takes a moment to register | Nothing; the apply retries automatically and `apply.log` records each attempt |
 | A HAProxy VM needs inspecting | SSH is closed unless `admin_ssh_source_cidrs` is set | Run `az vm run-command invoke -g <rg> -n <vm> --command-id RunShellScript --scripts "systemctl status haproxy"`; it needs only Virtual Machine Contributor |
 | Apply fails on `azurerm_virtual_machine_extension.haproxy_config` | The configuration script failed on that VM, for example because `haproxy -c` rejected the configuration or the package mirrors were unreachable while HAProxy was installed. HAProxy keeps its current configuration | Read the script output with `az vm run-command invoke -g <rg> -n <vm> --command-id RunShellScript --scripts "tail -n 50 /var/lib/waagent/custom-script/download/*/stderr"`, correct the cause and deploy again |
-| HAProxy is not running on a VM, or a HAProxy health probe alert is raised | HAProxy was stopped on the VM, or its configuration extension failed | Check `az vm extension show -g <rg> --vm-name <vm> -n configure-haproxy --instance-view` and `systemctl status haproxy` through run-command. A deploy applies the configuration again |
+| HAProxy is not running on a VM, or a HAProxy health probe alert is raised | `configure_haproxy` is `false`, so HAProxy was never installed, or HAProxy was stopped on the VM, or its configuration extension failed | Check `configure_haproxy` for the environment first: while it is `false` the VMs carry no HAProxy and stay out of the backend pool by design. Otherwise check `az vm extension show -g <rg> --vm-name <vm> -n configure-haproxy --instance-view` and `systemctl status haproxy` through run-command. A deploy applies the configuration again |
 | Serverless compute cannot reach an on-premises name or the data storage | A Databricks private endpoint connection is not approved, or its rule is not `ESTABLISHED` yet | Read `approve-private-endpoints.log` in the deploy's evidence bundle, and run the approval script as described in the [deployment runbook](deployment-runbook.md#gate-5--private-link-approvals) |
 | **Approve the NCC private endpoint connections** fails with exit code `3` | An expected private endpoint did not appear on its target within 20 minutes, or a rule in the outputs has no endpoint name | Check the rule's state in the Databricks account console. When it is still being created, start a new **Terraform Deploy Platform** run for the environment: its plan has nothing to change, and the step approves the connection once it appears. **Re-run failed jobs** does not help here, because the saved plan has already been applied |
 | **Approve the NCC private endpoint connections** fails with exit code `4` | An expected connection was rejected or disconnected, which Azure does not allow to be approved | Recreate the matching NCC rule so Databricks raises a fresh connection, then deploy again |
@@ -397,10 +420,10 @@ The platform reusable workflows take an `operation` of `deploy` or `destroy`, so
 
 ### GitHub Environments
 
-| Environments | Purpose | Approval |
-| --- | --- | --- |
-| `dev-plan`, `test-plan`, `prod-plan` | Run `terraform plan` | Never gated |
-| `dev-apply`, `test-apply`, `prod-apply` | Run `terraform apply` | **Attach reviewers here** |
+| Environments | Purpose | Holds | Approval |
+| --- | --- | --- | --- |
+| `dev-plan`, `test-plan`, `prod-plan` | Run `terraform plan` | The environment's identity and state backend variables | Never gated |
+| `dev-apply`, `test-apply`, `prod-apply` | Run `terraform apply` | Required reviewers | **Attach reviewers here** |
 
 ### Versions
 

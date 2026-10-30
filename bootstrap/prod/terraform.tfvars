@@ -1,0 +1,42 @@
+# Values for the prod Terraform state backend in Baytex's subscriptions.
+# Terraform loads this file automatically; changes are made by pull request and applied at the next prod bootstrap run.
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Subscription
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Baytex Entra tenant and the subscription that holds prod state (SUB-BTE-CAN-DATA-PROD).
+tenant_id       = "9a6302b1-6a51-4f41-ad6b-ad23218c074d"
+subscription_id = "a88dbdba-a2fc-4990-b854-b2bb2eba72f8"
+location        = "canadacentral"
+
+# ----------------------------------------------------------------------------------------------------------------------
+# State storage
+# ----------------------------------------------------------------------------------------------------------------------
+
+# These three must match TF_STATE_RESOURCE_GROUP, TF_STATE_STORAGE_ACCOUNT and TF_STATE_CONTAINER on the prod-plan GitHub Environment.
+# The storage account name is globally unique across Azure.
+resource_group_name  = "rg-bte-dbx-prod-tfstate-cnc-001"
+storage_account_name = "stbtedbxprodtfcnc001"
+container_name       = "tfstate"
+
+# Tags applied to the resource group and storage account, matching the tags on the platform resources.
+tags = {
+  Application        = "AzureDatabricks"
+  BusinessUnit       = "BI"
+  Environment        = "Prod"
+  ManagedBy          = "Terraform"
+  Owner              = "Baytex Infrastructure"
+  CostCentre         = "BTX-DBX-PROD"
+  DataClassification = "Internal"
+  Project            = "Baytex Terraform Foundations"
+}
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Access
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Object IDs, not application IDs, of operators who need direct access to state.
+# The deployment service principal already holds Storage Blob Data Contributor at subscription scope. Example:
+#   state_blob_data_contributor_principal_ids = ["00000000-0000-0000-0000-000000000000"]
+state_blob_data_contributor_principal_ids = []

@@ -1,6 +1,6 @@
 # ----------------------------------------------------------------------------------------------------------------------
 # Input variables
-# Sections follow the order of main.tf, and every terraform.tfvars.example lists its values in the same order.
+# Sections follow the order of main.tf, and terraform.tfvars lists its values in the same order.
 # ----------------------------------------------------------------------------------------------------------------------
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -38,7 +38,7 @@ variable "databricks_account_id" {
 }
 
 variable "existing_metastore_id" {
-  description = "ID of the existing regional Unity Catalog metastore. It is reported in the unity_catalog_handoff output; Baytex BI owns the metastore assignment."
+  description = "ID of the existing regional Unity Catalog metastore, which the workspace is assigned to automatically when it is created. The platform confirms the workspace is assigned to it before creating the Unity Catalog storage credential and external location, and reports it in the unity_catalog_handoff output; Baytex BI owns the metastore."
   type        = string
 
   validation {
@@ -342,7 +342,7 @@ variable "data_storage_account_name" {
 }
 
 variable "data_containers" {
-  description = "Containers created in the data storage account."
+  description = "Containers created in the data storage account, in addition to unity_catalog_container_name."
   type        = set(string)
   default     = ["managed", "external", "landing", "checkpoints"]
 
@@ -413,6 +413,12 @@ variable "dfs_private_endpoint_ip" {
 # HAProxy tier
 # ----------------------------------------------------------------------------------------------------------------------
 
+variable "configure_haproxy" {
+  description = "Installs HAProxy on the proxy VMs and applies its configuration. The VMs install HAProxy from the Ubuntu package mirrors, so the proxy subnet needs outbound access to them through the firewall before this is enabled. While it is false the tier is deployed but serves no traffic. Changing it replaces both VMs."
+  type        = bool
+  default     = false
+}
+
 variable "admin_ssh_source_cidrs" {
   description = "CIDRs allowed to SSH to the HAProxy VMs. An empty list creates no SSH rule, and the VMs remain reachable through az vm run-command."
   type        = list(string)
@@ -461,14 +467,15 @@ variable "proxy_vm_private_ips" {
 }
 
 variable "on_prem_endpoints" {
-  description = "On-premises destinations, keyed by a short name. Each gets a load balancer frontend on frontend_ip, a Private Link Service with its NAT IP on pls_nat_ip, and an HAProxy listener on listen_port that forwards to target_fqdn:target_port. domain_name is the name serverless compute uses to reach the destination."
+  description = "On-premises destinations, keyed by a short name. Each gets a load balancer frontend on frontend_ip, a Private Link Service with its NAT IP on pls_nat_ip, and an HAProxy listener on listen_port that forwards to target_fqdn:target_port. domain_name is the name serverless compute uses to reach the destination. load_balancer is the number of the internal load balancer that holds the frontend and Private Link Service, 1 when omitted; Azure allows 8 Private Link Services per load balancer."
   type = map(object({
-    frontend_ip = string
-    pls_nat_ip  = string
-    listen_port = number
-    target_fqdn = string
-    target_port = number
-    domain_name = string
+    load_balancer = optional(number, 1)
+    frontend_ip   = string
+    pls_nat_ip    = string
+    listen_port   = number
+    target_fqdn   = string
+    target_port   = number
+    domain_name   = string
   }))
 
   validation {
@@ -502,6 +509,20 @@ variable "on_prem_endpoints" {
     ))) == length(var.proxy_vm_private_ips) + 2 * length(var.on_prem_endpoints)
     error_message = "Every frontend_ip, pls_nat_ip and proxy_vm_private_ips address must be different."
   }
+
+  validation {
+    condition     = alltrue([for endpoint in values(var.on_prem_endpoints) : endpoint.load_balancer >= 1 && endpoint.load_balancer <= 9 && floor(endpoint.load_balancer) == endpoint.load_balancer])
+    error_message = "Every on_prem_endpoints load_balancer must be a whole number from 1 to 9."
+  }
+
+  # Azure refuses a ninth Private Link Service on a load balancer, and only at apply time.
+  validation {
+    condition = alltrue([
+      for number in distinct([for endpoint in values(var.on_prem_endpoints) : endpoint.load_balancer]) :
+      length([for endpoint in values(var.on_prem_endpoints) : endpoint if endpoint.load_balancer == number]) <= 8
+    ])
+    error_message = "Azure allows at most 8 Private Link Services per load balancer, so at most 8 on_prem_endpoints can share a load_balancer number."
+  }
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -509,9 +530,9 @@ variable "on_prem_endpoints" {
 # ----------------------------------------------------------------------------------------------------------------------
 
 variable "allow_all_subscriptions_pls_visibility" {
-  description = "Allow any subscription that knows a Private Link Service alias to request a connection. Requests still require approval unless auto-approved. Explicit pls_visibility_subscription_ids are preferred."
+  description = "Allow any subscription to request a connection to the Private Link Services. Azure Databricks creates the NCC private endpoints from serverless subscriptions that Microsoft does not publish, so they cannot be listed in pls_visibility_subscription_ids, and this is true by default. Every connection still arrives pending and needs approval unless its subscription is in pls_auto_approval_subscription_ids."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "pls_visibility_subscription_ids" {
@@ -526,7 +547,7 @@ variable "pls_visibility_subscription_ids" {
 }
 
 variable "pls_auto_approval_subscription_ids" {
-  description = "Subscriptions whose private endpoint connections to the Private Link Services are approved automatically. Must be a subset of pls_visibility_subscription_ids. An empty list means every connection is approved manually."
+  description = "Subscriptions whose private endpoint connections to the Private Link Services are approved automatically. Must also be in pls_visibility_subscription_ids unless allow_all_subscriptions_pls_visibility is true. An empty list means every connection is approved manually."
   type        = list(string)
   default     = []
 
@@ -559,7 +580,7 @@ variable "workspace_root_storage_account_name" {
 }
 
 variable "workspace_public_network_access_enabled" {
-  description = "Allow users, Power BI and GitHub to reach the workspace front end from public networks. Classic compute has no public IPs either way."
+  description = "Allow users, Power BI and GitHub to reach the workspace front end from public networks. Classic compute has no public IPs either way. The pipelines create the Unity Catalog storage credential and external location through the front end, so with this false they need a private path to it, or create_unity_catalog_external_location = false."
   type        = bool
   default     = true
 }
@@ -626,6 +647,57 @@ variable "serverless_allowed_internet_destinations" {
   validation {
     condition     = !var.create_serverless_network_policy || var.serverless_egress_restriction_mode == "FULL_ACCESS" || length(var.serverless_allowed_internet_destinations) > 0
     error_message = "serverless_allowed_internet_destinations must list at least one domain name when serverless_egress_restriction_mode is RESTRICTED_ACCESS."
+  }
+}
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Unity Catalog storage
+# The platform registers the data storage account with Unity Catalog through a storage credential and one external location.
+# Catalogs, schemas and their grants stay with Baytex BI.
+# ----------------------------------------------------------------------------------------------------------------------
+
+variable "create_unity_catalog_external_location" {
+  description = "Create the Unity Catalog storage credential, external location and grants, through the workspace. Terraform reads them through the workspace on every plan, so set this to false, and apply, before any change that replaces or recreates the workspace, and set it back afterwards. It also lets an environment deploy before the deployment service principal holds its metastore privileges, or while the pipelines cannot reach the workspace front end."
+  type        = bool
+  default     = true
+}
+
+variable "unity_catalog_container_name" {
+  description = "Container in the data storage account that the Unity Catalog external location covers. It is created whether or not it is listed in data_containers. Set it before the first deployment: renaming it later points the location at a new, empty container and deletes the old one with the catalog data in it, unless the old name stays in data_containers."
+  type        = string
+  default     = "unity-catalog"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])$", var.unity_catalog_container_name)) && !strcontains(var.unity_catalog_container_name, "--")
+    error_message = "unity_catalog_container_name must be 3-63 characters of lowercase letters, digits and single hyphens, starting and ending with a letter or digit."
+  }
+}
+
+variable "unity_catalog_external_location_grants" {
+  description = "Privileges on the Unity Catalog external location, keyed by Databricks account group name or service principal application ID. CREATE_MANAGED_STORAGE lets a principal place a catalog's or schema's managed storage in the location. Terraform manages all of a listed principal's privileges on the location, so anything else granted to it is removed at the next deploy; principals not listed are left alone."
+  type        = map(set(string))
+  default     = {}
+
+  validation {
+    condition = alltrue(flatten([
+      for privileges in values(var.unity_catalog_external_location_grants) : [
+        for privilege in privileges : contains([
+          "ALL_PRIVILEGES", "BROWSE", "CREATE_EXTERNAL_TABLE", "CREATE_EXTERNAL_VOLUME", "CREATE_FOREIGN_SECURABLE",
+          "CREATE_MANAGED_STORAGE", "EXTERNAL_USE_LOCATION", "MANAGE", "READ_FILES", "WRITE_FILES"
+        ], privilege)
+      ]
+    ]))
+    error_message = "unity_catalog_external_location_grants privileges must be external location privileges in upper case with underscores: ALL_PRIVILEGES, BROWSE, CREATE_EXTERNAL_TABLE, CREATE_EXTERNAL_VOLUME, CREATE_FOREIGN_SECURABLE, CREATE_MANAGED_STORAGE, EXTERNAL_USE_LOCATION, MANAGE, READ_FILES or WRITE_FILES."
+  }
+
+  validation {
+    condition     = alltrue([for privileges in values(var.unity_catalog_external_location_grants) : length(privileges) > 0])
+    error_message = "Every unity_catalog_external_location_grants entry must list at least one privilege."
+  }
+
+  validation {
+    condition     = var.create_unity_catalog_external_location || length(var.unity_catalog_external_location_grants) == 0
+    error_message = "unity_catalog_external_location_grants must be empty while create_unity_catalog_external_location is false, because there is no external location to grant on."
   }
 }
 

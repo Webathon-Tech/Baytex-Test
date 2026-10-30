@@ -32,6 +32,6 @@ resource "azurerm_databricks_workspace" "this" {
 
     # Root (DBFS) storage account that Databricks creates in the managed resource group.
     storage_account_name     = var.root_storage_account_name
-    storage_account_sku_name = "Standard_GRS"
+    storage_account_sku_name = "Standard_ZRS"
   }
 }

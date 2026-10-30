@@ -27,10 +27,11 @@ output "container_names" {
   value       = sort(tolist(var.containers))
 }
 
+# Built from the container resources, so whatever uses a URL waits for its container to exist.
 output "container_urls" {
   description = "abfss:// URL of each container, keyed by container name."
   value = {
-    for container in var.containers : container => "abfss://${container}@${azurerm_storage_account.this.name}.dfs.core.windows.net/"
+    for name, container in azapi_resource.container : name => "abfss://${container.name}@${azurerm_storage_account.this.name}.dfs.core.windows.net/"
   }
 }
 

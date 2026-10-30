@@ -28,6 +28,10 @@ locals {
     network_policy         = "np-${local.resource_name_prefix}"
     log_analytics          = "log-${local.resource_name_prefix}"
     action_group           = "ag-${local.resource_name_prefix}"
+
+    # Unity Catalog names take underscores, because a hyphen would need quoting in every SQL statement that uses them.
+    storage_credential_data = "sc_${var.organization}_${var.workload}_${var.environment}_data_${var.region_short}_${var.instance}"
+    external_location_data  = "el_${var.organization}_${var.workload}_${var.environment}_data_${var.region_short}_${var.instance}"
   }
 
   # --------------------------------------------------------------------------------------------------------------------

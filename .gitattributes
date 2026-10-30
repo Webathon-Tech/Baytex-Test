@@ -11,3 +11,6 @@
 
 # Binary
 *.vsdx binary
+*.pdf  binary
+*.docx binary
+*.pptx binary

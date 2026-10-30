@@ -106,7 +106,6 @@ jobs:
     uses: ./.github/workflows/_bootstrap-plan.yml
     with:
       environment: ${{ matrix.environment }}
-    secrets: inherit
 
   # Apply legs wait for every plan leg; GitHub does not pair matrix legs across jobs. A bootstrap that partially failed
   # is recoverable by re-running, so stopping cleanly costs nothing.
@@ -121,4 +120,3 @@ jobs:
     with:
       environment: ${{ matrix.environment }}
       allowed_refs: refs/heads/main refs/heads/hotfix/*
-    secrets: inherit
