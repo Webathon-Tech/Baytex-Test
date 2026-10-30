@@ -241,110 +241,110 @@ on_prem_endpoints = {
     frontend_ip = "10.40.147.11"
     pls_nat_ip  = "10.40.147.21"
     listen_port = 1433
-    target_fqdn = "sqlbidb01yyc.vkp.internal" # 172.19.77.45
+    target_fqdn = "sqlbidb01yyc.baytexenergy.com" # 172.19.77.45
     target_port = 1433
-    domain_name = "sqlbidb01yyc.vkp.internal"
+    domain_name = "sqlbidb01yyc.baytexenergy.com"
   }
   sqlbidb01yyc_t = {
     frontend_ip = "10.40.147.12"
     pls_nat_ip  = "10.40.147.22"
     listen_port = 1433
-    target_fqdn = "sqlbidb01yyc-t.vkp.internal" # 172.19.96.44
+    target_fqdn = "sqlbidb01yyc-t.baytexenergy.com" # 172.19.96.44
     target_port = 1433
-    domain_name = "sqlbidb01yyc-t.vkp.internal"
+    domain_name = "sqlbidb01yyc-t.baytexenergy.com"
   }
   sql14yyc = {
     frontend_ip = "10.40.147.13"
     pls_nat_ip  = "10.40.147.23"
     listen_port = 1433
-    target_fqdn = "sql14yyc.vkp.internal" # 172.19.77.94
+    target_fqdn = "sql14yyc.baytexenergy.com" # 172.19.77.94
     target_port = 1433
-    domain_name = "sql14yyc.vkp.internal"
+    domain_name = "sql14yyc.baytexenergy.com"
   }
   sql14yyc_t = {
     frontend_ip = "10.40.147.35"
     pls_nat_ip  = "10.40.147.36"
     listen_port = 1433
-    target_fqdn = "sql14yyc-t.vkp.internal" # 172.19.96.137
+    target_fqdn = "sql14yyc-t.baytexenergy.com" # 172.19.96.137
     target_port = 1433
-    domain_name = "sql14yyc-t.vkp.internal"
+    domain_name = "sql14yyc-t.baytexenergy.com"
   }
   sql6 = {
     frontend_ip = "10.40.147.14"
     pls_nat_ip  = "10.40.147.24"
     listen_port = 1433
-    target_fqdn = "sql6.vkp.internal" # 172.19.77.123
+    target_fqdn = "sql6.baytexenergy.com" # 172.19.77.123
     target_port = 1433
-    domain_name = "sql6.vkp.internal"
+    domain_name = "sql6.baytexenergy.com"
   }
   ora33yyc = {
     frontend_ip = "10.40.147.15"
     pls_nat_ip  = "10.40.147.25"
     listen_port = 1521
-    target_fqdn = "ora33yyc.vkp.internal" # 172.19.77.88
+    target_fqdn = "ora33yyc.baytexenergy.com" # 172.19.77.88
     target_port = 1521
-    domain_name = "ora33yyc.vkp.internal"
+    domain_name = "ora33yyc.baytexenergy.com"
   }
   ora33yyc_t = {
     frontend_ip = "10.40.147.16"
     pls_nat_ip  = "10.40.147.26"
     listen_port = 1521
-    target_fqdn = "ora33yyc-t.vkp.internal" # 172.19.96.112
+    target_fqdn = "ora33yyc-t.baytexenergy.com" # 172.19.96.112
     target_port = 1521
-    domain_name = "ora33yyc-t.vkp.internal"
+    domain_name = "ora33yyc-t.baytexenergy.com"
   }
   trimble_sql = {
     frontend_ip = "10.40.147.17"
     pls_nat_ip  = "10.40.147.27"
     listen_port = 1433
-    target_fqdn = "tmwsql.vkp.internal" # 172.23.178.197, reached over the Trimble vendor VPN
+    target_fqdn = "tmwsql.baytexenergy.com" # 172.23.178.197, reached over the Trimble vendor VPN
     target_port = 1433
-    domain_name = "tmwsql.vkp.internal"
+    domain_name = "tmwsql.baytexenergy.com"
   }
   ora04yyc = {
     load_balancer = 2
     frontend_ip   = "10.40.147.18"
     pls_nat_ip    = "10.40.147.28"
     listen_port   = 1521
-    target_fqdn   = "ora04yyc.vkp.internal" # 172.19.77.95, CS Explorer and ValNav
+    target_fqdn   = "ora04yyc.baytexenergy.com" # 172.19.77.95, CS Explorer and ValNav
     target_port   = 1521
-    domain_name   = "ora04yyc.vkp.internal"
+    domain_name   = "ora04yyc.baytexenergy.com"
   }
   ora12yyc = {
     load_balancer = 2
     frontend_ip   = "10.40.147.19"
     pls_nat_ip    = "10.40.147.29"
     listen_port   = 1521
-    target_fqdn   = "ora12yyc.vkp.internal" # 172.19.77.90, Metrix
+    target_fqdn   = "ora12yyc.baytexenergy.com" # 172.19.77.90, Metrix
     target_port   = 1521
-    domain_name   = "ora12yyc.vkp.internal"
+    domain_name   = "ora12yyc.baytexenergy.com"
   }
   ora13yyc = {
     load_balancer = 2
     frontend_ip   = "10.40.147.20"
     pls_nat_ip    = "10.40.147.30"
     listen_port   = 1521
-    target_fqdn   = "ora13yyc.vkp.internal" # 172.19.77.99, Execute AFENav
+    target_fqdn   = "ora13yyc.baytexenergy.com" # 172.19.77.99, Execute AFENav
     target_port   = 1521
-    domain_name   = "ora13yyc.vkp.internal"
+    domain_name   = "ora13yyc.baytexenergy.com"
   }
   ora13yyc_t = {
     load_balancer = 2
     frontend_ip   = "10.40.147.31"
     pls_nat_ip    = "10.40.147.32"
     listen_port   = 1521
-    target_fqdn   = "ora13yyc-t.vkp.internal" # 172.19.96.110, Execute AFENav test
+    target_fqdn   = "ora13yyc-t.baytexenergy.com" # 172.19.96.110, Execute AFENav test
     target_port   = 1521
-    domain_name   = "ora13yyc-t.vkp.internal"
+    domain_name   = "ora13yyc-t.baytexenergy.com"
   }
   ora15yyc = {
     load_balancer = 2
     frontend_ip   = "10.40.147.33"
     pls_nat_ip    = "10.40.147.34"
     listen_port   = 1521
-    target_fqdn   = "ora15yyc.vkp.internal" # 172.19.77.91, PVR
+    target_fqdn   = "ora15yyc.baytexenergy.com" # 172.19.77.91, PVR
     target_port   = 1521
-    domain_name   = "ora15yyc.vkp.internal"
+    domain_name   = "ora15yyc.baytexenergy.com"
   }
 }
 
@@ -399,16 +399,17 @@ serverless_egress_enforcement_mode = "DRY_RUN"
 # The policy matches the name only, so a destination on a non-standard port, such as Envirosoft on 8443 or the GDC Oracle databases on 1521, is listed once and the port is allowed on the firewall.
 # The data storage account and the on-premises SQL Server and Oracle destinations are reached through the private endpoint rules of the Network Connectivity Configuration and need no entry here.
 # Power BI, Power Platform, SharePoint and the Baytex Snowflake account (organization odcgoff) are approved but have no domain name confirmed yet; add them here before serverless compute uses them.
-# The sandbox leaves out the Baytex-specific hosts: baytex.prodman.ca, baytex-bi.database.windows.net,
-# baytex.whitson.com and peloton-baytexenergy.snowflakecomputing.com.
 serverless_allowed_internet_destinations = [
+  "baytex.prodman.ca",
   "platformv2api.peloton.com",
   "auth.peloton.com",
   "api.peloton.com",
   "id.peloton.com",
+  "baytex-bi.database.windows.net",
   "api.ca.samsara.com",
   "api.samsara.com",
   "api.eu.samsara.com",
+  "baytex.whitson.com",
   "internal.whitson.com",
   "whitson.eu.auth0.com",
   "app1.envirosoft.com",
@@ -416,7 +417,10 @@ serverless_allowed_internet_destinations = [
   "gdcdata1.geologic.com",
   "gdcdata2.geologic.com",
   "api.alberta.ca",
-  "api.iam.alberta.ca"
+  "api.iam.alberta.ca",
+  # Peloton's Snowflake account. Snowflake clients also reach the account's stage storage and certificate (OCSP) hosts,
+  # which SELECT SYSTEM$ALLOWLIST() in the account lists; add them before enforcement is set to ENFORCED.
+  "peloton-baytexenergy.snowflakecomputing.com"
 ]
 
 # ----------------------------------------------------------------------------------------------------------------------
