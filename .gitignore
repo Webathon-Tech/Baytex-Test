@@ -6,10 +6,13 @@
 crash.log
 crash.*.log
 
-# Environment-specific inputs and backend config.
-# The .example templates are what ship; the real files never are.
+# Variables files and backend config.
+# Each environment's values are tracked in environments/<env>/terraform.tfvars and bootstrap/<env>/terraform.tfvars.
+# Any other variables file, such as the Unity Catalog reference's, stays out of git.
 *.tfvars
 *.tfvars.json
+!environments/*/terraform.tfvars
+!bootstrap/*/terraform.tfvars
 backend.hcl
 
 # Saved plans and rendered plan output

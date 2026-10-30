@@ -9,7 +9,7 @@ Every pull request runs **Terraform Pull Request Checks** ([Workflows](workflows
 
 - `terraform fmt -check` and `terraform validate` across every environment and bootstrap root
 - A parity report for the three environment roots and the three bootstrap roots
-- A plan of each affected environment, using the values in its `TFVARS` variable
+- A plan of each affected environment, using the values in its `terraform.tfvars`
 
 Input rules in `variables.tf` reject malformed values when a plan is created, before any resource is touched
 ([Configuration reference](configuration-reference.md#input-validation)).
@@ -25,7 +25,7 @@ state list.
 3. The plan creates only resources for this environment and, where enabled, the VNet peerings and Private DNS zone
    groups.
 4. The provider versions installed by the run are reviewed.
-5. The infrastructure-as-code security and policy scan passes.
+5. Baytex's infrastructure-as-code security and policy scan passes. It runs outside these pipelines.
 6. The [pre-deployment checklist](pre-deployment-checklist.md) is complete.
 
 ## Acceptance criteria
@@ -47,10 +47,16 @@ state list.
 | Patching | Each HAProxy VM carries the `MaintenanceSchedule` tag of its zone's schedule, and appears under that schedule in Azure Update Manager |
 | Pipelines | A deploy runs through GitHub OIDC with the approval gate and evidence bundle |
 | Monitoring | Diagnostic logs and metrics arrive in Log Analytics, and no platform alert is raised |
-| Unity Catalog | Baytex BI's storage credential, external locations and catalog work from the workspace |
+| Unity Catalog | **Test connection** passes on the platform's external location, which only this environment's workspace can use, and a Baytex BI catalog with its managed storage there works from classic and serverless compute |
 | Workload | A representative Baytex BI workload runs end to end |
 
-`scripts/Test-BaytexDevConnectivity.ps1` tests DNS resolution and TCP connectivity from the HAProxy VMs to each
-destination and records the results as JSON.
+Two scripts support these checks in any environment:
 
-Do not apply example values without Baytex approval.
+- `scripts/databricks_connectivity_check.py` is a Databricks notebook. Set its configuration block for the environment,
+  then run it once on serverless compute and once on a classic cluster. It checks the on-premises destinations, private
+  access to the data storage account and the serverless egress policy, and marks any result that differs from what is
+  expected on that kind of compute.
+- `scripts/Test-BaytexDevConnectivity.ps1` tests DNS resolution and TCP connectivity from each HAProxy VM to each
+  destination through `az vm run-command`, and records the results as JSON.
+
+Do not merge or deploy a change to an environment's `terraform.tfvars` without Baytex approval.

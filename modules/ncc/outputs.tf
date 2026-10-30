@@ -60,3 +60,22 @@ output "egress_restriction_mode" {
   description = "Restriction mode the policy applies to serverless internet egress, or null when create_network_policy is false."
   value       = var.create_network_policy ? var.egress_restriction_mode : null
 }
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Unity Catalog storage credential and external location
+# ----------------------------------------------------------------------------------------------------------------------
+
+output "storage_credential_name" {
+  description = "Name of the storage credential, or null when create_unity_catalog_external_location is false."
+  value       = one(databricks_storage_credential.data[*].name)
+}
+
+output "external_location_name" {
+  description = "Name of the external location, or null when create_unity_catalog_external_location is false."
+  value       = one(databricks_external_location.data[*].name)
+}
+
+output "external_location_url" {
+  description = "abfss:// URL the external location covers, or null when create_unity_catalog_external_location is false."
+  value       = one(databricks_external_location.data[*].url)
+}

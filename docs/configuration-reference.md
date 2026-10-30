@@ -6,27 +6,27 @@ and state backend roots.
 ## How configuration is supplied
 
 The `.tf` files in `environments/dev`, `environments/test` and `environments/prod` are identical. What makes each
-environment different is its `terraform.tfvars`, which is never committed to git.
+environment different is its `terraform.tfvars`, kept beside the `.tf` files.
 
-1. Each environment has two GitHub Environments, `<env>-plan` and `<env>-apply`.
-2. Both hold a `TFVARS` variable containing the complete `terraform.tfvars` for `environments/<env>`, and a
-   `BOOTSTRAP_TFVARS` variable containing the complete `terraform.tfvars` for `bootstrap/<env>`.
-3. At run time the workflow writes that content to disk and runs Terraform against it.
+1. Every platform root and state backend root has its own `terraform.tfvars`, which Terraform loads automatically, in
+   the pipelines and in a local run alike.
+2. The plan and apply jobs of a run use the same commit, so the apply works with the values the reviewed plan was made
+   with.
+3. The deployment identity and the state backend coordinates are not Terraform values. They are variables on the
+   `<env>-plan` GitHub Environment, described in [GitHub setup](github-setup.md#4-variables-per-environment).
 
-Setting the variables is described in [GitHub setup](github-setup.md#4-variables-per-environment).
+A change to an environment's values is made in a pull request, like a change to the code. The pull request checks plan
+every environment the change affects, and the change reaches Azure at the next deploy of that environment.
 
-### Example files
-
-Each root folder carries example files in the same format:
+### Variables files
 
 | File | Contents |
 | --- | --- |
-| `baytex.terraform.tfvars.example` | The values for Baytex's subscriptions. This is the content to place in `TFVARS` or `BOOTSTRAP_TFVARS`. |
-| `terraform.tfvars.example` | A complete reference configuration that sets every input. |
-| `environments/<env>/backend.hcl.example` | Backend settings for initialising a platform root by hand. |
+| `environments/<env>/terraform.tfvars` | The platform values for the environment in Baytex's subscriptions |
+| `bootstrap/<env>/terraform.tfvars` | The state backend values for the environment |
 
-Every example lists its values in the section order of the root's `variables.tf`, under the same section headings,
-with a comment on what each value controls.
+Each `terraform.tfvars` lists its values in the section order of the root's `variables.tf`, under the same section
+headings, with a comment on what each value controls. The formatting check covers them with the `.tf` files.
 
 ### Input validation
 
@@ -49,14 +49,17 @@ with a comment on what each value controls.
   whenever the serverless restriction mode is `RESTRICTED_ACCESS`
 - Storage account names, container names, SSH key format, email addresses and Log Analytics retention between 30 and
   730 days
-- Auto-approval subscriptions that are also in the visibility list
+- External location privileges in `unity_catalog_external_location_grants`, spelt in upper case with underscores, with at
+  least one per principal, and none while `create_unity_catalog_external_location` is `false`
+- Auto-approval subscriptions that are also in the visibility list, unless all-subscription visibility is on
 
 A failed rule stops the plan with `Invalid value for variable` and a message naming the value to correct.
 
 ## Naming convention
 
 Names are composed from `organization`, `workload`, `environment`, `region_short` and `instance`. The resource prefix is
-`<organization>-<workload>-<environment>-<region_short>-<instance>`, for example `bte-dbx-dev-cnc-001`.
+`<organization>-<workload>-<environment>-<region_short>-<instance>`, for example `bte-dbx-dev-cnc-001`. The instance
+is `001` in dev and prod and `002` in test, so test names end in `002`, for example `vnet-bte-dbx-test-cnc-002`.
 
 | Resource | Pattern | Example for dev |
 | --- | --- | --- |
@@ -72,6 +75,8 @@ Names are composed from `organization`, `workload`, `environment`, `region_short
 | Data Access Connector | `ac-<org>-<workload>-<env>-data-<region>-<instance>` | `ac-bte-dbx-dev-data-cnc-001` |
 | Network Connectivity Configuration | `ncc-<prefix>` | `ncc-bte-dbx-dev-cnc-001` |
 | Databricks network policy | `np-<prefix>` | `np-bte-dbx-dev-cnc-001` |
+| Unity Catalog storage credential | `sc_<org>_<workload>_<env>_data_<region>_<instance>` | `sc_bte_dbx_dev_data_cnc_001` |
+| Unity Catalog external location | `el_<org>_<workload>_<env>_data_<region>_<instance>` | `el_bte_dbx_dev_data_cnc_001` |
 | HAProxy VMs | `vm-<prefix>-proxy-01`, `vm-<prefix>-proxy-02` | `vm-bte-dbx-dev-cnc-001-proxy-01` |
 | HAProxy patch schedules | `mc-<prefix>-proxy-zone<zone>`, assigned by the dynamic scope `<prefix>-proxy-zone<zone>` | `mc-bte-dbx-dev-cnc-001-proxy-zone1` |
 | Load balancer | `lb-<prefix>-proxy` | `lb-bte-dbx-dev-cnc-001-proxy` |
@@ -82,6 +87,9 @@ Names are composed from `organization`, `workload`, `environment`, `region_short
 
 Storage account names are globally unique and set directly: `data_storage_account_name`,
 `workspace_root_storage_account_name`, and `storage_account_name` in the bootstrap root.
+
+Unity Catalog names use underscores rather than hyphens, because a hyphenated name has to be quoted in every SQL
+statement that refers to it.
 
 ## Tags
 
@@ -113,7 +121,7 @@ Inputs of `environments/<env>`, in the order of `variables.tf`. An input without
 | `tenant_id` | required | Microsoft Entra tenant ID that holds the subscription and the Databricks account. |
 | `subscription_id` | required | Azure subscription this environment deploys into. |
 | `databricks_account_id` | required | Azure Databricks account ID, shown in the account console. |
-| `existing_metastore_id` | required | ID of the existing regional Unity Catalog metastore. It is reported in the `unity_catalog_handoff` output; Baytex BI owns the metastore assignment. |
+| `existing_metastore_id` | required | ID of the existing regional Unity Catalog metastore, which the workspace is assigned to automatically when it is created. The platform confirms the workspace is assigned to it before creating the Unity Catalog storage credential and external location, and reports it in the `unity_catalog_handoff` output; Baytex BI owns the metastore. |
 
 ### Naming
 
@@ -192,7 +200,7 @@ every Allow rule.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `data_storage_account_name` | required | Globally unique name of the ADLS Gen2 data storage account. |
-| `data_containers` | `["managed", "external", "landing", "checkpoints"]` | Containers created in the data storage account. |
+| `data_containers` | `["managed", "external", "landing", "checkpoints"]` | Containers created in the data storage account, in addition to `unity_catalog_container_name`. Every delivered environment sets it to `[]`. |
 | `blob_private_dns_zone_ids` | `[]` | Resource IDs of `privatelink.blob.core.windows.net` zones the blob private endpoint registers in. Leave empty to create no DNS zone group. Zones in another subscription need Private DNS Zone Contributor for the deployment identity. |
 | `dfs_private_dns_zone_ids` | `[]` | Resource IDs of `privatelink.dfs.core.windows.net` zones the dfs private endpoint registers in, on the same terms. |
 | `blob_private_endpoint_ip` | `null` | Static private IP of the blob private endpoint. Setting it keeps the address stable when the environment is rebuilt, so the DNS records and firewall rules that point at it stay valid. |
@@ -202,22 +210,28 @@ every Allow rule.
 
 | Variable | Default | Description |
 | --- | --- | --- |
+| `configure_haproxy` | `false` | Installs HAProxy on the proxy VMs and applies its configuration. The VMs install HAProxy from the Ubuntu package mirrors, so the proxy subnet needs outbound access to them through the firewall before this is enabled. While it is `false` the tier is deployed but serves no traffic, and the VMs stay out of the load balancer backend pool. Changing it replaces both VMs. |
 | `admin_ssh_source_cidrs` | `[]` | CIDRs allowed to SSH to the HAProxy VMs. An empty list creates no SSH rule, and the VMs remain reachable through `az vm run-command`. |
 | `ssh_public_key` | required | SSH public key for the `azureadmin` user on the HAProxy VMs. Password authentication is disabled. |
 | `proxy_vm_size` | `"Standard_D4s_v6"` | Azure VM size of every HAProxy VM. |
 | `proxy_vm_private_ips` | required | Static private IPs of the two HAProxy VMs: the first VM is placed in zone 1 and the second in zone 2. Both must be inside `proxy_subnet_cidr`. |
-| `on_prem_endpoints` | required | On-premises destinations, keyed by a short name. Each gets a load balancer frontend on `frontend_ip`, a Private Link Service with its NAT IP on `pls_nat_ip`, and an HAProxy listener on `listen_port` that forwards to `target_fqdn:target_port`. `domain_name` is the name serverless compute uses to reach the destination. A change is applied to the HAProxy VMs in place during the apply. |
+| `on_prem_endpoints` | required | On-premises destinations, keyed by a short name. Each gets a load balancer frontend on `frontend_ip`, a Private Link Service with its NAT IP on `pls_nat_ip`, and an HAProxy listener on `listen_port` that forwards to `target_fqdn:target_port`. `domain_name` is the name serverless compute uses to reach the destination. `load_balancer`, optional and 1 by default, is the number of the internal load balancer that holds the frontend and Private Link Service: Azure allows 8 Private Link Services per load balancer, and the plan fails if more than 8 destinations share a number. A change is applied to the HAProxy VMs in place during the apply. |
 
 #### HAProxy patching
 
 Azure Update Manager installs critical and security updates on the HAProxy VMs, restarting a VM only when an update
-requires it. Each VM has its own two-hour weekly window, in Mountain Time, so the two VMs are never patched at the same
-time:
+requires it. Both VMs are patched on Sunday afternoon, one after the other, each in its own two-hour window in Alberta
+Time:
 
 | VM | Window |
 | --- | --- |
-| Zone 1 (`proxy-01`) | Saturday 02:00–04:00 |
-| Zone 2 (`proxy-02`) | Sunday 02:00–04:00 |
+| Zone 1 (`proxy-01`) | Sunday 14:00–16:00 |
+| Zone 2 (`proxy-02`) | Sunday 18:00–20:00 |
+
+The two hours between the windows mean the two VMs are never patched at the same time. If the zone 1 VM has not come
+back, the health probe alert reports it before the zone 2 window opens. Alberta Time is UTC-6 all year, so the windows
+keep the same local time all year. In Azure the schedules show the time zone "(UTC-06:00) Saskatchewan", which matches
+Alberta Time all year.
 
 Each schedule applies to the Linux VMs in the connectivity resource group whose `MaintenanceSchedule` tag names it, so
 a VM that is replaced is covered by its schedule without further change. The windows are set in the `haproxy-tier`
@@ -227,16 +241,16 @@ module. The VMs reach the Ubuntu package mirrors through the firewall during the
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `allow_all_subscriptions_pls_visibility` | `false` | Allow any subscription that knows a Private Link Service alias to request a connection. Requests still require approval unless auto-approved. Explicit `pls_visibility_subscription_ids` are preferred. |
+| `allow_all_subscriptions_pls_visibility` | `true` | Allow any subscription to request a connection to the Private Link Services. Azure Databricks creates the NCC private endpoints from serverless subscriptions that Microsoft does not publish, so they cannot be listed in `pls_visibility_subscription_ids`. Every connection still arrives pending and needs approval unless its subscription is in `pls_auto_approval_subscription_ids`. |
 | `pls_visibility_subscription_ids` | `[]` | Subscriptions allowed to discover the Private Link Services. Required unless `allow_all_subscriptions_pls_visibility` is `true`. |
-| `pls_auto_approval_subscription_ids` | `[]` | Subscriptions whose private endpoint connections to the Private Link Services are approved automatically. Must be a subset of `pls_visibility_subscription_ids`. An empty list means every connection is approved manually. |
+| `pls_auto_approval_subscription_ids` | `[]` | Subscriptions whose private endpoint connections to the Private Link Services are approved automatically. Must also be in `pls_visibility_subscription_ids` unless `allow_all_subscriptions_pls_visibility` is `true`. An empty list means every connection is approved manually. |
 
 ### Databricks workspace
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `workspace_root_storage_account_name` | required | Globally unique name of the root (DBFS) storage account Databricks creates in the managed resource group. Set when the workspace is created. |
-| `workspace_public_network_access_enabled` | `true` | Allow users, Power BI and GitHub to reach the workspace front end from public networks. Classic compute has no public IPs either way. |
+| `workspace_public_network_access_enabled` | `true` | Allow users, Power BI and GitHub to reach the workspace front end from public networks. Classic compute has no public IPs either way. The pipelines create the Unity Catalog storage credential and external location through the front end, so with this `false` they need a private path to it, or `create_unity_catalog_external_location = false`. |
 | `workspace_infrastructure_encryption_enabled` | `true` | Enable a second layer of infrastructure encryption on the root storage account. Set when the workspace is created. |
 
 ### Serverless egress
@@ -255,6 +269,29 @@ security group rules and the firewall.
 
 The policy matches the domain name only, never a port or a path, so a destination on a non-standard port is listed once
 here and its port is allowed on the firewall.
+
+### Unity Catalog storage
+
+The platform creates a storage credential backed by the data Access Connector, and an external location over one
+container of the data storage account, both isolated to the environment's workspace. It creates no catalogs or schemas.
+The [Unity Catalog handoff](unity-catalog-handoff.md) describes how Baytex BI uses the location.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `create_unity_catalog_external_location` | `true` | Create the storage credential, external location and grants through the workspace. Set it to `false`, and apply, before any change that replaces or recreates the workspace; see [Switching the Unity Catalog objects off](#switching-the-unity-catalog-objects-off). |
+| `unity_catalog_container_name` | `"unity-catalog"` | Container in the data storage account that the external location covers. It is created whether or not it is listed in `data_containers`. Set it before the first deployment; see [Settings fixed at creation](#settings-fixed-at-creation). |
+| `unity_catalog_external_location_grants` | `{}` | Privileges on the external location, keyed by Databricks account group name or service principal application ID. `CREATE_MANAGED_STORAGE` lets a principal place a catalog's or schema's managed storage in the location. Terraform manages all of a listed principal's privileges on the location, so anything else granted to it is removed at the next deploy; principals not listed are left alone. |
+
+Privileges are written in upper case with underscores. The ones an external location accepts are `ALL_PRIVILEGES`,
+`BROWSE`, `CREATE_EXTERNAL_TABLE`, `CREATE_EXTERNAL_VOLUME`, `CREATE_FOREIGN_SECURABLE`, `CREATE_MANAGED_STORAGE`,
+`EXTERNAL_USE_LOCATION`, `MANAGE`, `READ_FILES` and `WRITE_FILES`.
+
+The external location is saved without validation, because on a new environment the NCC private endpoints it depends on
+are approved only after the apply. Confirm access after the deployment with **Test connection** on the location in
+Catalog Explorer.
+
+Before creating anything, Terraform reads which metastore the workspace is assigned to and stops if it is not
+`existing_metastore_id`. On a new workspace that check runs during the apply, once the workspace exists.
 
 ### Operations
 
@@ -287,10 +324,15 @@ once its condition clears.
 Changing any of these after the first deploy replaces the resource that uses it, so confirm them before the first apply:
 
 - `workspace_root_storage_account_name` and `workspace_infrastructure_encryption_enabled`, and the naming inputs, VNet
-  and subnets the workspace uses — the workspace is replaced
+  and subnets the workspace uses — the workspace is replaced, which first needs the Unity Catalog objects switched off
+  (see [Switching the Unity Catalog objects off](#switching-the-unity-catalog-objects-off))
 - `data_storage_account_name` — the data storage account is replaced
 - `blob_private_endpoint_ip` and `dfs_private_endpoint_ip` — the matching private endpoint is replaced, and it returns
   with the new address
+- `ssh_public_key` and `configure_haproxy` — both HAProxy VMs are replaced in the same apply, which interrupts
+  serverless connections to the on-premises destinations until they are back
+- `unity_catalog_container_name` — the external location is pointed at a new, empty container, and the old container is
+  deleted with the catalog data in it, unless the old name is kept in `data_containers`
 
 ### Removing the serverless network policy
 
@@ -303,6 +345,26 @@ two applies:
 
 Setting `create_serverless_network_policy = false` on its own is rejected at plan time with a message saying the same
 thing, so the failure cannot reach Azure.
+
+### Switching the Unity Catalog objects off
+
+The storage credential, external location and grants are created through the workspace, and Terraform reads them
+through it on every plan. The ordering around the workspace is automatic: Terraform creates them only once the workspace
+exists, and destroys them before it, including in **Terraform Destroy Platform**. What it cannot do is read them while
+the workspace's own address is unknown. Every plan that replaces or recreates the workspace therefore fails with
+`cannot read storage credential ... auth: not configured`, and changing the objects in that same plan does not help.
+
+So a workspace replacement takes three applies:
+
+1. `create_unity_catalog_external_location = false` removes the grants, the external location and the storage
+   credential while the workspace still exists. It fails if a catalog, schema or table still keeps its storage in the
+   location; Baytex BI moves or drops those first.
+2. The change that replaces the workspace.
+3. `create_unity_catalog_external_location = true` creates them again, bound to the new workspace.
+
+The same setting lets an environment deploy before its service principal holds `CREATE STORAGE CREDENTIAL` and
+`CREATE EXTERNAL LOCATION` on the metastore, or while the pipelines cannot reach the workspace front end. The
+`unity-catalog` container, and the data in it, stay either way.
 
 ## Platform outputs
 
@@ -345,6 +407,12 @@ thing, so the failure cannot reach Azure.
 | `data_private_endpoint_ips` | Private IP addresses of the blob and dfs private endpoints of the data storage account. |
 | `container_urls` | `abfss://` URL of each data container, keyed by container name. |
 
+### Unity Catalog storage
+
+| Output | Description |
+| --- | --- |
+| `unity_catalog_external_location` | Name and URL of the Unity Catalog external location over the data storage account, and the storage credential behind it. |
+
 ### Serverless egress
 
 | Output | Description |
@@ -357,7 +425,7 @@ thing, so the failure cannot reach Azure.
 | Output | Description |
 | --- | --- |
 | `firewall_handoff` | Source subnets, routes, next hop, private endpoint addresses and destination matrix for the firewall, DNS and on-premises routing changes. |
-| `unity_catalog_handoff` | Workspace, metastore, data Access Connector and storage details for the Baytex BI Unity Catalog configuration. |
+| `unity_catalog_handoff` | Workspace, metastore, data Access Connector, storage and external location details for the Baytex BI Unity Catalog configuration. |
 
 ## State backend inputs and outputs
 

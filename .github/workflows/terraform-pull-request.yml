@@ -14,6 +14,9 @@ name: Terraform Pull Request Checks
 #   bootstrap/**      bootstrap parity, plus all three state backend plans
 #   anything else     neither
 #
+# Each environment's terraform.tfvars sits in its root folder, so a change to an environment's values is planned
+# exactly like a change to its code.
+#
 # "Validate Terraform code" is the only check that should be required in branch protection. Everything else here is
 # conditional, and a required check that gets skipped is the same trap as a paths filter.
 
@@ -40,8 +43,8 @@ jobs:
   # One git diff against the pull request base decides which of the checks below have anything to say.
   #
   # The bootstrap flag counts bootstrap/** only. What a state backend plan shows is decided by that root's .tf files and
-  # the BOOTSTRAP_TFVARS variable, so editing the bootstrap workflows cannot change the plan output - gating on them
-  # would run three Azure-authenticated jobs to reprint a plan nobody changed.
+  # its terraform.tfvars, all under bootstrap/**, so editing the bootstrap workflows cannot change the plan output -
+  # gating on them would run three Azure-authenticated jobs to reprint a plan nobody changed.
   detect:
     name: Detect changed areas
     runs-on: ubuntu-latest
@@ -177,7 +180,6 @@ jobs:
       environment: dev
       operation: deploy
       save_plan: false
-    secrets: inherit
 
   plan-test:
     name: Plan test platform (review only)
@@ -188,7 +190,6 @@ jobs:
       environment: test
       operation: deploy
       save_plan: false
-    secrets: inherit
 
   plan-prod:
     name: Plan prod platform (review only)
@@ -199,7 +200,6 @@ jobs:
       environment: prod
       operation: deploy
       save_plan: false
-    secrets: inherit
 
   # -------------------------------------------------------------- state backend plans
   # The storage account each of these manages holds the state for its environment, so a change forcing its replacement
@@ -212,7 +212,6 @@ jobs:
     with:
       environment: dev
       save_plan: false
-    secrets: inherit
 
   plan-bootstrap-test:
     name: Plan test bootstrap storage account (review only)
@@ -222,7 +221,6 @@ jobs:
     with:
       environment: test
       save_plan: false
-    secrets: inherit
 
   plan-bootstrap-prod:
     name: Plan prod bootstrap storage account (review only)
@@ -232,4 +230,3 @@ jobs:
     with:
       environment: prod
       save_plan: false
-    secrets: inherit

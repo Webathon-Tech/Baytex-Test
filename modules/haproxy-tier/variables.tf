@@ -61,19 +61,26 @@ variable "dns_servers" {
   type        = list(string)
 }
 
+variable "configure_haproxy" {
+  description = "Installs HAProxy on the proxy VMs and applies its configuration. The VMs install HAProxy from the Ubuntu package mirrors, so the proxy subnet needs outbound access to them through the firewall before this is enabled. While it is false the tier is deployed but serves no traffic. Changing it replaces both VMs."
+  type        = bool
+  default     = false
+}
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Destinations
 # ----------------------------------------------------------------------------------------------------------------------
 
 variable "endpoints" {
-  description = "One load balancer frontend and one Private Link Service per approved on-premises destination, keyed by a short destination name."
+  description = "One load balancer frontend and one Private Link Service per approved on-premises destination, keyed by a short destination name. load_balancer is the number of the internal load balancer that holds them, 1 when omitted; Azure allows 8 Private Link Services per load balancer."
   type = map(object({
-    frontend_ip = string
-    pls_nat_ip  = string
-    listen_port = number
-    target_fqdn = string
-    target_port = number
-    domain_name = string
+    load_balancer = optional(number, 1)
+    frontend_ip   = string
+    pls_nat_ip    = string
+    listen_port   = number
+    target_fqdn   = string
+    target_port   = number
+    domain_name   = string
   }))
 }
 

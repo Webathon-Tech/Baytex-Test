@@ -1,7 +1,9 @@
 # ----------------------------------------------------------------------------------------------------------------------
 # Network Connectivity Configuration module
 # Gives Databricks serverless compute private access to the data storage account and to each on-premises destination behind a Private Link Service, and limits which internet destinations it may reach.
-# These are Databricks account-level resources, so the module uses the account-level databricks provider.
+# Also registers the data storage account with Unity Catalog, through a storage credential and an external location, so catalogs can keep their managed storage there rather than in the workspace's default storage.
+# The NCC and the network policy are Databricks account-level resources and use the account-level provider, the module's default.
+# The storage credential and external location are Unity Catalog objects and use the databricks.workspace provider.
 # ----------------------------------------------------------------------------------------------------------------------
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -94,4 +96,86 @@ resource "databricks_account_network_policy" "this" {
 resource "databricks_workspace_network_option" "this" {
   workspace_id      = var.workspace_id
   network_policy_id = var.attach_network_policy ? databricks_account_network_policy.this[0].network_policy_id : var.account_default_network_policy_id
+}
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Unity Catalog storage credential and external location
+# No catalog is created here: Baytex BI creates the catalogs and can place their managed storage in this location.
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Everything in this section is created through the workspace, so the workspace must exist first.
+# The resources need no depends_on for that: they use the databricks.workspace provider, whose host comes from the workspace, so Terraform creates them after the workspace and destroys them before it.
+# A data source is different: Terraform reads it while planning, so a read through a workspace that does not exist yet fails the plan unless something defers it.
+
+locals {
+  # The last segment of the storage account resource ID.
+  storage_account_name = element(split("/", var.storage_account_id), 8)
+}
+
+# The metastore the workspace is assigned to, read through the workspace.
+# The read depends on the NCC binding, which exists only once the workspace does: while the workspace is new or being replaced, the binding is still to be created, so the read waits for the apply instead of failing the plan.
+data "databricks_current_metastore" "this" {
+  count    = var.create_unity_catalog_external_location ? 1 : 0
+  provider = databricks.workspace
+
+  depends_on = [databricks_mws_ncc_binding.workspace]
+}
+
+# Every environment's workspace is assigned to the same metastore, so both objects are isolated: they can be used only from workspaces they are bound to.
+# The provider binds the workspace it calls, which is this environment's, when it sets the isolation mode.
+resource "databricks_storage_credential" "data" {
+  count    = var.create_unity_catalog_external_location ? 1 : 0
+  provider = databricks.workspace
+
+  name           = var.storage_credential_name
+  comment        = "Backed by the data Access Connector of storage account ${local.storage_account_name}. Managed by the platform Terraform."
+  isolation_mode = "ISOLATION_MODE_ISOLATED"
+
+  azure_managed_identity {
+    access_connector_id = var.access_connector_id
+  }
+
+  lifecycle {
+    # Azure Databricks assigns a new workspace to the regional metastore as it creates it.
+    # This confirms the assignment happened, to the expected metastore, before anything is created in it.
+    # While the read waits for the apply its metastore_info block is empty, so try() falls back to the id, which is unknown until then, and the check waits too.
+    precondition {
+      condition     = lower(try(data.databricks_current_metastore.this[0].metastore_info[0].metastore_id, data.databricks_current_metastore.this[0].id)) == lower(var.metastore_id)
+      error_message = "Workspace ${var.workspace_id} is assigned to metastore ${try(data.databricks_current_metastore.this[0].metastore_info[0].metastore_id, "(none)")}, not to ${var.metastore_id} (existing_metastore_id). The storage credential and external location are created only in the expected metastore."
+    }
+  }
+}
+
+# Validation is skipped when the location is saved.
+# Public network access to the storage account is disabled, so Databricks reaches it through the storage private endpoint rules above, which the deploy pipeline approves only after the apply.
+# On a new environment those endpoints, and the Access Connector's new role assignments, may not be ready in time, and a failed check would stop the first apply.
+# Access is confirmed after the deployment instead, with Test connection on the location in Catalog Explorer.
+#
+# File events are turned off.
+# They need Databricks to create an Event Grid subscription and a storage queue on the account, and the queue is not reachable while public network access is disabled.
+resource "databricks_external_location" "data" {
+  count    = var.create_unity_catalog_external_location ? 1 : 0
+  provider = databricks.workspace
+
+  name               = var.external_location_name
+  url                = var.external_location_url
+  credential_name    = databricks_storage_credential.data[0].name
+  comment            = "Managed storage for catalogs and schemas, and external tables and volumes, in storage account ${local.storage_account_name}. Managed by the platform Terraform."
+  isolation_mode     = "ISOLATION_MODE_ISOLATED"
+  read_only          = false
+  enable_file_events = false
+  skip_validation    = true
+
+  # A location that still holds a catalog's or a table's storage is not deleted with it.
+  force_destroy = false
+}
+
+# One grant per principal. Each is authoritative for its principal only: a listed principal's privileges are exactly those in the map, and principals not listed, including those Baytex BI grants directly, are left alone.
+resource "databricks_grant" "external_location" {
+  provider = databricks.workspace
+  for_each = var.create_unity_catalog_external_location ? var.external_location_grants : {}
+
+  external_location = databricks_external_location.data[0].name
+  principal         = each.key
+  privileges        = each.value
 }

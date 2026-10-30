@@ -10,10 +10,10 @@ GitHub Actions pipelines deploy every change from a reviewed plan, through an ap
 
 | Area | Delivered |
 | --- | --- |
-| **Networking** | A spoke VNet with Databricks host and container subnets, a private endpoint subnet and a proxy subnet; network security groups with the environment's own rules; a NAT Gateway for Databricks internet egress; two route tables that send on-premises traffic and traffic to the other Azure spokes to the Cisco firewall; and optional VNet peering with the hub in either or both directions |
-| **Databricks** | A Premium Azure Databricks workspace with VNet injection and secure cluster connectivity, so classic compute has no public IP addresses; a Network Connectivity Configuration (NCC) bound to the workspace; and a network policy that limits which internet destinations serverless compute may reach |
-| **Data foundation** | An ADLS Gen2 storage account with hierarchical namespace, zone-redundant storage, no public network access and no shared keys; `managed`, `external`, `landing` and `checkpoints` containers; a data Access Connector with the roles Unity Catalog needs; and blob and dfs private endpoints at fixed addresses, optionally registered in central Private DNS zones |
-| **On-premises connectivity for serverless compute** | Two HAProxy VMs, in availability zones 1 and 2, behind an internal Standard Load Balancer, with one frontend and one Private Link Service per approved SQL Server or Oracle destination, reached from serverless compute through NCC private endpoint rules |
+| **Networking** | A spoke VNet with Databricks host and container subnets, a private endpoint subnet and a proxy subnet; network security groups with the environment's own rules; a NAT Gateway for Databricks internet egress; two route tables that send on-premises traffic and traffic to the other Azure spokes to the Cisco firewall; and optional Terraform-managed VNet peering with the hub, off by default because Baytex creates the peering |
+| **Databricks** | A Premium Azure Databricks workspace with VNet injection and secure cluster connectivity, so classic compute has no public IP addresses; a Network Connectivity Configuration (NCC) bound to the workspace; a network policy that limits which internet destinations serverless compute may reach; and a Unity Catalog storage credential and external location over the data storage account, so catalogs can keep their managed storage there instead of in the workspace's default storage |
+| **Data foundation** | An ADLS Gen2 storage account with hierarchical namespace, zone-redundant storage, no public network access and no shared keys; a `unity-catalog` container for the external location, plus any containers listed in `data_containers`; a data Access Connector with the roles Unity Catalog needs; and blob and dfs private endpoints at fixed addresses, optionally registered in central Private DNS zones |
+| **On-premises connectivity for serverless compute** | Two HAProxy VMs, in availability zones 1 and 2, behind internal Standard Load Balancers of up to 8 destinations each (Azure's limit of Private Link Services per load balancer), with one frontend and one Private Link Service per approved SQL Server or Oracle destination, reached from serverless compute through NCC private endpoint rules |
 | **Operations** | A Log Analytics workspace, diagnostic settings for the workspace, storage, load balancer and NAT Gateway, platform alerts on the HAProxy tier, NAT Gateway and data storage account, an optional alert action group, and Terraform outputs for the firewall and Unity Catalog handoffs |
 | **Terraform state** | A dedicated state storage account with versioning, soft delete and Microsoft Entra ID-only access |
 
@@ -24,8 +24,8 @@ GitHub Actions pipelines deploy every change from a reviewed plan, through an ap
   authenticated with GitHub OIDC and gated at the apply step.
 - **Evidence** — every run that touches Azure uploads its plan, logs and run metadata as an artefact.
 - **Operational scripts** — private endpoint approval, connectivity testing and handoff export, in `scripts/`.
-- **Unity Catalog reference** — a separate, optional Terraform configuration that shows Baytex BI how to attach a
-  workspace to the existing metastore.
+- **Unity Catalog reference** — a separate, optional Terraform configuration that shows Baytex BI how to create a
+  catalog whose managed storage sits in the platform's external location.
 - **Documentation** — architecture, configuration reference, setup, operations, runbook, handoffs and acceptance
   criteria, in `docs/`.
 
@@ -58,23 +58,23 @@ Full design, traffic flows and resource inventory: [docs/architecture-and-bounda
 
 ```text
 .
-├── environments/{dev,test,prod}/            # Platform root per environment; identical .tf files
-├── bootstrap/{dev,test,prod}/               # Terraform state backend root per environment
+├── environments/{dev,test,prod}/            # Platform root per environment: identical .tf files, own terraform.tfvars
+├── bootstrap/{dev,test,prod}/               # Terraform state backend root per environment, own terraform.tfvars
 ├── modules/
 │   ├── spoke-network/                       # VNet, subnets, NSGs, NAT Gateway, route tables, hub peering
 │   ├── data-foundation/                     # Data storage, data Access Connector, private endpoints
 │   ├── databricks-workspace/                # Azure Databricks workspace
 │   ├── haproxy-tier/                        # HAProxy VMs, load balancer, Private Link Services
-│   └── ncc/                                 # Network Connectivity Configuration, private endpoint rules and the serverless egress policy
+│   └── ncc/                                 # Network Connectivity Configuration, private endpoint rules, the serverless egress policy, and the Unity Catalog storage credential and external location
 ├── baytex-bi-owned-unity-catalog-example/   # Optional Unity Catalog reference with its own state
 ├── scripts/                                 # Operational PowerShell scripts
 ├── docs/                                    # Project documentation
 └── .github/workflows/                       # GitHub Actions pipelines
 ```
 
-The three environment roots hold identical `.tf` files, and each environment's values come from its GitHub
-Environment rather than from git. Every Terraform file is divided into commented sections, every variable and output
-carries a description, and every resource that supports a description or comment in Azure or Databricks has one.
+The three environment roots hold identical `.tf` files, and each environment's values come from the `terraform.tfvars`
+in its root folder. Every Terraform file is divided into commented sections, every variable and output carries a
+description, and every resource that supports a description or comment in Azure or Databricks has one.
 
 ## Getting started
 
@@ -90,24 +90,28 @@ carries a description, and every resource that supports a description or comment
 
 ## How configuration works
 
-Nothing environment-specific is committed to git. Each environment has two GitHub Environments, `<env>-plan` and
-`<env>-apply`, which hold the deployment identity, the state backend coordinates and two whole-file variables:
+Each environment's Terraform values are in the `terraform.tfvars` of its root folders, which Terraform loads
+automatically:
 
-| Variable | Holds |
+| File | Holds |
 | --- | --- |
-| `TFVARS` | The complete `terraform.tfvars` for `environments/<env>` |
-| `BOOTSTRAP_TFVARS` | The complete `terraform.tfvars` for `bootstrap/<env>` |
+| `environments/<env>/terraform.tfvars` | The values for the environment's platform |
+| `bootstrap/<env>/terraform.tfvars` | The values for the environment's state backend |
 
-Each root folder carries two example files that list every value in the section order of `variables.tf`, with a
-comment on what each controls: `baytex.terraform.tfvars.example` holds the values for Baytex's subscriptions, and
-`terraform.tfvars.example` is a complete reference configuration. Input validation rejects malformed values when a plan
-is created, before anything in Azure changes. Details: [docs/configuration-reference.md](docs/configuration-reference.md).
+A change to an environment's values is made in a pull request, planned by the pull request checks and deployed like
+any other change. Each file lists its values in the section order of `variables.tf` with a comment on what each
+controls. Input validation rejects malformed values when a plan is created, before anything in Azure changes. Details:
+[docs/configuration-reference.md](docs/configuration-reference.md).
+
+Each environment also has two GitHub Environments: `<env>-plan` holds the deployment identity and the state backend
+coordinates as variables, and `<env>-apply` holds the required reviewers.
 
 ## How changes reach Azure
 
 Every Terraform run is split into a plan job in `<env>-plan` and an apply job in `<env>-apply`. The apply consumes the
-exact binary plan the plan job produced, so what a reviewer approves is what reaches Azure. Required reviewers
-attached to `<env>-apply` gate every deploy, destroy, bootstrap and unlock for that environment.
+exact binary plan the plan job produced, with the identity, state backend and `terraform.tfvars` it was made with, so
+what a reviewer approves is what reaches Azure. Required reviewers attached to `<env>-apply` gate every deploy, destroy,
+bootstrap and unlock for that environment.
 
 | Workflow | Trigger | Purpose |
 | --- | --- | --- |
@@ -124,14 +128,15 @@ Operator guide: [docs/workflows.md](docs/workflows.md). Planning or applying fro
 
 | Party | Owns |
 | --- | --- |
-| **AMTRA** | The platform foundation in this repository: networking, workspace, data foundation, connectivity tier, NCC, operations, Terraform state and pipelines |
+| **AMTRA** | The platform foundation in this repository: networking, workspace, data foundation, connectivity tier, NCC, the Unity Catalog storage credential and external location over the data storage account, operations, Terraform state and pipelines |
 | **Baytex Infrastructure** | The hub VNet and the peering to each spoke, Cisco firewall policy, VPN, on-premises routes, corporate DNS, the Private DNS zones and their record sets, and connectivity testing from Databricks once the network changes are in place |
-| **Baytex BI** | Unity Catalog: metastore assignment, catalogs, schemas, storage credentials, external locations, workspace bindings, groups, grants, workloads and data |
+| **Baytex BI** | Unity Catalog: the metastore, catalogs, schemas, any further storage credentials and external locations, workspace bindings, groups, grants, workloads and data |
 
 Existing Azure and Databricks resources are not imported, renamed, modified or destroyed. Two integrations with the hub
 subscription can be managed by Terraform — VNet peering and Private DNS registration — and every environment is
 delivered with both switched off, so Baytex owns them and Terraform makes no calls to the hub subscription. Either can
-be moved to Terraform later by granting the deployment service principal one role and setting the values in `TFVARS`.
+be moved to Terraform later by granting the deployment service principal one role and setting the values in the
+environment's `terraform.tfvars`.
 
 ## Design principles
 
@@ -152,16 +157,23 @@ be moved to Terraform later by granting the deployment service principal one rol
 6. **Hub integration is opt-in.** Peering and Private DNS registration in the hub subscription are off in every
    delivered environment, so an identity with roles only in its own subscription deploys cleanly and Baytex keeps
    ownership of the hub.
-7. **Fail-closed Private Link Service visibility.** Terraform refuses to create the Private Link Services until
-   explicit visibility subscriptions are provided or all-subscription visibility is deliberately enabled.
-8. **Configuration as code for HAProxy.** Both VMs use SSH-key authentication and Trusted Launch. cloud-init installs
-   HAProxy when a VM is created, and the Custom Script Extension applies each validated configuration with a graceful
-   reload, so destination changes need no rebuild. Azure Update Manager patches each availability zone in its own
-   weekend window.
+7. **Private Link Service connections approved by name.** Azure Databricks creates the NCC private endpoints from
+   serverless subscriptions that Microsoft does not publish, so the Private Link Services are visible to all
+   subscriptions by default. Every connection arrives pending, and the deploy pipeline approves only those whose private
+   endpoint name matches one of the environment's NCC rules.
+8. **Configuration as code for HAProxy.** Both VMs use SSH-key authentication and Trusted Launch. `configure_haproxy`
+   governs the tier's configuration: while it is `false` the tier is deployed but carries no HAProxy and serves no
+   traffic, so an environment can be built before the proxy subnet has outbound access to the Ubuntu package mirrors.
+   With it enabled, cloud-init installs HAProxy when a VM is created and the Custom Script Extension applies each
+   validated configuration with a graceful reload, so destination changes need no rebuild. Azure Update Manager patches
+   the two VMs one after the other on Sunday afternoons, never both at once.
 9. **One NCC per environment.** A workspace can bind to only one NCC, so every storage and on-premises rule for an
    environment lives in one.
-10. **Unity Catalog stays with Baytex BI.** The platform outputs everything Baytex BI needs, and creates no Unity
-    Catalog objects itself.
+10. **Catalogs stay with Baytex BI.** Each new workspace is assigned to the existing metastore automatically, and
+    Azure Databricks gives it a workspace catalog in its default storage. The platform registers the environment's own
+    data storage account with Unity Catalog through one storage credential and one external location, isolated to the
+    environment's workspace, so Baytex BI can give the catalogs they create a managed location there instead. The
+    platform creates no catalogs or schemas.
 
 ## Documentation
 

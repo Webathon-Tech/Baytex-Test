@@ -1,4 +1,43 @@
 #Requires -Version 7.2
+
+<#
+.SYNOPSIS
+    Tests DNS resolution and TCP connectivity from each HAProxy VM to the on-premises destinations.
+
+.DESCRIPTION
+    Runs a short shell script on every VM through az vm run-command, so it needs no SSH access or network path to the
+    VMs, only a role such as Virtual Machine Contributor on the connectivity resource group. For each VM and destination
+    it records the resolved address and whether a TCP connection opened, writes every result to a JSON file, and exits
+    with 1 when any test fails.
+
+    It works for any environment: pass that environment's subscription, connectivity resource group and VM names.
+
+.PARAMETER SubscriptionId
+    The environment subscription.
+
+.PARAMETER ConnectivityResourceGroupName
+    The resource group that holds the HAProxy VMs, rg-<org>-<workload>-<env>-connectivity-<region>-<instance>.
+
+.PARAMETER ProxyVmNames
+    Names of the HAProxy VMs, vm-<prefix>-proxy-01 and vm-<prefix>-proxy-02.
+
+.PARAMETER Endpoints
+    Destinations to test, keyed by a short name, each with an fqdn and a port.
+
+.PARAMETER OutputPath
+    Where the JSON results are written.
+
+.EXAMPLE
+    $endpoints = @{
+        sql6     = @{ fqdn = 'sql6.baytexenergy.com'; port = 1433 }
+        ora33yyc = @{ fqdn = 'ora33yyc.baytexenergy.com'; port = 1521 }
+    }
+    ./scripts/Test-BaytexDevConnectivity.ps1 -SubscriptionId <subscription-id> `
+        -ConnectivityResourceGroupName rg-bte-dbx-prod-connectivity-cnc-001 `
+        -ProxyVmNames vm-bte-dbx-prod-cnc-001-proxy-01, vm-bte-dbx-prod-cnc-001-proxy-02 `
+        -Endpoints $endpoints
+#>
+
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]

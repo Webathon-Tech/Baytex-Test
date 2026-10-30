@@ -3,12 +3,17 @@
 # ----------------------------------------------------------------------------------------------------------------------
 
 output "load_balancer_id" {
-  description = "Resource ID of the internal load balancer."
+  description = "Resource ID of internal load balancer 1."
   value       = azurerm_lb.this.id
 }
 
+output "additional_load_balancer_ids" {
+  description = "Resource IDs of the internal load balancers after the first, keyed by their two-digit number. Empty while every destination is on load balancer 1."
+  value       = { for key, lb in azurerm_lb.additional : key => lb.id }
+}
+
 output "backend_pool_id" {
-  description = "Resource ID of the load balancer backend pool."
+  description = "Resource ID of the backend pool of internal load balancer 1."
   value       = azurerm_lb_backend_address_pool.this.id
 }
 

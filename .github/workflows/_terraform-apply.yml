@@ -10,6 +10,10 @@ name: Reusable - Terraform Apply
 # This job runs in the "<env>-apply" GitHub Environment. That is the single place an approval gate belongs: attach
 # required reviewers to <env>-apply and every workflow that changes that environment - deploy, destroy, bootstrap and
 # unlock - pauses for approval before it changes anything.
+#
+# The identity and state backend come from plan-config.json in the plan artefact, recorded by the plan job from
+# <env>-plan, and terraform.tfvars comes from the checkout of the same commit the plan was made from, so the apply
+# always works against what was planned.
 
 on:
   workflow_call:
@@ -84,40 +88,44 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v7
 
-      # An environment whose service principal does not exist yet has no AZURE_CLIENT_ID, and azure/login then fails
-      # with an authentication error that says nothing about the real cause. An apply names its environment explicitly,
-      # so this is a genuine error rather than something to skip - it just needs to say what is actually wrong.
-      - name: Check the environment is configured
-        env:
-          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-          STATE_RG: ${{ vars.TF_STATE_RESOURCE_GROUP }}
-          STATE_SA: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
-          STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
+      # Downloaded first, because every later step depends on it. Besides the plan, the artefact carries the
+      # .terraform.lock.hcl the plan was made with, so init selects those exact provider versions rather than resolving
+      # fresh ones, and the plan-config.json it was made from.
+      - name: Download the approved ${{ inputs.operation }} plan
+        uses: actions/download-artifact@v8
+        with:
+          name: tfplan-${{ inputs.operation }}-${{ inputs.environment }}-${{ github.run_id }}
+          path: environments/${{ inputs.environment }}
+
+      # The plan job checked these values on <env>-plan and recorded them, so the apply signs in as the identity, and
+      # opens the state, that produced the approved plan. A variable changed after the plan takes effect in the next run,
+      # never part-way through this one.
+      - name: Read the configuration the plan was made with
+        id: approved
         run: |
-          set -uo pipefail
+          set -euo pipefail
+          test -f plan-config.json || { echo "::error::The approved plan artefact has no plan-config.json. Start a new run."; exit 1; }
+
           MISSING=""
-          need () { [ -n "${2:-}" ] || MISSING="$MISSING $1"; }
-          need AZURE_CLIENT_ID          "${AZURE_CLIENT_ID:-}"
-          need AZURE_TENANT_ID          "${AZURE_TENANT_ID:-}"
-          need AZURE_SUBSCRIPTION_ID    "${AZURE_SUBSCRIPTION_ID:-}"
-          need TF_STATE_RESOURCE_GROUP  "${STATE_RG:-}"
-          need TF_STATE_STORAGE_ACCOUNT "${STATE_SA:-}"
-          need TF_STATE_CONTAINER       "${STATE_CONTAINER:-}"
+          for NAME in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID TF_STATE_RESOURCE_GROUP \
+                      TF_STATE_STORAGE_ACCOUNT TF_STATE_CONTAINER TF_STATE_KEY; do
+            VALUE=$(jq -r --arg name "$NAME" '.[$name] // ""' plan-config.json)
+            [ -n "$VALUE" ] || MISSING="$MISSING $NAME"
+            echo "$NAME=$VALUE" >> "$GITHUB_OUTPUT"
+          done
 
           if [ -n "$MISSING" ]; then
-            echo "::error::Environment '${{ inputs.environment }}' is not configured. Missing:$MISSING. Create its service principal and set these variables on the ${{ inputs.environment }}-plan and ${{ inputs.environment }}-apply GitHub Environments."
+            echo "::error::The approved ${{ inputs.environment }} plan records no value for:$MISSING. Start a new run."
             exit 1
           fi
-          echo "Environment ${{ inputs.environment }} is configured."
+          echo "Applying with the identity and state backend the ${{ inputs.environment }} plan was made with."
 
       - name: Sign in to Azure with OIDC
         uses: azure/login@v3
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ steps.approved.outputs.AZURE_CLIENT_ID }}
+          tenant-id: ${{ steps.approved.outputs.AZURE_TENANT_ID }}
+          subscription-id: ${{ steps.approved.outputs.AZURE_SUBSCRIPTION_ID }}
 
       - name: Install Terraform
         uses: hashicorp/setup-terraform@v4
@@ -125,32 +133,13 @@ jobs:
           terraform_version: ${{ vars.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
-      # TFVARS is read from an environment variable, which GitHub does not mask in logs. To hold it as an
-      # environment secret instead, swap which of the two lines below is commented, as described in
-      # docs/github-setup.md under "Variables or secrets".
-      - name: Write terraform.tfvars
-        env:
-          # TFVARS: ${{ secrets.TFVARS }}
-          TFVARS: ${{ vars.TFVARS }}
-        run: |
-          test -n "$TFVARS" || { echo "::error::TFVARS is empty for ${{ inputs.environment }}-apply. Set it on that GitHub Environment."; exit 1; }
-          printf '%s\n' "$TFVARS" > terraform.tfvars
-
-      # Downloaded before init on purpose: the artefact carries the .terraform.lock.hcl the reviewer saw, so init
-      # selects those exact provider versions rather than resolving fresh ones.
-      - name: Download the approved ${{ inputs.operation }} plan
-        uses: actions/download-artifact@v8
-        with:
-          name: tfplan-${{ inputs.operation }}-${{ inputs.environment }}-${{ github.run_id }}
-          path: environments/${{ inputs.environment }}
-
       - name: Initialise the Terraform backend using the reviewed lock file
         run: |
           terraform init \
-            -backend-config="resource_group_name=${{ vars.TF_STATE_RESOURCE_GROUP }}" \
-            -backend-config="storage_account_name=${{ vars.TF_STATE_STORAGE_ACCOUNT }}" \
-            -backend-config="container_name=${{ vars.TF_STATE_CONTAINER }}" \
-            -backend-config="key=${{ vars.TF_STATE_KEY }}" \
+            -backend-config="resource_group_name=${{ steps.approved.outputs.TF_STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ steps.approved.outputs.TF_STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ steps.approved.outputs.TF_STATE_CONTAINER }}" \
+            -backend-config="key=${{ steps.approved.outputs.TF_STATE_KEY }}" \
             -backend-config="use_azuread_auth=true"
 
       # Deleting an NCC private endpoint rule whose connection is established only deactivates it, and Databricks removes

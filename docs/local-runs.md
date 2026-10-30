@@ -6,9 +6,9 @@ changes go through the gated pipelines described in [Workflows](workflows.md).
 
 The commands are PowerShell and work in Windows PowerShell 5.1 and PowerShell 7; the scripts in `scripts/` need
 PowerShell 7.2 or later. Run them in order, in one window opened at the repository root, because later blocks use
-variables that earlier blocks set. Every environment-specific value —
-tenant, subscription, state backend and `terraform.tfvars` — is read from the environment's `<env>-plan` GitHub
-Environment.
+variables that earlier blocks set. As in the pipelines, the tenant, subscription and state backend are read from the
+environment's `<env>-plan` GitHub Environment, and Terraform loads the environment's values from its
+`terraform.tfvars`.
 
 ---
 
@@ -27,6 +27,7 @@ Your Azure user needs the same access as the environment's deployment service pr
 | Environment subscription | Contributor and Role Based Access Control Administrator, or Owner | Creates the platform and assigns the managed identities their roles |
 | State storage account | Storage Blob Data Contributor | Reads and writes the state blob; the account has shared key access disabled, so Owner or Contributor alone cannot open it |
 | Databricks account console | Account admin | Required by the Network Connectivity Configuration and network policy APIs |
+| Unity Catalog metastore | `CREATE STORAGE CREDENTIAL` and `CREATE EXTERNAL LOCATION`, or metastore admin | Creates the storage credential and external location through the workspace |
 | Hub VNet, only when a peering flag is `true` | Network Contributor | Creates the peering on the hub VNet and peers the spoke with it |
 | Hub Private DNS zones, only when zone IDs are set | Private DNS Zone Contributor | Registers the storage private endpoints in those zones |
 
@@ -38,8 +39,8 @@ A local run uses the pipelines' state file and lock, but none of their controls:
   run. Do not apply while one of those workflows is running for the same environment.
 - **The pipelines deploy `main`.** Apply from an up-to-date `main`, or from a branch you merge straight afterwards.
   Anything applied locally that is not on `main` is reverted by the next pipeline deploy.
-- **`terraform.tfvars` must equal `TFVARS`.** A value changed only in your local copy is reverted by the next pipeline
-  deploy. Step 4 fetches the file fresh for each session.
+- **Values change through pull requests.** A value changed only in your working copy of `terraform.tfvars` is reverted
+  by the next pipeline deploy. Step 4 confirms the file matches the commit you are applying.
 - **No approval gate and no evidence bundle.** Both belong to pipeline runs only.
 
 ## 3. Open the session
@@ -72,23 +73,14 @@ az account show --query "{user:user.name, tenant:tenantId, subscription:name}" -
 The last command should show your own user on the environment's subscription. The state backend, azurerm, azapi and
 the Databricks provider all take their tokens from this login.
 
-## 4. Fetch terraform.tfvars
+## 4. Check the values
 
-The file is gitignored. This writes it from the `TFVARS` value on the `<env>-plan` GitHub Environment, replacing any
-local copy:
-
-```powershell
-# cmd writes gh's output byte for byte. PowerShell redirection re-encodes it, as UTF-16 by default in Windows
-# PowerShell, which Terraform rejects.
-cmd /c "gh variable get TFVARS --env $planEnvironment > terraform.tfvars"
-```
-
-When `TFVARS` is held as an environment secret, GitHub does not return its value. Copy
-`baytex.terraform.tfvars.example`, the content the secret is created from, and confirm with whoever maintains the secret
-that it has not changed since:
+Terraform loads the environment's values from `terraform.tfvars` in this folder. Confirm the checkout is the commit you
+intend to apply, normally an up-to-date `main`, and that the file has no local edits:
 
 ```powershell
-Copy-Item baytex.terraform.tfvars.example terraform.tfvars
+git log -1 --oneline
+git status --short -- terraform.tfvars   # no output: the file matches the commit
 ```
 
 ## 5. Connect to the state backend
@@ -135,7 +127,7 @@ terraform validate
 terraform plan -lock-timeout=10m -out=tfplan
 ```
 
-Read the plan before applying. An environment that matches `main` and `TFVARS` reports `No changes`. Any
+Read the plan before applying. An environment that matches `main` reports `No changes`. Any
 `must be replaced` deletes and recreates that resource, so find out why first.
 
 When the plan removes an on-premises destination, remove the connections from its Private Link Service first, as the
@@ -232,8 +224,7 @@ approved and recorded like the run it interrupts.
 ## 9. Finish
 
 ```powershell
-# The saved plan holds every variable value in clear text, and removing terraform.tfvars makes the next session fetch
-# the current TFVARS rather than reuse an old copy. Both files are gitignored.
-Remove-Item tfplan, terraform.tfvars, outputs.json -ErrorAction SilentlyContinue
+# Working files from this session; the saved plan holds every variable value in clear text. Both are gitignored.
+Remove-Item tfplan, outputs.json -ErrorAction SilentlyContinue
 Set-Location ..\..
 ```

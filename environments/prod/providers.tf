@@ -37,3 +37,19 @@ provider "databricks" {
   # Without it the provider uses the multi-tenant "common" endpoint, which cannot issue a token without an interactive sign-in.
   azure_tenant_id = var.tenant_id
 }
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Databricks workspace
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Workspace-level provider for the Unity Catalog storage credential and external location, authenticated through the signed-in Azure CLI session.
+# Its host is known only once the workspace exists; nothing reads through it until then, so the first apply creates the workspace and these objects together.
+provider "databricks" {
+  alias     = "workspace"
+  host      = "https://${module.databricks_workspace.workspace_url}"
+  auth_type = "azure-cli"
+
+  # With the workspace resource ID the provider also sends an Azure management token, which lets a service principal holding Contributor on the workspace be added to it as an admin on its first call.
+  azure_workspace_resource_id = module.databricks_workspace.id
+  azure_tenant_id             = var.tenant_id
+}
