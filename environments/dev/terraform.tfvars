@@ -225,7 +225,7 @@ proxy_vm_size = "Standard_D4s_v6"
 
 # Availability zones of the two HAProxy VMs, first VM then second VM. Each zone gets its own Sunday patch window in Alberta Time:
 # 14:00-16:00 for zone 1, 16:00-18:00 for zone 3 and 18:00-20:00 for zone 2.
-proxy_vm_zones = ["1", "3"]
+proxy_vm_zones = ["1", "2"]
 
 # The first VM IP, then the second VM IP. Both must be inside proxy_subnet_cidr.
 proxy_vm_private_ips = [
