@@ -215,10 +215,16 @@ admin_ssh_source_cidrs = []
 
 ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGmmj3VDiFFJxjvKmwfwKeun9I93B8XVPYBlT7mkmvJX bte-dbx-test-haproxy"
 
-# VM size of every HAProxy VM. v6 sizes use an NVMe disk controller, which the module sets automatically.
-proxy_vm_size = "Standard_D4s_v6"
+# VM size of every HAProxy VM. v6 and later sizes use an NVMe disk controller, which the module sets automatically.
+# Test uses the AMD v7 size because the Dsv6 family is not available in this subscription.
+proxy_vm_size = "Standard_D4as_v7"
 
-# The zone 1 VM IP, then the zone 2 VM IP. Both must be inside proxy_subnet_cidr.
+# Availability zones of the two HAProxy VMs, first VM then second VM. Each zone gets its own Sunday patch window in Alberta Time:
+# 14:00-16:00 for zone 1, 16:00-18:00 for zone 3 and 18:00-20:00 for zone 2.
+# Test uses zones 1 and 3 because Standard_D4as_v7 is offered only in those zones in this subscription.
+proxy_vm_zones = ["1", "3"]
+
+# The first VM IP, then the second VM IP. Both must be inside proxy_subnet_cidr.
 proxy_vm_private_ips = [
   "10.40.195.5",
   "10.40.195.6"

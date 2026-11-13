@@ -123,6 +123,7 @@ module "haproxy" {
   proxy_subnet_id      = module.network.proxy_subnet_id
   proxy_vm_size        = var.proxy_vm_size
   proxy_vm_private_ips = var.proxy_vm_private_ips
+  proxy_vm_zones       = var.proxy_vm_zones
   admin_username       = "azureadmin"
   ssh_public_key       = var.ssh_public_key
   dns_servers          = var.dns_servers

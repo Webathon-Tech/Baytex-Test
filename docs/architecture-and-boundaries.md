@@ -108,9 +108,9 @@ configuration, the frontend IPs and the HAProxy service are all persistent opera
 rejoins the pool as soon as it has booted.
 
 Azure Update Manager installs critical and security updates on the HAProxy VMs every Sunday afternoon, Alberta Time,
-one VM after the other: 14:00–16:00 for the zone 1 VM and 18:00–20:00 for the zone 2 VM. A VM restarts only when an
-update requires it. The two VMs are never patched at the same time, and a zone 1 VM that has not come back raises the
-health probe alert before the zone 2 window opens.
+one VM after the other, in a two-hour window set by the VM's availability zone: 14:00–16:00 for zone 1, 16:00–18:00 for
+zone 3 and 18:00–20:00 for zone 2. Dev and prod use zones 1 and 2, and test uses zones 1 and 3. A VM restarts only when
+an update requires it. The two VMs are in different zones, so they are never patched at the same time.
 
 The tier is built to keep serving through the loss of a VM or an availability zone. The load balancer requests the
 HAProxy health frontend over HTTP every five seconds and takes a VM out of the pool after one failed probe, so the VM in

@@ -37,12 +37,23 @@ variable "proxy_vm_size" {
 }
 
 variable "proxy_vm_private_ips" {
-  description = "Static private IPs of the two HAProxy VMs: the first VM is placed in zone 1 and the second in zone 2."
+  description = "Static private IPs of the two HAProxy VMs, first VM then second VM, in the same order as proxy_vm_zones."
   type        = list(string)
 
   validation {
     condition     = length(var.proxy_vm_private_ips) == 2
-    error_message = "proxy_vm_private_ips must list two addresses, one for the zone 1 VM and one for the zone 2 VM."
+    error_message = "proxy_vm_private_ips must list two addresses, one for each HAProxy VM."
+  }
+}
+
+variable "proxy_vm_zones" {
+  description = "Availability zones of the two HAProxy VMs, first VM then second VM. Each zone gets its own Sunday patch window. Changing a VM's zone replaces that VM."
+  type        = list(string)
+  default     = ["1", "2"]
+
+  validation {
+    condition     = length(var.proxy_vm_zones) == 2 && length(distinct(var.proxy_vm_zones)) == 2 && alltrue([for zone in var.proxy_vm_zones : contains(["1", "2", "3"], zone)])
+    error_message = "proxy_vm_zones must list two different zones, each \"1\", \"2\" or \"3\"."
   }
 }
 

@@ -38,7 +38,8 @@ to be completed once.
 - [ ] State backend bootstrapped
 - [ ] HAProxy SSH key pair created for this environment, its public key in `terraform.tfvars`, its private key in a
       Baytex vault, and the administration path agreed
-- [ ] HAProxy patch windows accepted for the environment: Sunday 14:00–16:00 and 18:00–20:00 Alberta Time
+- [ ] HAProxy patch windows accepted for the environment, Sunday Alberta Time: 14:00–16:00 and 18:00–20:00 for dev
+      and prod (zones 1 and 2), 14:00–16:00 and 16:00–18:00 for test (zones 1 and 3)
 
 ## Quality gates
 

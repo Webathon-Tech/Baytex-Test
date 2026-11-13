@@ -214,24 +214,27 @@ every Allow rule.
 | `admin_ssh_source_cidrs` | `[]` | CIDRs allowed to SSH to the HAProxy VMs. An empty list creates no SSH rule, and the VMs remain reachable through `az vm run-command`. |
 | `ssh_public_key` | required | SSH public key for the `azureadmin` user on the HAProxy VMs. Password authentication is disabled. |
 | `proxy_vm_size` | `"Standard_D4s_v6"` | Azure VM size of every HAProxy VM. |
-| `proxy_vm_private_ips` | required | Static private IPs of the two HAProxy VMs: the first VM is placed in zone 1 and the second in zone 2. Both must be inside `proxy_subnet_cidr`. |
+| `proxy_vm_zones` | `["1", "2"]` | Availability zones of the two HAProxy VMs, first VM then second VM. The two zones must be different, each `"1"`, `"2"` or `"3"`, and each gets its own patch window (see HAProxy patching). Dev and prod set `["1", "2"]`. Test sets `["1", "3"]` because its VM size is offered only in zones 1 and 3 in that subscription. Changing a VM's zone replaces that VM. |
+| `proxy_vm_private_ips` | required | Static private IPs of the two HAProxy VMs, first VM then second VM, in the same order as the zones. Both must be inside `proxy_subnet_cidr`. |
 | `on_prem_endpoints` | required | On-premises destinations, keyed by a short name. Each gets a load balancer frontend on `frontend_ip`, a Private Link Service with its NAT IP on `pls_nat_ip`, and an HAProxy listener on `listen_port` that forwards to `target_fqdn:target_port`. `domain_name` is the name serverless compute uses to reach the destination. `load_balancer`, optional and 1 by default, is the number of the internal load balancer that holds the frontend and Private Link Service: Azure allows 8 Private Link Services per load balancer, and the plan fails if more than 8 destinations share a number. A change is applied to the HAProxy VMs in place during the apply. |
 
 #### HAProxy patching
 
 Azure Update Manager installs critical and security updates on the HAProxy VMs, restarting a VM only when an update
-requires it. Both VMs are patched on Sunday afternoon, one after the other, each in its own two-hour window in Alberta
-Time:
+requires it. Both VMs are patched on Sunday afternoon, one after the other, each in the two-hour window of its
+availability zone in Alberta Time. A schedule is created only for the zones that hold a VM.
 
-| VM | Window |
-| --- | --- |
-| Zone 1 (`proxy-01`) | Sunday 14:00–16:00 |
-| Zone 2 (`proxy-02`) | Sunday 18:00–20:00 |
+| Zone | Window | Used by |
+| --- | --- | --- |
+| Zone 1 | Sunday 14:00–16:00 | `proxy-01` in every environment |
+| Zone 3 | Sunday 16:00–18:00 | `proxy-02` in test |
+| Zone 2 | Sunday 18:00–20:00 | `proxy-02` in dev and prod |
 
-The two hours between the windows mean the two VMs are never patched at the same time. If the zone 1 VM has not come
-back, the health probe alert reports it before the zone 2 window opens. Alberta Time is UTC-6 all year, so the windows
-keep the same local time all year. In Azure the schedules show the time zone "(UTC-06:00) Saskatchewan", which matches
-Alberta Time all year.
+The windows do not overlap and the two VMs are in different zones, so they are never patched at the same time. In dev
+and prod the two hours between the windows mean that, if the zone 1 VM has not come back, the health probe alert
+reports it before the zone 2 window opens. In test the zone 3 window opens as the zone 1 window closes. Alberta Time is
+UTC-6 all year, so the windows keep the same local time all year. In Azure the schedules show the time zone
+"(UTC-06:00) Saskatchewan", which matches Alberta Time all year.
 
 Each schedule applies to the Linux VMs in the connectivity resource group whose `MaintenanceSchedule` tag names it, so
 a VM that is replaced is covered by its schedule without further change. The windows are set in the `haproxy-tier`
