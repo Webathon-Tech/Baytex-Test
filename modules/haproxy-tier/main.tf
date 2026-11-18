@@ -1,16 +1,16 @@
 # ----------------------------------------------------------------------------------------------------------------------
 # HAProxy tier module
-# Two HAProxy VMs, in availability zones 1 and 2, behind an internal Standard Load Balancer, with one frontend and one Private Link Service per on-premises destination.
+# Two HAProxy VMs, in the two availability zones listed in proxy_vm_zones, behind an internal Standard Load Balancer, with one frontend and one Private Link Service per on-premises destination.
 # Azure allows at most 8 Private Link Services per load balancer, so destinations beyond that are placed on additional load balancers in front of the same VMs.
 # Databricks serverless compute reaches each destination through its Private Link Service, and HAProxy forwards the connection to the on-premises host.
 # ----------------------------------------------------------------------------------------------------------------------
 
 locals {
-  # One VM per availability zone, each with a static private IP: the first address is placed in zone 1 and the second in zone 2.
+  # Two VMs, each with a static private IP and an availability zone: the first VM takes the first entry of proxy_vm_private_ips and proxy_vm_zones, and the second VM takes the second.
   proxy_nodes = {
     for index, private_ip in var.proxy_vm_private_ips : format("%02d", index + 1) => {
       private_ip = private_ip
-      zone       = tostring(index + 1)
+      zone       = var.proxy_vm_zones[index]
     }
   }
 
@@ -38,12 +38,15 @@ locals {
     configure_haproxy = var.configure_haproxy
   }), "\r\n", "\n")
 
-  # Sunday patch windows, one per availability zone, keyed by zone with the local start time in Alberta Time.
-  # The zone 2 window opens two hours after the zone 1 window closes, so the two HAProxy VMs are never patched or restarted at the same time, and a zone 1 VM that has not come back raises the health probe alert before zone 2 is touched.
-  patch_windows = {
+  # Two-hour Sunday patch windows in Alberta Time, one per availability zone: 14:00 for zone 1, 16:00 for zone 3 and 18:00 for zone 2.
+  # The windows do not overlap and the two VMs are in different zones, so they are never patched or restarted at the same time.
+  # A schedule is created only for the zones that hold a VM, keyed by zone.
+  patch_window_start_times = {
     "1" = "14:00"
+    "3" = "16:00"
     "2" = "18:00"
   }
+  patch_windows = { for zone in var.proxy_vm_zones : zone => local.patch_window_start_times[zone] }
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -167,7 +170,7 @@ resource "terraform_data" "haproxy_config" {
 # Patching
 # ----------------------------------------------------------------------------------------------------------------------
 
-# One Azure Update Manager schedule per availability zone, every Sunday in Alberta Time: 14:00-16:00 for zone 1 and 18:00-20:00 for zone 2, installing critical and security updates and restarting only when an update requires it.
+# One Azure Update Manager schedule per availability zone that holds a VM, every Sunday in Alberta Time: 14:00-16:00 for zone 1, 16:00-18:00 for zone 3 and 18:00-20:00 for zone 2, installing critical and security updates and restarting only when an update requires it.
 # Alberta stays on UTC-6 all year from 1 November 2026. Azure Update Manager does not yet offer the Windows "Alberta Standard Time" zone, so the schedules use "Canada Central Standard Time" (Saskatchewan), which is also UTC-6 all year.
 # "Mountain Standard Time" would follow US daylight saving and move the windows one hour later in Alberta every winter.
 # start_date_time is the first Sunday the schedule runs; after that only its time of day matters.

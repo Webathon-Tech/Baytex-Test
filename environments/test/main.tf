@@ -123,6 +123,7 @@ module "haproxy" {
   proxy_subnet_id      = module.network.proxy_subnet_id
   proxy_vm_size        = var.proxy_vm_size
   proxy_vm_private_ips = var.proxy_vm_private_ips
+  proxy_vm_zones       = var.proxy_vm_zones
   admin_username       = "azureadmin"
   ssh_public_key       = var.ssh_public_key
   dns_servers          = var.dns_servers
@@ -183,6 +184,8 @@ module "ncc" {
   workspace_id          = module.databricks_workspace.workspace_id
   storage_account_id    = module.data_foundation.storage_account_id
   private_link_services = local.private_link_services_for_ncc
+
+  cross_environment_storage_readers = var.cross_environment_storage_readers
 
   account_id                    = var.databricks_account_id
   create_network_policy         = var.create_serverless_network_policy

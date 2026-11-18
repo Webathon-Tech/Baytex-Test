@@ -59,9 +59,11 @@ private_endpoint_subnet_cidr     = "10.40.146.0/26"
 proxy_subnet_cidr                = "10.40.147.0/26"
 
 # DNS servers, in preference order, for the VNet and the HAProxy resolver.
-# The sandbox has no corporate DNS, so this is Azure-provided DNS. Baytex uses 10.40.240.132.
+# 10.40.240.132 is the sandbox hub's DNS forwarder, standing in for Baytex corporate DNS at the same address. It forwards
+# to Azure DNS from the hub VNet, which the privatelink.blob and privatelink.dfs zones are linked to, so every spoke
+# resolves every environment's storage private endpoints.
 dns_servers = [
-  "168.63.129.16"
+  "10.40.240.132"
 ]
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -69,24 +71,26 @@ dns_servers = [
 # ----------------------------------------------------------------------------------------------------------------------
 
 # The hub VNet. Its subscription, resource group and name are read from this ID.
-# The sandbox has no hub, so this is null and both peering flags below stay false.
-hub_vnet_id = null
+# The sandbox hub, standing in for the Baytex hub vnet-bte-hub-cnc-02, holds the firewall and the DNS forwarder.
+hub_vnet_id = "/subscriptions/f1c89731-86b0-4cd4-bd2d-f2347c1d62d2/resourceGroups/rg-network-vkp-hub-cnc-02/providers/Microsoft.Network/virtualNetworks/vnet-vkp-hub-cnc-02"
 
 # VNet peering with the hub, one flag per direction.
 # create_spoke_to_hub_peering creates the peering on the spoke VNet, and create_hub_to_spoke_peering creates the peering on the hub VNet.
-# Baytex Infrastructure creates the peering in both directions, so both stay false and the hub_side_peering_command output gives the command for the hub side.
-# Setting either to true needs Network Contributor on the hub VNet for the deployment service principal.
-create_spoke_to_hub_peering = false
-create_hub_to_spoke_peering = false
+# The sandbox hub is in the same subscription, where the deployment service principal is already Contributor, so Terraform
+# creates the peering in both directions. Baytex Infrastructure creates both in Baytex, where both stay false.
+create_spoke_to_hub_peering = true
+create_hub_to_spoke_peering = true
 
 # The Cisco firewall, next hop for both route tables.
+# In the sandbox this is vm-vkp-hub-fw-cnc-02, a Linux router standing in for the Cisco firewall. It forwards between
+# the spokes and to the internet, and SNATs forwarded traffic so private endpoint replies return through it.
 cisco_firewall_private_ip = "10.40.240.36"
 
 # Prefixes the Databricks subnets send to the firewall; the rest of their traffic leaves through the NAT Gateway.
 # The proxy and private endpoint subnets send all traffic to the firewall and need no entry here.
 #
 # azure-landing-zone is one aggregate covering every Baytex spoke in 10.40.0.0/16, so traffic to another spoke reaches the firewall without a route per spoke.
-# It covers the BI, hub, identity, infrastructure and OT spokes and the three Databricks spokes: dev 10.40.144.0/20, test 10.40.192.0/20 and prod 10.40.176.0/20.
+# It covers the BI, hub, identity, infrastructure and OT spokes and the three Databricks spokes: dev 10.40.144.0/20, test 10.40.160.0/20 and prod 10.40.176.0/20.
 # Azure selects the longest matching prefix, so this spoke's own /20 and the hub range learned from the peering stay more specific and are unaffected.
 firewall_routes = {
   azure-landing-zone = {
@@ -193,17 +197,20 @@ data_storage_account_name = "stvkpdbxdevcnc002"
 data_containers = []
 
 # Private DNS zones in the hub subscription that the blob and dfs private endpoints register in.
-# Baytex Infrastructure creates the zones and the record sets for the two private endpoints, so both stay empty and the endpoints are created without DNS zone groups.
-# Setting them needs Private DNS Zone Contributor on the two zones for the deployment service principal. Example:
-#   blob_private_dns_zone_ids = ["/subscriptions/<hub-subscription-id>/resourceGroups/<dns-zone-resource-group>/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"]
-#   dfs_private_dns_zone_ids  = ["/subscriptions/<hub-subscription-id>/resourceGroups/<dns-zone-resource-group>/providers/Microsoft.Network/privateDnsZones/privatelink.dfs.core.windows.net"]
-blob_private_dns_zone_ids = []
-dfs_private_dns_zone_ids  = []
+# In Baytex, Baytex Infrastructure creates the record sets for the two private endpoints, so both stay empty there.
+# The sandbox zones are in the hub resource group, in this subscription, where the deployment service principal is
+# already Contributor, so the private endpoints get DNS zone groups and Azure maintains their A records.
+blob_private_dns_zone_ids = ["/subscriptions/f1c89731-86b0-4cd4-bd2d-f2347c1d62d2/resourceGroups/rg-network-vkp-hub-cnc-02/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"]
+dfs_private_dns_zone_ids  = ["/subscriptions/f1c89731-86b0-4cd4-bd2d-f2347c1d62d2/resourceGroups/rg-network-vkp-hub-cnc-02/providers/Microsoft.Network/privateDnsZones/privatelink.dfs.core.windows.net"]
 
 # Static addresses for the two private endpoints, so a rebuilt environment keeps the addresses already published in DNS.
 # Both must be inside private_endpoint_subnet_cidr and above the four addresses Azure reserves at the start of every subnet.
 blob_private_endpoint_ip = "10.40.146.4"
 dfs_private_endpoint_ip  = "10.40.146.5"
+
+# Other environments whose serverless compute reads this data storage account, as their NCC names keyed by environment.
+# No other environment reads this one. Dev and test read prod's data storage account, which prod grants.
+cross_environment_storage_readers = {}
 
 # ----------------------------------------------------------------------------------------------------------------------
 # HAProxy tier
@@ -211,7 +218,7 @@ dfs_private_endpoint_ip  = "10.40.146.5"
 
 # Installs HAProxy on the proxy VMs and applies its configuration. The VMs install it from the Ubuntu package mirrors, which the proxy subnet reaches through the firewall.
 # While it is false the VMs serve no traffic and stay out of the load balancer backend pool. Changing it replaces both VMs.
-configure_haproxy = false
+configure_haproxy = true
 
 # One Allow-SSH rule per CIDR on the proxy NSG.
 # Empty creates none, and the VMs remain reachable through az vm run-command. Example:
@@ -223,7 +230,11 @@ ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILab4KyZM2osFJgiL0AAhSVJEg
 # VM size of every HAProxy VM. v6 sizes use an NVMe disk controller, which the module sets automatically.
 proxy_vm_size = "Standard_D4s_v6"
 
-# The zone 1 VM IP, then the zone 2 VM IP. Both must be inside proxy_subnet_cidr.
+# Availability zones of the two HAProxy VMs, first VM then second VM. Each zone gets its own Sunday patch window in Alberta Time:
+# 14:00-16:00 for zone 1, 16:00-18:00 for zone 3 and 18:00-20:00 for zone 2.
+proxy_vm_zones = ["1", "2"]
+
+# The first VM IP, then the second VM IP. Both must be inside proxy_subnet_cidr.
 proxy_vm_private_ips = [
   "10.40.147.5",
   "10.40.147.6"

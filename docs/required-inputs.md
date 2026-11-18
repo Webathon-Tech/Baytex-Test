@@ -67,11 +67,15 @@ For each SQL Server or Oracle destination:
 - HAProxy SSH public key, from a key pair created for this environment, with the private key held in a Baytex vault
 - Approved SSH source CIDRs, or confirmation that administration uses `az vm run-command` only
 - HAProxy VM size
-- Acceptance of the HAProxy patch windows: Sunday 14:00–16:00 and 18:00–20:00 Alberta Time
+- HAProxy VM availability zones: zones 1 and 2 in dev and prod, zones 1 and 3 in test
+- Acceptance of the HAProxy patch windows, Sunday Alberta Time: 14:00–16:00 and 18:00–20:00 for dev and prod,
+  14:00–16:00 and 16:00–18:00 for test
 - Log Analytics retention
 - Alert email receivers
 - Owner of Azure Monitor Agent, endpoint detection and Arctic Wolf onboarding for the HAProxy VMs
 - Approval for public workspace front-end access
+- Approval of the security exception giving dev and test read access to the prod data storage account, with the prod
+  catalogs it covers
 
 ## Unity Catalog handoff
 

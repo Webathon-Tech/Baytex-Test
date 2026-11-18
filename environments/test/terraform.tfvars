@@ -2,23 +2,23 @@
 # Terraform loads this file automatically; changes are made by pull request and applied at the next test deploy.
 # Values follow the section order of variables.tf.
 #
-# Target subscription: SUB-BTE-CAN-DATA-TEST.
-# The spoke address space is the 10.40.192.0/20 range assigned by Baytex networking.
+# Target subscription: ME-MngEnvMCAP517100-v-parvkaur-1 (sandbox).
+# The spoke address space is the 10.40.160.0/20 range assigned by Baytex networking.
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Subscription and Databricks account
 # ----------------------------------------------------------------------------------------------------------------------
 
-# Baytex Entra tenant and the subscription this environment deploys into.
-tenant_id       = "9a6302b1-6a51-4f41-ad6b-ad23218c074d"
-subscription_id = "7ba1d46e-61db-4e7e-9f60-a7a5417bdd04"
+# Sandbox Entra tenant and the subscription this environment deploys into.
+tenant_id       = "f913f484-b59e-49a4-95ce-feddd38dc57a"
+subscription_id = "f1c89731-86b0-4cd4-bd2d-f2347c1d62d2"
 
 # From the Baytex Databricks account console.
 # The metastore is the existing regional one, which Azure Databricks assigns every new workspace to automatically.
 # The platform does not assign it itself. It confirms the workspace is assigned to it before creating the Unity Catalog
 # storage credential and external location, and reports it in the unity_catalog_handoff output.
-databricks_account_id = "1ff56ce7-99f9-4d29-b2d7-5da177c5f55b"
-existing_metastore_id = "858890e3-8d95-42c7-922e-4107a0055500"
+databricks_account_id = "1c6f37a6-d8dd-4149-a171-d156a82458aa"
+existing_metastore_id = "39e6ce1f-c70e-4d71-aa1d-4d991315dbae"
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Naming
@@ -26,7 +26,7 @@ existing_metastore_id = "858890e3-8d95-42c7-922e-4107a0055500"
 
 # Every resource name is composed as <type>-<organization>-<workload>-<environment>-<purpose>-<region_short>-<instance>.
 location     = "canadacentral"
-organization = "bte"
+organization = "vkp"
 workload     = "dbx"
 environment  = "test"
 region_short = "cnc"
@@ -36,26 +36,32 @@ instance     = "002"
 # Tags
 # ----------------------------------------------------------------------------------------------------------------------
 
-owner               = "Baytex Infrastructure"
-cost_centre         = "BTX-DBX-TEST"
+owner               = "Platform Engineering"
+cost_centre         = "VKP-DBX-TEST"
 data_classification = "Internal"
 
 # Extra tags merged over the standard tags. Example:
 #   additional_tags = { Department = "BI" }
-additional_tags = {}
+# Project replaces the standard Project tag, which the code sets to "Baytex Terraform Foundations".
+additional_tags = {
+  Project = "VKP Terraform Foundations"
+}
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Spoke network
 # ----------------------------------------------------------------------------------------------------------------------
 
 # Each environment uses its own /20 from the Baytex Azure range.
-vnet_cidr                        = "10.40.192.0/20"
-databricks_host_subnet_cidr      = "10.40.192.0/24"
-databricks_container_subnet_cidr = "10.40.193.0/24"
-private_endpoint_subnet_cidr     = "10.40.194.0/26"
-proxy_subnet_cidr                = "10.40.195.0/26"
+vnet_cidr                        = "10.40.160.0/20"
+databricks_host_subnet_cidr      = "10.40.160.0/24"
+databricks_container_subnet_cidr = "10.40.161.0/24"
+private_endpoint_subnet_cidr     = "10.40.162.0/26"
+proxy_subnet_cidr                = "10.40.163.0/26"
 
-# Corporate DNS servers, in preference order, for the VNet and the HAProxy resolver.
+# DNS servers, in preference order, for the VNet and the HAProxy resolver.
+# 10.40.240.132 is the sandbox hub's DNS forwarder, standing in for Baytex corporate DNS at the same address. It forwards
+# to Azure DNS from the hub VNet, which the privatelink.blob and privatelink.dfs zones are linked to, so every spoke
+# resolves every environment's storage private endpoints.
 dns_servers = [
   "10.40.240.132"
 ]
@@ -64,33 +70,36 @@ dns_servers = [
 # Hub peering and routing
 # ----------------------------------------------------------------------------------------------------------------------
 
-# The Baytex hub VNet. Its subscription, resource group and name are read from this ID.
-hub_vnet_id = "/subscriptions/557d1301-8d98-483e-ac69-4f23bf2cb2eb/resourceGroups/rg-network-bte-hub-cnc-02/providers/Microsoft.Network/virtualNetworks/vnet-bte-hub-cnc-02"
+# The hub VNet. Its subscription, resource group and name are read from this ID.
+# The sandbox hub, standing in for the Baytex hub vnet-bte-hub-cnc-02, holds the firewall and the DNS forwarder.
+hub_vnet_id = "/subscriptions/f1c89731-86b0-4cd4-bd2d-f2347c1d62d2/resourceGroups/rg-network-vkp-hub-cnc-02/providers/Microsoft.Network/virtualNetworks/vnet-vkp-hub-cnc-02"
 
 # VNet peering with the hub, one flag per direction.
 # create_spoke_to_hub_peering creates the peering on the spoke VNet, and create_hub_to_spoke_peering creates the peering on the hub VNet.
-# Baytex Infrastructure creates the peering in both directions, so both stay false and the hub_side_peering_command output gives the command for the hub side.
-# Setting either to true needs Network Contributor on the hub VNet for the deployment service principal.
-create_spoke_to_hub_peering = false
-create_hub_to_spoke_peering = false
+# The sandbox hub is in the same subscription, where the deployment service principal is already Contributor, so Terraform
+# creates the peering in both directions. Baytex Infrastructure creates both in Baytex, where both stay false.
+create_spoke_to_hub_peering = true
+create_hub_to_spoke_peering = true
 
 # The Cisco firewall, next hop for both route tables.
+# In the sandbox this is vm-vkp-hub-fw-cnc-02, a Linux router standing in for the Cisco firewall. It forwards between
+# the spokes and to the internet, and SNATs forwarded traffic so private endpoint replies return through it.
 cisco_firewall_private_ip = "10.40.240.36"
 
 # Prefixes the Databricks subnets send to the firewall; the rest of their traffic leaves through the NAT Gateway.
 # The proxy and private endpoint subnets send all traffic to the firewall and need no entry here.
 #
 # azure-landing-zone is one aggregate covering every Baytex spoke in 10.40.0.0/16, so traffic to another spoke reaches the firewall without a route per spoke.
-# It covers the BI, hub, identity, infrastructure and OT spokes and the three Databricks spokes: dev 10.40.144.0/20, test 10.40.192.0/20 and prod 10.40.176.0/20.
+# It covers the BI, hub, identity, infrastructure and OT spokes and the three Databricks spokes: dev 10.40.144.0/20, test 10.40.160.0/20 and prod 10.40.176.0/20.
 # Azure selects the longest matching prefix, so this spoke's own /20 and the hub range learned from the peering stay more specific and are unaffected.
 firewall_routes = {
   azure-landing-zone = {
     address_prefix = "10.40.0.0/16"
   }
-  baytex-onprem-172 = {
+  onprem-172 = {
     address_prefix = "172.19.64.0/18"
   }
-  baytex-onprem-192 = {
+  onprem-192 = {
     address_prefix = "192.168.0.0/16"
   }
   trimble-vpn-host = {
@@ -111,7 +120,7 @@ databricks_nsg_rules = {
     priority                   = 1000
     destination_address_prefix = "Sql.CanadaCentral"
     destination_port_ranges    = ["1433"]
-    description                = "Oplii, on baytex-bi.database.windows.net."
+    description                = "Oplii Azure SQL."
   }
   Allow-PowerBI = {
     priority                   = 1010
@@ -180,7 +189,7 @@ proxy_nsg_rules = {}
 # ----------------------------------------------------------------------------------------------------------------------
 
 # Globally unique across Azure.
-data_storage_account_name = "stbtedbxtestcnc002"
+data_storage_account_name = "stvkpdbxtestcnc002"
 
 # Containers created in the data storage account.
 # The Unity Catalog container, unity_catalog_container_name below, is always created and needs no entry here. Example:
@@ -188,17 +197,20 @@ data_storage_account_name = "stbtedbxtestcnc002"
 data_containers = []
 
 # Private DNS zones in the hub subscription that the blob and dfs private endpoints register in.
-# Baytex Infrastructure creates the zones and the record sets for the two private endpoints, so both stay empty and the endpoints are created without DNS zone groups.
-# Setting them needs Private DNS Zone Contributor on the two zones for the deployment service principal. Example:
-#   blob_private_dns_zone_ids = ["/subscriptions/<hub-subscription-id>/resourceGroups/<dns-zone-resource-group>/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"]
-#   dfs_private_dns_zone_ids  = ["/subscriptions/<hub-subscription-id>/resourceGroups/<dns-zone-resource-group>/providers/Microsoft.Network/privateDnsZones/privatelink.dfs.core.windows.net"]
-blob_private_dns_zone_ids = []
-dfs_private_dns_zone_ids  = []
+# In Baytex, Baytex Infrastructure creates the record sets for the two private endpoints, so both stay empty there.
+# The sandbox zones are in the hub resource group, in this subscription, where the deployment service principal is
+# already Contributor, so the private endpoints get DNS zone groups and Azure maintains their A records.
+blob_private_dns_zone_ids = ["/subscriptions/f1c89731-86b0-4cd4-bd2d-f2347c1d62d2/resourceGroups/rg-network-vkp-hub-cnc-02/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"]
+dfs_private_dns_zone_ids  = ["/subscriptions/f1c89731-86b0-4cd4-bd2d-f2347c1d62d2/resourceGroups/rg-network-vkp-hub-cnc-02/providers/Microsoft.Network/privateDnsZones/privatelink.dfs.core.windows.net"]
 
 # Static addresses for the two private endpoints, so a rebuilt environment keeps the addresses already published in DNS.
 # Both must be inside private_endpoint_subnet_cidr and above the four addresses Azure reserves at the start of every subnet.
-blob_private_endpoint_ip = "10.40.194.4"
-dfs_private_endpoint_ip  = "10.40.194.5"
+blob_private_endpoint_ip = "10.40.162.4"
+dfs_private_endpoint_ip  = "10.40.162.5"
+
+# Other environments whose serverless compute reads this data storage account, as their NCC names keyed by environment.
+# No other environment reads this one. Dev and test read prod's data storage account, which prod grants.
+cross_environment_storage_readers = {}
 
 # ----------------------------------------------------------------------------------------------------------------------
 # HAProxy tier
@@ -213,15 +225,21 @@ configure_haproxy = true
 #   admin_ssh_source_cidrs = ["10.40.240.0/24"]
 admin_ssh_source_cidrs = []
 
-ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGmmj3VDiFFJxjvKmwfwKeun9I93B8XVPYBlT7mkmvJX bte-dbx-test-haproxy"
+ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGmmj3VDiFFJxjvKmwfwKeun9I93B8XVPYBlT7mkmvJX vkp-dbx-test-haproxy"
 
-# VM size of every HAProxy VM. v6 sizes use an NVMe disk controller, which the module sets automatically.
-proxy_vm_size = "Standard_D4s_v6"
+# VM size of every HAProxy VM. v6 and later sizes use an NVMe disk controller, which the module sets automatically.
+# Test uses the AMD v7 size because the Dsv6 family is not available in this subscription.
+proxy_vm_size = "Standard_D4as_v7"
 
-# The zone 1 VM IP, then the zone 2 VM IP. Both must be inside proxy_subnet_cidr.
+# Availability zones of the two HAProxy VMs, first VM then second VM. Each zone gets its own Sunday patch window in Alberta Time:
+# 14:00-16:00 for zone 1, 16:00-18:00 for zone 3 and 18:00-20:00 for zone 2.
+# Test uses zones 1 and 3 because Standard_D4as_v7 is offered only in those zones in this subscription.
+proxy_vm_zones = ["1", "3"]
+
+# The first VM IP, then the second VM IP. Both must be inside proxy_subnet_cidr.
 proxy_vm_private_ips = [
-  "10.40.195.5",
-  "10.40.195.6"
+  "10.40.163.5",
+  "10.40.163.6"
 ]
 
 # One load balancer frontend, Private Link Service and HAProxy listener per destination.
@@ -233,64 +251,64 @@ proxy_vm_private_ips = [
 # HAProxy resolves target_fqdn at run time through dns_servers; the trailing comments give each destination's confirmed IP address.
 on_prem_endpoints = {
   sqlbidb01yyc = {
-    frontend_ip = "10.40.195.11"
-    pls_nat_ip  = "10.40.195.21"
+    frontend_ip = "10.40.163.11"
+    pls_nat_ip  = "10.40.163.21"
     listen_port = 1433
     target_fqdn = "sqlbidb01yyc.baytexenergy.com" # 172.19.77.45
     target_port = 1433
     domain_name = "sqlbidb01yyc.baytexenergy.com"
   }
   sqlbidb01yyc_t = {
-    frontend_ip = "10.40.195.12"
-    pls_nat_ip  = "10.40.195.22"
+    frontend_ip = "10.40.163.12"
+    pls_nat_ip  = "10.40.163.22"
     listen_port = 1433
     target_fqdn = "sqlbidb01yyc-t.baytexenergy.com" # 172.19.96.44
     target_port = 1433
     domain_name = "sqlbidb01yyc-t.baytexenergy.com"
   }
   sql14yyc = {
-    frontend_ip = "10.40.195.13"
-    pls_nat_ip  = "10.40.195.23"
+    frontend_ip = "10.40.163.13"
+    pls_nat_ip  = "10.40.163.23"
     listen_port = 1433
     target_fqdn = "sql14yyc.baytexenergy.com" # 172.19.77.94
     target_port = 1433
     domain_name = "sql14yyc.baytexenergy.com"
   }
   sql14yyc_t = {
-    frontend_ip = "10.40.195.35"
-    pls_nat_ip  = "10.40.195.36"
+    frontend_ip = "10.40.163.35"
+    pls_nat_ip  = "10.40.163.36"
     listen_port = 1433
     target_fqdn = "sql14yyc-t.baytexenergy.com" # 172.19.96.137
     target_port = 1433
     domain_name = "sql14yyc-t.baytexenergy.com"
   }
   sql6 = {
-    frontend_ip = "10.40.195.14"
-    pls_nat_ip  = "10.40.195.24"
+    frontend_ip = "10.40.163.14"
+    pls_nat_ip  = "10.40.163.24"
     listen_port = 1433
     target_fqdn = "sql6.baytexenergy.com" # 172.19.77.123
     target_port = 1433
     domain_name = "sql6.baytexenergy.com"
   }
   ora33yyc = {
-    frontend_ip = "10.40.195.15"
-    pls_nat_ip  = "10.40.195.25"
+    frontend_ip = "10.40.163.15"
+    pls_nat_ip  = "10.40.163.25"
     listen_port = 1521
     target_fqdn = "ora33yyc.baytexenergy.com" # 172.19.77.88
     target_port = 1521
     domain_name = "ora33yyc.baytexenergy.com"
   }
   ora33yyc_t = {
-    frontend_ip = "10.40.195.16"
-    pls_nat_ip  = "10.40.195.26"
+    frontend_ip = "10.40.163.16"
+    pls_nat_ip  = "10.40.163.26"
     listen_port = 1521
     target_fqdn = "ora33yyc-t.baytexenergy.com" # 172.19.96.112
     target_port = 1521
     domain_name = "ora33yyc-t.baytexenergy.com"
   }
   trimble_sql = {
-    frontend_ip = "10.40.195.17"
-    pls_nat_ip  = "10.40.195.27"
+    frontend_ip = "10.40.163.17"
+    pls_nat_ip  = "10.40.163.27"
     listen_port = 1433
     target_fqdn = "tmwsql.baytexenergy.com" # 172.23.178.197, reached over the Trimble vendor VPN
     target_port = 1433
@@ -298,8 +316,8 @@ on_prem_endpoints = {
   }
   ora04yyc = {
     load_balancer = 2
-    frontend_ip   = "10.40.195.18"
-    pls_nat_ip    = "10.40.195.28"
+    frontend_ip   = "10.40.163.18"
+    pls_nat_ip    = "10.40.163.28"
     listen_port   = 1521
     target_fqdn   = "ora04yyc.baytexenergy.com" # 172.19.77.95, CS Explorer and ValNav
     target_port   = 1521
@@ -307,8 +325,8 @@ on_prem_endpoints = {
   }
   ora12yyc = {
     load_balancer = 2
-    frontend_ip   = "10.40.195.19"
-    pls_nat_ip    = "10.40.195.29"
+    frontend_ip   = "10.40.163.19"
+    pls_nat_ip    = "10.40.163.29"
     listen_port   = 1521
     target_fqdn   = "ora12yyc.baytexenergy.com" # 172.19.77.90, Metrix
     target_port   = 1521
@@ -316,8 +334,8 @@ on_prem_endpoints = {
   }
   ora13yyc = {
     load_balancer = 2
-    frontend_ip   = "10.40.195.20"
-    pls_nat_ip    = "10.40.195.30"
+    frontend_ip   = "10.40.163.20"
+    pls_nat_ip    = "10.40.163.30"
     listen_port   = 1521
     target_fqdn   = "ora13yyc.baytexenergy.com" # 172.19.77.99, Execute AFENav
     target_port   = 1521
@@ -325,8 +343,8 @@ on_prem_endpoints = {
   }
   ora13yyc_t = {
     load_balancer = 2
-    frontend_ip   = "10.40.195.31"
-    pls_nat_ip    = "10.40.195.32"
+    frontend_ip   = "10.40.163.31"
+    pls_nat_ip    = "10.40.163.32"
     listen_port   = 1521
     target_fqdn   = "ora13yyc-t.baytexenergy.com" # 172.19.96.110, Execute AFENav test
     target_port   = 1521
@@ -334,8 +352,8 @@ on_prem_endpoints = {
   }
   ora15yyc = {
     load_balancer = 2
-    frontend_ip   = "10.40.195.33"
-    pls_nat_ip    = "10.40.195.34"
+    frontend_ip   = "10.40.163.33"
+    pls_nat_ip    = "10.40.163.34"
     listen_port   = 1521
     target_fqdn   = "ora15yyc.baytexenergy.com" # 172.19.77.91, PVR
     target_port   = 1521
@@ -364,7 +382,7 @@ pls_auto_approval_subscription_ids = []
 # ----------------------------------------------------------------------------------------------------------------------
 
 # Globally unique across Azure, and set only when the workspace is created.
-workspace_root_storage_account_name = "stbtedbxtestroot002"
+workspace_root_storage_account_name = "stvkpdbxtestroot002"
 
 # The front end stays reachable for users, Power BI and GitHub. Classic compute has no public IPs either way.
 workspace_public_network_access_enabled = true
@@ -428,9 +446,9 @@ serverless_allowed_internet_destinations = [
 # Removing them fails while a catalog still keeps its managed storage in the location.
 create_unity_catalog_external_location = true
 
-# The platform creates no catalog. It creates storage credential sc_bte_dbx_test_data_cnc_002, backed by the data Access
-# Connector, and external location el_bte_dbx_test_data_cnc_002 over this container of the data storage account:
-#   abfss://unity-catalog@stbtedbxtestcnc002.dfs.core.windows.net/
+# The platform creates no catalog. It creates storage credential sc_vkp_dbx_test_data_cnc_002, backed by the data Access
+# Connector, and external location el_vkp_dbx_test_data_cnc_002 over this container of the data storage account:
+#   abfss://unity-catalog@stvkpdbxtestcnc002.dfs.core.windows.net/
 # Both are isolated to this environment's workspace.
 # Baytex BI can then give the catalogs they create a managed location under it, instead of the workspace's default storage.
 unity_catalog_container_name = "unity-catalog"
@@ -441,9 +459,9 @@ unity_catalog_container_name = "unity-catalog"
 #   unity_catalog_external_location_grants = {
 #     "<account-group>" = ["CREATE_MANAGED_STORAGE", "CREATE_EXTERNAL_TABLE", "CREATE_EXTERNAL_VOLUME", "READ_FILES", "WRITE_FILES", "BROWSE"]
 #   }
-unity_catalog_external_location_grants = {
-  "BI Dept Admins" = ["ALL_PRIVILEGES", "EXTERNAL_USE_LOCATION"]
-}
+# The sandbox Databricks account has no "BI Dept Admins" group, so nothing is granted here.
+# Baytex grants "BI Dept Admins" = ["ALL_PRIVILEGES", "EXTERNAL_USE_LOCATION"].
+unity_catalog_external_location_grants = {}
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Operations
@@ -455,7 +473,7 @@ enable_alerts                = true
 
 # Receiver name to email address. Empty creates no action group. Example:
 #   alert_email_receivers = { cloud_operations = "cloud-operations@baytexenergy.com" }
+# Sandbox alerts go to Vedant only, not to the Baytex distribution list.
 alert_email_receivers = {
-  DL_Databricks_Terraform = "DL_Databricks_Terraform@baytexenergy.com"
-  Vedant_Patel            = "vedant.patel@f12.net"
+  Vedant_Patel = "vedantp9@gmail.com"
 }

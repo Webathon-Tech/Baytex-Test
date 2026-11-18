@@ -76,6 +76,12 @@ Pending and serverless compute cannot use it until it is approved. Each environm
 - one connection on each Private Link Service
 - two connections on the data storage account, one for blob and one for dfs
 
+Prod also has two connections on its data storage account for each environment in its
+`cross_environment_storage_readers`, from the rules it adds to the dev and test NCCs under the
+[security exception](architecture-and-boundaries.md#security-exception-access-to-prod-data-from-dev-and-test). They are
+listed in prod's `ncc_private_endpoint_rules` output and approved by prod's deploy like its own. The dev and test deploys
+neither create nor approve them.
+
 The apply job of **Terraform Deploy Platform** approves them after every deploy, in its
 **Approve the NCC private endpoint connections** step
 ([Workflows](workflows.md#32-deploy-the-platform)). The step runs
@@ -150,6 +156,11 @@ Baytex BI deploys a representative notebook, table or report asset and validates
 
 Once dev passes Gates 7 and 8, repeat the runbook for test, and then for prod. Every code change reaches the three
 environments in that order through **Terraform Deploy Platform**.
+
+No environment's build depends on another existing first. Prod gives the dev and test NCCs access to its storage only
+when they exist, and its `cross_environment_storage_readers` output lists any it skipped. Whenever dev or test is built
+or rebuilt after prod, deploy prod again so its serverless compute regains read access to prod data. Before destroying
+dev or test, remove it from prod's `cross_environment_storage_readers` and deploy prod.
 
 ## Rollback
 

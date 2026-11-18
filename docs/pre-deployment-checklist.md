@@ -21,6 +21,10 @@ to be completed once.
 - [ ] On-premises destination list approved, including each destination's domain name, port and address
 - [ ] Workspace public front-end access approved
 - [ ] Private Link Service visibility and connection approval model approved
+- [ ] Prod only: read access from dev and test to the prod data storage account approved as a security exception, the
+      dev and test NCCs listed in `cross_environment_storage_readers`, the firewall rule from the dev and test
+      Databricks subnets to the prod storage private endpoints in place, and each prod catalog dev and test read bound
+      to their workspaces as read-only
 
 ## Azure and Databricks prerequisites
 
@@ -38,7 +42,8 @@ to be completed once.
 - [ ] State backend bootstrapped
 - [ ] HAProxy SSH key pair created for this environment, its public key in `terraform.tfvars`, its private key in a
       Baytex vault, and the administration path agreed
-- [ ] HAProxy patch windows accepted for the environment: Sunday 14:00–16:00 and 18:00–20:00 Alberta Time
+- [ ] HAProxy patch windows accepted for the environment, Sunday Alberta Time: 14:00–16:00 and 18:00–20:00 for dev
+      and prod (zones 1 and 2), 14:00–16:00 and 16:00–18:00 for test (zones 1 and 3)
 
 ## Quality gates
 
