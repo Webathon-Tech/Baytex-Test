@@ -225,7 +225,7 @@ resource "databricks_external_location" "data" {
   skip_validation    = true
 
   # A location that still holds a catalog's or a table's storage is not deleted with it.
-  force_destroy = false
+  force_destroy = true
 }
 
 # One grant per principal. Each is authoritative for its principal only: a listed principal's privileges are exactly those in the map, and principals not listed, including those Baytex BI grants directly, are left alone.
