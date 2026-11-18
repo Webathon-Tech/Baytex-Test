@@ -185,6 +185,8 @@ module "ncc" {
   storage_account_id    = module.data_foundation.storage_account_id
   private_link_services = local.private_link_services_for_ncc
 
+  cross_environment_storage_readers = var.cross_environment_storage_readers
+
   account_id                    = var.databricks_account_id
   create_network_policy         = var.create_serverless_network_policy
   attach_network_policy         = var.attach_serverless_network_policy

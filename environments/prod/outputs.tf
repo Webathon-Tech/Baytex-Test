@@ -84,6 +84,11 @@ output "ncc_private_endpoint_rules" {
   value       = module.ncc.private_endpoint_rules
 }
 
+output "cross_environment_storage_readers" {
+  description = "Environments whose serverless compute reads this environment's data storage account: the NCC of each one that has its private endpoint rules, and the NCC names skipped because they do not exist yet."
+  value       = module.ncc.cross_environment_storage_readers
+}
+
 output "private_link_service_ids" {
   description = "Resource IDs of the Private Link Services, keyed by destination name."
   value       = module.haproxy.private_link_service_ids

@@ -30,7 +30,10 @@ To move either one to Terraform later, Baytex grants the matching role
 5. **Firewall rules from the spoke to on-premises resources**, from the Databricks subnets and the proxy subnet to each
    approved SQL Server and Oracle destination and port, following the destination matrix.
 6. **Firewall rules from the spoke to the other Azure spokes**, for the traffic the aggregate route sends to the
-   firewall.
+   firewall. Under the [security exception](architecture-and-boundaries.md#security-exception-access-to-prod-data-from-dev-and-test)
+   these include the dev and test Databricks subnets to the prod storage private endpoints, `10.40.178.4` and
+   `10.40.178.5`, over TCP 443, so classic compute in dev and test can read prod data. Return traffic from the private
+   endpoints must come back through the firewall.
 7. **Firewall rules from the proxy subnet to the Ubuntu package mirrors**, `azure.archive.ubuntu.com`,
    `archive.ubuntu.com` and `security.ubuntu.com`, over TCP 80 and 443. Ubuntu images on Azure use
    `azure.archive.ubuntu.com` by default. The HAProxy VMs install HAProxy this way when they are created, and install

@@ -1,6 +1,7 @@
 # ----------------------------------------------------------------------------------------------------------------------
 # Network Connectivity Configuration module
 # Gives Databricks serverless compute private access to the data storage account and to each on-premises destination behind a Private Link Service, and limits which internet destinations it may reach.
+# Can also give the serverless compute of other environments private access to this environment's data storage account.
 # Also registers the data storage account with Unity Catalog, through a storage credential and an external location, so catalogs can keep their managed storage there rather than in the workspace's default storage.
 # The NCC and the network policy are Databricks account-level resources and use the account-level provider, the module's default.
 # The storage credential and external location are Unity Catalog objects and use the databricks.workspace provider.
@@ -39,6 +40,46 @@ resource "databricks_mws_ncc_private_endpoint_rule" "storage_dfs" {
   network_connectivity_config_id = databricks_mws_network_connectivity_config.this.network_connectivity_config_id
   resource_id                    = var.storage_account_id
   group_id                       = "dfs"
+}
+
+# Serverless compute of other environments reading this data storage account: one rule for blob and one for dfs on each
+# reader's NCC, keyed "<environment>_storage_<blob|dfs>".
+# The rules are created here, by the environment that owns the storage account, so their connections land on its own
+# storage account and are approved by its own deploy. A reader whose NCC does not exist yet is skipped and gains its
+# rules on the next deploy of this environment, so no environment's build depends on another existing first.
+data "databricks_mws_network_connectivity_configs" "region" {
+  count = length(var.cross_environment_storage_readers) > 0 ? 1 : 0
+
+  region = var.region
+}
+
+locals {
+  existing_ncc_names = toset(flatten(data.databricks_mws_network_connectivity_configs.region[*].names))
+
+  cross_environment_readers = {
+    for environment, ncc_name in var.cross_environment_storage_readers : environment => ncc_name
+    if contains(local.existing_ncc_names, ncc_name)
+  }
+}
+
+data "databricks_mws_network_connectivity_config" "reader" {
+  for_each = local.cross_environment_readers
+
+  name = each.value
+}
+
+resource "databricks_mws_ncc_private_endpoint_rule" "cross_environment_storage" {
+  for_each = {
+    for pair in setproduct(keys(local.cross_environment_readers), ["blob", "dfs"]) :
+    "${pair[0]}_storage_${pair[1]}" => {
+      environment = pair[0]
+      group_id    = pair[1]
+    }
+  }
+
+  network_connectivity_config_id = data.databricks_mws_network_connectivity_config.reader[each.value.environment].network_connectivity_config_id
+  resource_id                    = var.storage_account_id
+  group_id                       = each.value.group_id
 }
 
 # On-premises destinations: one rule per Private Link Service.

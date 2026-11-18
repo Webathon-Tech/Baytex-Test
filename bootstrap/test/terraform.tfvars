@@ -5,9 +5,9 @@
 # Subscription
 # ----------------------------------------------------------------------------------------------------------------------
 
-# Baytex Entra tenant and the subscription that holds test state (SUB-BTE-CAN-DATA-TEST).
-tenant_id       = "9a6302b1-6a51-4f41-ad6b-ad23218c074d"
-subscription_id = "7ba1d46e-61db-4e7e-9f60-a7a5417bdd04"
+# Sandbox Entra tenant and the subscription that holds test state (ME-MngEnvMCAP517100-v-parvkaur-1).
+tenant_id       = "f913f484-b59e-49a4-95ce-feddd38dc57a"
+subscription_id = "f1c89731-86b0-4cd4-bd2d-f2347c1d62d2"
 location        = "canadacentral"
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -16,8 +16,8 @@ location        = "canadacentral"
 
 # These three must match TF_STATE_RESOURCE_GROUP, TF_STATE_STORAGE_ACCOUNT and TF_STATE_CONTAINER on the test-plan GitHub Environment.
 # The storage account name is globally unique across Azure.
-resource_group_name  = "rg-bte-dbx-test-tfstate-cnc-002"
-storage_account_name = "stbtedbxtesttfcnc002"
+resource_group_name  = "rg-vkp-dbx-test-tfstate-cnc-002"
+storage_account_name = "stvkpdbxtesttfcnc002"
 container_name       = "tfstate"
 
 # Tags applied to the resource group and storage account, matching the tags on the platform resources.
@@ -26,10 +26,10 @@ tags = {
   BusinessUnit       = "BI"
   Environment        = "Test"
   ManagedBy          = "Terraform"
-  Owner              = "Baytex Infrastructure"
-  CostCentre         = "BTX-DBX-TEST"
+  Owner              = "Platform Engineering"
+  CostCentre         = "VKP-DBX-TEST"
   DataClassification = "Internal"
-  Project            = "Baytex Terraform Foundations"
+  Project            = "VKP Terraform Foundations"
 }
 
 # ----------------------------------------------------------------------------------------------------------------------

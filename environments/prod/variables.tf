@@ -409,6 +409,17 @@ variable "dfs_private_endpoint_ip" {
   }
 }
 
+variable "cross_environment_storage_readers" {
+  description = "Other environments whose serverless compute reads this environment's data storage account, as their NCC names keyed by environment name. This environment adds a blob and a dfs private endpoint rule to each NCC that exists and approves the connections on its own storage account. An NCC that does not exist yet is skipped and gains its rules on this environment's next deploy. Classic compute reaches the storage account's private endpoints through the firewall instead. Empty gives no other environment access."
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition     = alltrue([for environment, ncc_name in var.cross_environment_storage_readers : contains(["dev", "test", "prod"], environment) && environment != var.environment && trimspace(ncc_name) != ""])
+    error_message = "cross_environment_storage_readers must be keyed by another environment's name, dev, test or prod, never this environment's own, and each value must be an NCC name."
+  }
+}
+
 # ----------------------------------------------------------------------------------------------------------------------
 # HAProxy tier
 # ----------------------------------------------------------------------------------------------------------------------

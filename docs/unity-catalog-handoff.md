@@ -68,7 +68,10 @@ The `unity_catalog_external_location` output repeats the location's name, URL an
 3. **Create schemas and grants.** Grant privileges to account-level groups and service principals, not to individual
    users.
 4. **Decide workspace bindings.** Set each catalog's isolation mode and bind it to the approved workspaces, and decide
-   any cross-environment access and whether it is read-only or read-write.
+   any cross-environment access and whether it is read-only or read-write. A prod catalog that dev or test reads under
+   the [security exception](architecture-and-boundaries.md#security-exception-access-to-prod-data-from-dev-and-test) is
+   bound to the prod workspace as read-write and to the dev and test workspaces as **read-only**, so dev and test can
+   never write to prod data whatever the grants.
 5. **Validate access.** In Catalog Explorer, open the external location and run **Test connection**, then run a
    representative workload that writes and reads a table and a volume from classic and serverless compute. A new
    external location takes about 10 minutes to reach the serverless network policy, so serverless access can be denied

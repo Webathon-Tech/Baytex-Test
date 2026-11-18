@@ -26,6 +26,12 @@ variable "storage_account_id" {
   type        = string
 }
 
+variable "cross_environment_storage_readers" {
+  description = "Network Connectivity Configurations of other environments whose serverless compute reads this environment's data storage account, as NCC names keyed by environment name. Each NCC that exists in the region gets a blob and a dfs rule to this storage account; one that does not exist yet is skipped."
+  type        = map(string)
+  default     = {}
+}
+
 variable "private_link_services" {
   description = "Private Link Service ID and domain names of each on-premises destination, keyed by destination name."
   type = map(object({

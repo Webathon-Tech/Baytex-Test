@@ -17,6 +17,8 @@ output "binding_id" {
 # ----------------------------------------------------------------------------------------------------------------------
 
 # endpoint_name is the name of the private endpoint Databricks creates, which is what to match when approving connections on the target resources.
+# Every rule listed targets this environment's own storage account or Private Link Services, including the rules on
+# other environments' NCCs, so the deploy approves all of them.
 output "private_endpoint_rules" {
   description = "Rule ID, private endpoint name and connection state of every private endpoint rule, keyed by rule name."
   value = merge(
@@ -38,8 +40,23 @@ output "private_endpoint_rules" {
         endpoint_name    = rule.endpoint_name
         connection_state = rule.connection_state
       }
+    },
+    {
+      for key, rule in databricks_mws_ncc_private_endpoint_rule.cross_environment_storage : key => {
+        rule_id          = rule.rule_id
+        endpoint_name    = rule.endpoint_name
+        connection_state = rule.connection_state
+      }
     }
   )
+}
+
+output "cross_environment_storage_readers" {
+  description = "Environments whose serverless compute reads this data storage account: the NCC of each one that has its rules, and the NCC names that were skipped because they do not exist yet."
+  value = {
+    granted = local.cross_environment_readers
+    skipped = sort([for environment, ncc_name in var.cross_environment_storage_readers : ncc_name if !contains(keys(local.cross_environment_readers), environment)])
+  }
 }
 
 # ----------------------------------------------------------------------------------------------------------------------

@@ -21,6 +21,10 @@ to be completed once.
 - [ ] On-premises destination list approved, including each destination's domain name, port and address
 - [ ] Workspace public front-end access approved
 - [ ] Private Link Service visibility and connection approval model approved
+- [ ] Prod only: read access from dev and test to the prod data storage account approved as a security exception, the
+      dev and test NCCs listed in `cross_environment_storage_readers`, the firewall rule from the dev and test
+      Databricks subnets to the prod storage private endpoints in place, and each prod catalog dev and test read bound
+      to their workspaces as read-only
 
 ## Azure and Databricks prerequisites
 

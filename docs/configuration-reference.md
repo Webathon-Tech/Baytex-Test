@@ -205,6 +205,7 @@ every Allow rule.
 | `dfs_private_dns_zone_ids` | `[]` | Resource IDs of `privatelink.dfs.core.windows.net` zones the dfs private endpoint registers in, on the same terms. |
 | `blob_private_endpoint_ip` | `null` | Static private IP of the blob private endpoint. Setting it keeps the address stable when the environment is rebuilt, so the DNS records and firewall rules that point at it stay valid. |
 | `dfs_private_endpoint_ip` | `null` | Static private IP of the dfs private endpoint, on the same terms. |
+| `cross_environment_storage_readers` | `{}` | Other environments whose serverless compute reads this environment's data storage account, as their NCC names keyed by environment (`dev`, `test` or `prod`, never the environment's own). The environment adds a blob and a dfs private endpoint rule to each NCC that exists, and its deploy approves the connections on its own storage account; an NCC that does not exist yet is skipped until the next deploy. Prod sets the dev and test NCCs under the [security exception](architecture-and-boundaries.md#security-exception-access-to-prod-data-from-dev-and-test); dev and test set `{}`. |
 
 ### HAProxy tier
 
@@ -396,7 +397,8 @@ The same setting lets an environment deploy before its service principal holds `
 | Output | Description |
 | --- | --- |
 | `ncc_id` | ID of the Network Connectivity Configuration. |
-| `ncc_private_endpoint_rules` | Rule ID, private endpoint name and connection state of every NCC private endpoint rule. The deploy pipeline approves exactly the connections whose private endpoint name appears here. |
+| `ncc_private_endpoint_rules` | Rule ID, private endpoint name and connection state of every NCC private endpoint rule this environment creates, including the rules it adds to the NCCs in `cross_environment_storage_readers`. The deploy pipeline approves exactly the connections whose private endpoint name appears here. |
+| `cross_environment_storage_readers` | The environments whose NCC has this environment's storage rules (`granted`), and the NCC names skipped because they do not exist yet (`skipped`). |
 | `private_link_service_ids` | Resource IDs of the Private Link Services, keyed by destination name. |
 
 ### Data foundation

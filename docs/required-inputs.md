@@ -74,6 +74,8 @@ For each SQL Server or Oracle destination:
 - Alert email receivers
 - Owner of Azure Monitor Agent, endpoint detection and Arctic Wolf onboarding for the HAProxy VMs
 - Approval for public workspace front-end access
+- Approval of the security exception giving dev and test read access to the prod data storage account, with the prod
+  catalogs it covers
 
 ## Unity Catalog handoff
 

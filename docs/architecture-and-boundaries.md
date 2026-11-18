@@ -10,6 +10,10 @@ to the existing Baytex hub, which provides the Cisco firewall, the VPN to on-pre
 spoke contains everything the Databricks platform needs: networking, the workspace, a private data lake, a connectivity
 tier that lets serverless compute reach on-premises databases, monitoring and its own Terraform state.
 
+The environments are isolated from each other, with one approved exception: the dev and test workspaces read data in
+the prod data storage account. See [Security exception: access to prod data from dev and
+test](#security-exception-access-to-prod-data-from-dev-and-test).
+
 ```text
 Existing Baytex hub subscription
   Hub VNet, Cisco firewall, VPN and on-premises routes
@@ -86,6 +90,8 @@ the peering keeps the next hop reachable.
 | Serverless compute | On-premises SQL Server and Oracle | NCC private endpoint → Private Link Service → internal load balancer → HAProxy → Cisco firewall → hub → VPN → destination |
 | Serverless compute | Data storage | NCC private endpoints on the storage account's blob and dfs endpoints |
 | Serverless compute | Approved internet destinations | Databricks serverless network, governed by the account network policy |
+| Dev and test classic compute | Prod data storage | Databricks subnets → `databricks` route table → Cisco firewall → hub → prod storage private endpoints (security exception) |
+| Dev and test serverless compute | Prod data storage | NCC private endpoints that prod adds to the dev and test NCCs (security exception) |
 | Users, Power BI, GitHub | Workspace front end | Public workspace URL, authenticated with Microsoft Entra ID |
 | HAProxy VMs | Ubuntu package mirrors | Proxy subnet → Cisco firewall → internet |
 
@@ -135,6 +141,40 @@ classic compute either as a service tag, where Azure publishes one, or as a rule
 Allow rules in `databricks_nsg_rules` record the approved destinations without restricting anything on their own,
 because the Databricks subnets already reach the internet through the NAT Gateway. Restricting them takes a Deny rule
 at a higher priority number than every Allow rule, added once every destination Databricks itself needs is covered.
+
+## Security exception: access to prod data from dev and test
+
+By design, each environment's data storage account accepts traffic only through its own environment's private
+endpoints, so no environment can read another's data. Baytex has approved one exception to this isolation: the dev and
+test workspaces may read data in the prod data storage account, `stbtedbxprodcnc001`, so that selected prod catalogs can
+be queried from dev and test with both classic and serverless compute.
+
+| Aspect | Design |
+| --- | --- |
+| Scope | Read access from the dev and test workspaces to the prod data storage account only. Prod has no access to dev or test storage, and dev and test have no access to each other's. |
+| Approval | Approved by Baytex as an exception to environment isolation. Any change to it is made in prod's configuration and goes through the prod deployment approval. |
+| Serverless compute | Prod's deployment adds a blob and a dfs private endpoint rule for its own storage account to each NCC listed in `cross_environment_storage_readers` in `environments/prod/terraform.tfvars`, and approves those connections on its own storage account. Dev and test hold no reference to prod. |
+| Classic compute | The dev and test Databricks subnets send traffic for `10.40.0.0/16` to the Cisco firewall, which allows it to the prod storage private endpoints, `10.40.178.4` (blob) and `10.40.178.5` (dfs), on TCP 443. The hub Private DNS zones resolve the prod storage account to those addresses. |
+| Read-only access | Baytex BI binds each prod catalog that dev or test reads to the dev and test workspaces as read-only in Unity Catalog, so writes from dev and test are refused whatever the grants. |
+| Who can read | Only principals Baytex BI grants `USE CATALOG`, `USE SCHEMA` and `SELECT` on the prod catalog. |
+| Network exposure | The prod storage account stays closed to public networks; every path is through its private endpoints. |
+
+Residual risk, accepted by Baytex:
+
+- Non-prod compute, where code is developed and tested under lighter change control, can read prod data within the
+  Unity Catalog grants. The grants and the read-only workspace bindings are the controls that protect it.
+- Prod data read from dev or test can be copied into dev or test tables, notebooks and outputs, outside prod's controls.
+- An error in a Unity Catalog grant or binding exposes prod data to non-prod principals.
+
+Operating notes:
+
+- **Build order.** No environment's build depends on another. Prod adds rules only to NCCs that exist when it deploys
+  and reports the others in its `cross_environment_storage_readers` output as skipped. After dev or test is built or
+  rebuilt, deploy prod to add its rules to the new NCC.
+- **Removing dev or test.** Remove the environment from `cross_environment_storage_readers` and deploy prod before
+  destroying it, so prod's rules leave that NCC first.
+- **Withdrawing the exception.** Set `cross_environment_storage_readers = {}` in prod and deploy prod, remove the
+  firewall rule to the prod storage private endpoints, and remove the read-only workspace bindings.
 
 ## Resources in each environment
 
