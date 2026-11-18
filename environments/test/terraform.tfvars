@@ -209,11 +209,13 @@ blob_private_endpoint_ip = "10.40.162.4"
 dfs_private_endpoint_ip  = "10.40.162.5"
 
 # Other environments whose serverless compute reads this data storage account, as their NCC names keyed by environment.
-# No other environment reads this one. Dev and test read prod's data storage account, which prod grants.
+# The sandbox lets dev and prod read test's data storage account, so every environment's serverless compute can reach
+# every other environment's storage.
 cross_environment_storage_readers = {
   dev  = "ncc-vkp-dbx-dev-cnc-002"
   prod = "ncc-vkp-dbx-prod-cnc-002"
 }
+
 # ----------------------------------------------------------------------------------------------------------------------
 # HAProxy tier
 # ----------------------------------------------------------------------------------------------------------------------
