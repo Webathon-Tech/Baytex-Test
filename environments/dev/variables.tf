@@ -38,7 +38,7 @@ variable "databricks_account_id" {
 }
 
 variable "existing_metastore_id" {
-  description = "ID of the existing regional Unity Catalog metastore, which the workspace is assigned to automatically when it is created. The platform confirms the workspace is assigned to it before creating the Unity Catalog storage credential and external location, and reports it in the unity_catalog_handoff output; Baytex BI owns the metastore."
+  description = "ID of the existing regional Unity Catalog metastore, which the platform assigns the workspace to through the Databricks account, so it does not depend on the metastore assigning new workspaces automatically. The platform confirms the workspace is assigned to it before creating the Unity Catalog storage credential and external location, and reports it in the unity_catalog_handoff output; Baytex BI owns the metastore."
   type        = string
 
   validation {

@@ -15,8 +15,9 @@ to be completed once.
 - [ ] Corporate DNS server list confirmed
 - [ ] Baytex change scheduled for the Private DNS record sets of the blob and dfs private endpoints
 - [ ] Existing regional Unity Catalog metastore ID confirmed
-- [ ] Baytex BI accepts ownership of the metastore assignment, catalogs, bindings, groups and grants, and the platform's
-      ownership of the storage credential and external location over the data storage account
+- [ ] Baytex BI accepts the platform's assignment of each workspace to the metastore, Baytex BI's ownership of the
+      catalogs, bindings, groups and grants, and the platform's ownership of the storage credential and external
+      location over the data storage account
 - [ ] Unity Catalog container name, and any grants on the external location, confirmed
 - [ ] On-premises destination list approved, including each destination's domain name, port and address
 - [ ] Workspace public front-end access approved

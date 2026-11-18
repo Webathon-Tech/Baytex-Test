@@ -280,15 +280,34 @@ jobs:
         if: env.SKIP != 'true'
         run: terraform show -no-color tfplan > plan.txt
 
+      # The counts come from the plan's JSON form, so every environment reports resources and outputs in the same format
+      # whatever Terraform prints. They match Terraform's own "Plan:" line: a replacement counts once to add and once to
+      # destroy, and data sources are left out. The JSON is read from the pipe and never written to disk.
       # Each value is resolved into a variable before it is written, so no table cell can ever contain a line break.
       - name: Publish the plan summary
         if: env.SKIP != 'true'
         run: |
-          RESULT=$(grep -m1 -E '^(Plan:|No changes)' plan.txt || true)
-          if [ -z "$RESULT" ] && grep -q '^Changes to Outputs' plan.txt; then
-            RESULT="Output values only - no resource changes"
+          COUNTS=$(terraform show -json tfplan | jq -r '
+            [.resource_changes[]? | select(.mode == "managed")] as $r
+            | [ ($r | map(select(.change.actions | index("create"))) | length),
+                ($r | map(select(.change.actions == ["update"])) | length),
+                ($r | map(select(.change.actions | index("delete"))) | length),
+                ($r | map(select((.change.actions | index("create")) and (.change.actions | index("delete")))) | length),
+                ($r | map(select(.change.importing != null)) | length),
+                ([(.output_changes // {})[] | select(.actions != ["no-op"])] | length) ]
+            | @tsv' || true)
+          if [ -n "$COUNTS" ]; then
+            read -r ADD CHANGE DESTROY REPLACE IMPORT OUTPUTS <<< "$COUNTS"
+            RESOURCES="$ADD to add, $CHANGE to change, $DESTROY to destroy"
+            if [ "$IMPORT" -gt 0 ]; then
+              RESOURCES="$IMPORT to import, $RESOURCES"
+            fi
+            OUTPUT_CHANGES="$OUTPUTS changed"
+          else
+            RESOURCES="See the job log"
+            OUTPUT_CHANGES="See the job log"
+            REPLACE=""
           fi
-          RESULT=${RESULT:-See the job log}
 
           {
             echo "### ${{ inputs.environment }} platform - ${{ inputs.operation }} plan"
@@ -297,13 +316,15 @@ jobs:
             echo "| --- | --- |"
             echo "| Environment | \`${{ inputs.environment }}\` |"
             echo "| Operation | ${{ inputs.operation }} |"
-            echo "| Result | $RESULT |"
+            echo "| Resources | $RESOURCES |"
+            echo "| Outputs | $OUTPUT_CHANGES |"
             if [ "${{ inputs.operation }}" = "deploy" ]; then
-              REPLACED=$(grep -c 'must be replaced' plan.txt || true)
-              if [ "${REPLACED:-0}" -eq 0 ]; then
+              if [ -z "$REPLACE" ]; then
+                echo "| Replacements | See the job log |"
+              elif [ "$REPLACE" -eq 0 ]; then
                 echo "| Replacements | none |"
               else
-                echo "| Replacements | $REPLACED - read the plan before approving |"
+                echo "| Replacements | $REPLACE - read the plan before approving |"
               fi
             fi
           } >> "$GITHUB_STEP_SUMMARY"

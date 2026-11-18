@@ -5,6 +5,7 @@
 # Also registers the data storage account with Unity Catalog, through a storage credential and an external location, so catalogs can keep their managed storage there rather than in the workspace's default storage.
 # The NCC and the network policy are Databricks account-level resources and use the account-level provider, the module's default.
 # The storage credential and external location are Unity Catalog objects and use the databricks.workspace provider.
+# Also assigns the workspace to the metastore, through the account-level provider.
 # ----------------------------------------------------------------------------------------------------------------------
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -140,6 +141,18 @@ resource "databricks_workspace_network_option" "this" {
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
+# Metastore assignment
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Assigns the workspace to metastore_id through the account, rather than relying on Azure Databricks to assign a new workspace to the regional metastore automatically.
+# Assigning a workspace to the metastore it is already on succeeds, so a workspace that is already assigned needs no import.
+# Changing metastore_id moves the workspace to the new metastore; destroying the environment unassigns the workspace before it is deleted.
+resource "databricks_metastore_assignment" "this" {
+  workspace_id = var.workspace_id
+  metastore_id = var.metastore_id
+}
+
+# ----------------------------------------------------------------------------------------------------------------------
 # Unity Catalog storage credential and external location
 # No catalog is created here: Baytex BI creates the catalogs and can place their managed storage in this location.
 # ----------------------------------------------------------------------------------------------------------------------
@@ -159,7 +172,11 @@ data "databricks_current_metastore" "this" {
   count    = var.create_unity_catalog_external_location ? 1 : 0
   provider = databricks.workspace
 
-  depends_on = [databricks_mws_ncc_binding.workspace]
+  # It also waits for the metastore assignment, so the check below sees it, and on a destroy the storage credential and external location are removed before the workspace is unassigned.
+  depends_on = [
+    databricks_mws_ncc_binding.workspace,
+    databricks_metastore_assignment.this,
+  ]
 }
 
 # Every environment's workspace is assigned to the same metastore, so both objects are isolated: they can be used only from workspaces they are bound to.
@@ -177,7 +194,7 @@ resource "databricks_storage_credential" "data" {
   }
 
   lifecycle {
-    # Azure Databricks assigns a new workspace to the regional metastore as it creates it.
+    # The workspace is assigned to metastore_id above.
     # This confirms the assignment happened, to the expected metastore, before anything is created in it.
     # While the read waits for the apply its metastore_info block is empty, so try() falls back to the id, which is unknown until then, and the check waits too.
     precondition {

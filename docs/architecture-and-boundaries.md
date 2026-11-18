@@ -201,8 +201,8 @@ In the Unity Catalog metastore, the same module creates two objects through the 
 
 | Object | Name | Purpose |
 | --- | --- | --- |
-| Storage credential | `sc_bte_dbx_<env>_data_cnc_<instance>` | Backed by the data Access Connector |
-| External location | `el_bte_dbx_<env>_data_cnc_<instance>` | Covers `abfss://unity-catalog@<data storage account>.dfs.core.windows.net/`, where catalogs and schemas can keep their managed storage, and where external tables and volumes can live |
+| Storage credential | `sc_bte_dbx_<env>_data_cnc_001` | Backed by the data Access Connector |
+| External location | `el_bte_dbx_<env>_data_cnc_001` | Covers `abfss://unity-catalog@<data storage account>.dfs.core.windows.net/`, where catalogs and schemas can keep their managed storage, and where external tables and volumes can live |
 
 Every environment's workspace is assigned to the same metastore, so both objects are isolated to their own
 environment's workspace. The platform creates no catalogs or schemas. The workspace catalog Azure Databricks creates
@@ -217,7 +217,7 @@ workspace. Replacing the workspace needs them switched off first, as described i
 
 | Identity | Access | Purpose |
 | --- | --- | --- |
-| Deployment service principal, `app-bte-dbx-<env>-terraform-001` (one per environment) | Contributor, Storage Blob Data Contributor and Role Based Access Control Administrator on the environment subscription; Databricks account admin; `CREATE STORAGE CREDENTIAL` and `CREATE EXTERNAL LOCATION` on the metastore | Runs every pipeline through GitHub OIDC, approves the NCC private endpoint connections after each deploy, and owns the storage credential and external location it creates |
+| Deployment service principal, `app-bte-dbx-<env>-terraform-001` (one per environment, listed in [GitHub setup](github-setup.md#service-principals)) | Contributor, Storage Blob Data Contributor and Role Based Access Control Administrator on the environment subscription; Databricks account admin; `CREATE STORAGE CREDENTIAL` and `CREATE EXTERNAL LOCATION` on the metastore | Runs every pipeline through GitHub OIDC, approves the NCC private endpoint connections after each deploy, and owns the storage credential and external location it creates |
 | Data Access Connector | Storage Blob Data Contributor, Storage Account Contributor, Storage Queue Data Contributor and EventGrid EventSubscription Contributor on the data storage account | Backs the platform's Unity Catalog storage credential; the last three roles cover Auto Loader file events, which are off on the external location |
 | HAProxy VMs | System-assigned managed identities with no role assignments | Available for agent onboarding |
 
@@ -274,7 +274,7 @@ storage private endpoints. The storage private endpoints take static addresses f
 
 ### Baytex BI — data governance and workloads
 
-- Existing regional Unity Catalog metastore, which Azure Databricks assigns each new workspace to automatically
+- Existing regional Unity Catalog metastore, which the platform assigns each environment's workspace to
 - Catalogs, schemas, grants and workspace bindings, with catalog managed storage placed in the platform's external
   location
 - Any further storage credentials and external locations

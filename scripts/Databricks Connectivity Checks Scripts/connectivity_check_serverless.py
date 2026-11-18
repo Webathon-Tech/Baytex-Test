@@ -8,13 +8,15 @@
 # MAGIC
 # MAGIC **How to run:** attach this notebook to **Serverless** compute, check the settings in the next cell, then click **Run all**.
 # MAGIC
-# MAGIC Serverless compute reaches on-premises databases and the storage account through the workspace's
+# MAGIC Serverless compute reaches on-premises databases and storage accounts through the workspace's
 # MAGIC Network Connectivity Configuration (NCC) private endpoints, and reaches the internet only through the egress policy allow list.
+# MAGIC Another environment's storage account is reached only where that environment added private endpoint rules to this
+# MAGIC workspace's NCC through its cross_environment_storage_readers.
 # MAGIC
 # MAGIC | # | Check | Expected result |
 # MAGIC |---|---|---|
 # MAGIC | 1 | On-premises databases | Every SQL Server and Oracle database **answers** |
-# MAGIC | 2 | Storage account | Blob and dfs are **reached privately** |
+# MAGIC | 2 | Storage accounts | Blob and dfs of **every** environment's account are **reached privately** |
 # MAGIC | 3 | Allowed websites | **Reachable** |
 # MAGIC | 4 | Blocked websites | **Not reachable**, which proves the egress policy is enforced. In DRY_RUN they stay reachable and show as INFO |
 # MAGIC
@@ -30,14 +32,12 @@
 # SETTINGS: change these for the environment you are testing
 # =====================================================================================================================
 
-# Environment of this workspace: "dev", "test" or "prod". The storage account is derived from it.
+# Environment of this workspace: "dev", "test" or "prod".
 ENVIRONMENT = "dev"
 
-# Instance number at the end of each environment's resource names.
-INSTANCE = {"dev": "001", "test": "002", "prod": "001"}.get(ENVIRONMENT)
-
-# Storage account of this environment (dev: stbtedbxdevcnc001, test: stbtedbxtestcnc002, prod: stbtedbxprodcnc001).
-STORAGE_ACCOUNT = f"stbtedbx{ENVIRONMENT}cnc{INSTANCE}"
+# Data storage account of each environment. Every one is checked from this workspace, and each passes only when it is
+# reached privately.
+STORAGE_ACCOUNTS = {"dev": "stbtedbxdevcnc001", "test": "stbtedbxtestcnc001", "prod": "stbtedbxprodcnc001"}
 
 # The egress policy's enforcement mode in this environment, serverless_egress_enforcement_mode in its tfvars: "ENFORCED" or "DRY_RUN".
 # In DRY_RUN the policy only records what it would block, so a reachable blocked website is reported as INFO instead of FAIL.
@@ -104,6 +104,7 @@ TIMEOUT = 8
 # =====================================================================================================================
 
 import http.client
+import ipaddress
 import os
 import socket
 import ssl
@@ -216,17 +217,21 @@ def site_reachable(host, port):
 def storage_reachable(host):
     """Sends an anonymous request to the storage account. Returns (ok, detail, connect_ms, answer_ms).
 
-    Reached privately, the account answers with a sign-in error, which is expected.
-    Reached over the public internet, the storage firewall answers "AuthorizationFailure".
+    Reached privately, the name resolves to a private endpoint address and the account answers with a sign-in error,
+    which is expected. A public address means the request goes over the internet, where the storage firewall refuses data
+    requests. Blob shows this as "AuthorizationFailure"; dfs answers an anonymous request with a sign-in error before the
+    firewall check, so for dfs the address is what shows the path.
     """
     connection, connect_ms, error = open_connection(host, 443)
     if error:
         return False, error, None, None
+    address = connection.getpeername()[0]
+    path = "/?resource=account" if ".dfs." in host else "/?comp=list"
     start = time.perf_counter()
     try:
         request = http.client.HTTPSConnection(host, timeout=TIMEOUT)
         request.sock = TLS.wrap_socket(connection, server_hostname=host)
-        request.request("GET", "/?comp=list", headers={"x-ms-version": "2023-11-03"})
+        request.request("GET", path, headers={"x-ms-version": "2023-11-03"})
         response = request.getresponse()
         answer_ms = elapsed_ms(start)
         error_code = response.getheader("x-ms-error-code", "")
@@ -235,9 +240,21 @@ def storage_reachable(host):
         return False, reason(error), connect_ms, None
     finally:
         connection.close()
-    if error_code == "AuthorizationFailure":
-        return False, "refused by the storage firewall (the request went over the public internet)", connect_ms, answer_ms
-    return True, f"account reached privately (HTTP {response.status} {error_code}, a sign-in error is expected)", connect_ms, answer_ms
+    if error_code == "AuthorizationFailure" or not ipaddress.ip_address(address).is_private:
+        return False, f"refused by the storage firewall: {address} is a public address, so the request went over the internet", connect_ms, answer_ms
+    return True, f"account reached privately at {address} (HTTP {response.status} {error_code}, a sign-in error is expected)", connect_ms, answer_ms
+
+
+def storage_result(environment, reached, detail):
+    """Status of one storage check: PASS when the account is reached privately, FAIL when it is not."""
+    if reached:
+        return "PASS", detail
+    if environment == ENVIRONMENT:
+        return "FAIL", detail
+    return "FAIL", (
+        f"{detail}. The {environment} deploy must list this workspace's NCC in cross_environment_storage_readers and "
+        "approve its connections; a new rule takes about 10 minutes to reach serverless compute"
+    )
 
 # COMMAND ----------
 
@@ -245,16 +262,16 @@ def storage_reachable(host):
 # RUN THE CHECKS
 # =====================================================================================================================
 
-runtime = os.environ.get("DATABRICKS_RUNTIME_VERSION", "unknown")
-print("THIS COMPUTE")
-print(f"  Compute : {'Serverless' if runtime.startswith('client') else 'Classic cluster (use the classic notebook instead)'}")
-print(f"  Runtime : {runtime}")
-print(f"  Environment : {ENVIRONMENT} (storage account {STORAGE_ACCOUNT}, egress policy {ENFORCEMENT_MODE})")
-
-if ENVIRONMENT not in ("dev", "test", "prod"):
+if ENVIRONMENT not in STORAGE_ACCOUNTS:
     raise ValueError('ENVIRONMENT must be "dev", "test" or "prod".')
 if ENFORCEMENT_MODE not in ("ENFORCED", "DRY_RUN"):
     raise ValueError('ENFORCEMENT_MODE must be "ENFORCED" or "DRY_RUN".')
+
+runtime = os.environ.get("DATABRICKS_RUNTIME_VERSION", "unknown")
+print("THIS COMPUTE")
+print(f"  Compute     : {'Serverless' if runtime.startswith('client') else 'Classic cluster (use the classic notebook instead)'}")
+print(f"  Runtime     : {runtime}")
+print(f"  Environment : {ENVIRONMENT} (storage account {STORAGE_ACCOUNTS[ENVIRONMENT]}, egress policy {ENFORCEMENT_MODE})")
 
 # ---- 1. On-premises databases ---------------------------------------------------------------------------------------
 heading("1. ON-PREMISES DATABASES", "every database answers (path: NCC private endpoint > HAProxy > database)")
@@ -262,11 +279,13 @@ for target in DATABASES:
     ok, detail, connect_ms, answer_ms = database_answers(*split(target))
     report("Database", target, "PASS" if ok else "FAIL", detail, connect_ms, answer_ms)
 
-# ---- 2. Storage account ---------------------------------------------------------------------------------------------
-heading("2. STORAGE ACCOUNT", "blob and dfs are reached privately (path: NCC private endpoint)")
-for name in (f"{STORAGE_ACCOUNT}.blob.core.windows.net", f"{STORAGE_ACCOUNT}.dfs.core.windows.net"):
-    ok, detail, connect_ms, answer_ms = storage_reachable(name)
-    report("Storage", name, "PASS" if ok else "FAIL", detail, connect_ms, answer_ms)
+# ---- 2. Storage accounts --------------------------------------------------------------------------------------------
+heading("2. STORAGE ACCOUNTS", "every account is reached privately (path: NCC private endpoint)")
+for environment, account in STORAGE_ACCOUNTS.items():
+    for name in (f"{account}.blob.core.windows.net", f"{account}.dfs.core.windows.net"):
+        reached, detail, connect_ms, answer_ms = storage_reachable(name)
+        status, detail = storage_result(environment, reached, detail)
+        report(f"Storage {environment}", name, status, detail, connect_ms, answer_ms)
 
 # ---- 3. Allowed websites --------------------------------------------------------------------------------------------
 heading("3. ALLOWED WEBSITES", "every site is reachable")

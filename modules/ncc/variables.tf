@@ -140,7 +140,7 @@ variable "create_unity_catalog_external_location" {
 }
 
 variable "metastore_id" {
-  description = "Metastore the workspace must be assigned to. The storage credential and external location are created only once the workspace is confirmed to be assigned to it."
+  description = "Metastore the workspace is assigned to, through the account. The storage credential and external location are created only once the workspace is confirmed to be assigned to it."
   type        = string
 }
 

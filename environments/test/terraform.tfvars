@@ -14,9 +14,9 @@ tenant_id       = "f913f484-b59e-49a4-95ce-feddd38dc57a"
 subscription_id = "f1c89731-86b0-4cd4-bd2d-f2347c1d62d2"
 
 # From the Baytex Databricks account console.
-# The metastore is the existing regional one, which Azure Databricks assigns every new workspace to automatically.
-# The platform does not assign it itself. It confirms the workspace is assigned to it before creating the Unity Catalog
-# storage credential and external location, and reports it in the unity_catalog_handoff output.
+# The metastore is the existing regional one. The platform assigns the workspace to it through the Databricks account,
+# confirms the assignment before creating the Unity Catalog storage credential and external location, and reports it in
+# the unity_catalog_handoff output.
 databricks_account_id = "1c6f37a6-d8dd-4149-a171-d156a82458aa"
 existing_metastore_id = "c15bfb67-298e-40be-8b73-9bae54bfd5aa"
 
@@ -209,8 +209,12 @@ blob_private_endpoint_ip = "10.40.162.4"
 dfs_private_endpoint_ip  = "10.40.162.5"
 
 # Other environments whose serverless compute reads this data storage account, as their NCC names keyed by environment.
-# No other environment reads this one. Dev and test read prod's data storage account, which prod grants.
-cross_environment_storage_readers = {}
+# The sandbox lets dev and prod read test's data storage account, so every environment's serverless compute can reach
+# every other environment's storage.
+cross_environment_storage_readers = {
+  dev  = "ncc-vkp-dbx-dev-cnc-002"
+  prod = "ncc-vkp-dbx-prod-cnc-002"
+}
 
 # ----------------------------------------------------------------------------------------------------------------------
 # HAProxy tier

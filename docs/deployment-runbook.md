@@ -137,7 +137,7 @@ Work through the acceptance criteria in [Validation and acceptance](validation-n
 - VNet peering connected in both directions
 - DNS resolution of on-premises names and storage private endpoints
 - Private access to the data storage account
-- **Test connection** passing on the external location `el_bte_dbx_<env>_data_cnc_<instance>` in Catalog Explorer; it is
+- **Test connection** passing on the external location `el_bte_dbx_<env>_data_cnc_001` in Catalog Explorer; it is
   saved without validation, so this is the first check of its storage access
 - NCC binding and every private endpoint rule established
 - Serverless and classic compute connectivity to each approved SQL Server and Oracle destination

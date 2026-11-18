@@ -6,12 +6,9 @@ ENVIRONMENT = "dev"
 # The last cell drops the test catalog. Set to False to keep it.
 DESTROY = True
 
-# Instance number at the end of each environment's resource names.
-INSTANCE = {"dev": "001", "test": "002", "prod": "001"}.get(ENVIRONMENT)
-
-LOCATION = f"el_bte_dbx_{ENVIRONMENT}_data_cnc_{INSTANCE}"
+LOCATION = f"el_bte_dbx_{ENVIRONMENT}_data_cnc_001"
 CATALOG = "test_vedant_catalog"
-CATALOG_URL = f"abfss://unity-catalog@stbtedbx{ENVIRONMENT}cnc{INSTANCE}.dfs.core.windows.net/{CATALOG}"
+CATALOG_URL = f"abfss://unity-catalog@stbtedbx{ENVIRONMENT}cnc001.dfs.core.windows.net/{CATALOG}"
 
 if ENVIRONMENT not in ("dev", "test", "prod"):
     raise ValueError('ENVIRONMENT must be "dev", "test" or "prod".')

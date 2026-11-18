@@ -36,6 +36,26 @@ credential to rotate, store or leak.
 > report *"not configured yet"* and pass rather than fail. They begin planning as soon as §2 and §4 are complete for
 > that environment, with no workflow change.
 
+### Service principals
+
+| Environment | Service principal | Subscription | Subscription ID |
+| --- | --- | --- | --- |
+| Dev | `app-bte-dbx-dev-terraform-001` | SUB-BTE-CAN-DATA-NONPROD | `e3a6598e-28b1-4d6a-8698-6683cd1d6995` |
+| Test | `app-bte-dbx-test-terraform-001` | SUB-BTE-CAN-DATA-TEST | `7ba1d46e-61db-4e7e-9f60-a7a5417bdd04` |
+| Prod | `app-bte-dbx-prod-terraform-001` | SUB-BTE-CAN-DATA-PROD | `a88dbdba-a2fc-4990-b854-b2bb2eba72f8` |
+
+Each service principal holds the same access, limited to its own environment:
+
+| Scope | Access | Purpose |
+| --- | --- | --- |
+| Environment subscription | Contributor | Creates and manages the platform resources |
+| Environment subscription | Storage Blob Data Contributor | Maintains the storage account containers and the Terraform state |
+| Environment subscription | Role Based Access Control Administrator | Assigns RBAC roles, specifically the Databricks Access Connector's roles on the data storage account |
+| Databricks account | Service principal with **Account admin** enabled | Manages the Network Connectivity Configuration, its private endpoint rules and the serverless egress policy |
+| Unity Catalog metastore | `CREATE STORAGE CREDENTIAL` and `CREATE EXTERNAL LOCATION` | Creates the environment's storage credential and external location |
+
+The steps below create a service principal and grant this access, once per environment.
+
 ### Create the identity
 
 Run once per environment, signed in to the Azure CLI as a user holding the roles in §1.
