@@ -457,9 +457,11 @@ unity_catalog_container_name = "unity-catalog"
 #   unity_catalog_external_location_grants = {
 #     "<account-group>" = ["CREATE_MANAGED_STORAGE", "CREATE_EXTERNAL_TABLE", "CREATE_EXTERNAL_VOLUME", "READ_FILES", "WRITE_FILES", "BROWSE"]
 #   }
-# The sandbox Databricks account has no "BI Dept Admins" group, so nothing is granted here.
-# Baytex grants "BI Dept Admins" = ["ALL_PRIVILEGES", "EXTERNAL_USE_LOCATION"].
-unity_catalog_external_location_grants = {}
+# The sandbox grants the BIAdmin account group the privileges Baytex grants "BI Dept Admins".
+unity_catalog_external_location_grants = {
+  "BIAdmin" = ["ALL_PRIVILEGES", "EXTERNAL_USE_LOCATION"]
+}
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Operations
 # ----------------------------------------------------------------------------------------------------------------------
