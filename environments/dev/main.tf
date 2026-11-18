@@ -168,7 +168,7 @@ module "databricks_workspace" {
 # Network Connectivity Configuration
 # Serverless private endpoint rules to the data storage account and to every Private Link Service, and the network policy that limits which internet destinations serverless compute may reach.
 # Also the Unity Catalog storage credential and external location over the data storage account, so catalogs can keep their managed storage there rather than in the workspace's default storage.
-# The workspace is assigned to the existing metastore automatically when it is created; no catalog is created here, and catalogs, schemas and their grants stay with Baytex BI.
+# The workspace is assigned to the existing metastore here, through the account; no catalog is created here, and catalogs, schemas and their grants stay with Baytex BI.
 # ----------------------------------------------------------------------------------------------------------------------
 
 module "ncc" {

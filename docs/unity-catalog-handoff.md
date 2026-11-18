@@ -1,6 +1,7 @@
 # Unity Catalog Handoff
 
-Azure Databricks assigns every new workspace to the existing regional metastore automatically, and gives it a workspace
+The platform assigns each environment's workspace to the existing regional metastore, `existing_metastore_id`, through
+the Databricks account. Azure Databricks gives each new workspace a workspace
 catalog whose storage is the workspace's default storage account in the managed resource group. The platform leaves
 both as they are and creates no catalogs or schemas. What it adds is a way to keep catalog data in the environment's
 own data storage account: a storage credential and an external location over that account, ready for Baytex BI to use

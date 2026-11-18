@@ -274,7 +274,7 @@ storage private endpoints. The storage private endpoints take static addresses f
 
 ### Baytex BI — data governance and workloads
 
-- Existing regional Unity Catalog metastore, which Azure Databricks assigns each new workspace to automatically
+- Existing regional Unity Catalog metastore, which the platform assigns each environment's workspace to
 - Catalogs, schemas, grants and workspace bindings, with catalog managed storage placed in the platform's external
   location
 - Any further storage credentials and external locations

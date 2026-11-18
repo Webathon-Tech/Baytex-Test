@@ -1,7 +1,7 @@
 # ----------------------------------------------------------------------------------------------------------------------
 # Baytex BI Unity Catalog reference
 # Creates an environment catalog whose managed storage sits in the platform's external location, with its schemas, workspace bindings and grants.
-# The platform creates the storage credential and external location, and Azure Databricks assigns the workspace to the metastore when the workspace is created.
+# The platform creates the storage credential and external location, and assigns the workspace to the metastore.
 # It uses its own Terraform state and is not called by the platform roots.
 # ----------------------------------------------------------------------------------------------------------------------
 

@@ -120,7 +120,7 @@ Inputs of `environments/<env>`, in the order of `variables.tf`. An input without
 | `tenant_id` | required | Microsoft Entra tenant ID that holds the subscription and the Databricks account. |
 | `subscription_id` | required | Azure subscription this environment deploys into. |
 | `databricks_account_id` | required | Azure Databricks account ID, shown in the account console. |
-| `existing_metastore_id` | required | ID of the existing regional Unity Catalog metastore, which the workspace is assigned to automatically when it is created. The platform confirms the workspace is assigned to it before creating the Unity Catalog storage credential and external location, and reports it in the `unity_catalog_handoff` output; Baytex BI owns the metastore. |
+| `existing_metastore_id` | required | ID of the existing regional Unity Catalog metastore, which the platform assigns the workspace to through the Databricks account, so it does not depend on the metastore assigning new workspaces automatically. Changing it moves the workspace to the new metastore. The platform confirms the workspace is assigned to it before creating the Unity Catalog storage credential and external location, and reports it in the `unity_catalog_handoff` output; Baytex BI owns the metastore. |
 
 ### Naming
 
@@ -293,8 +293,9 @@ The external location is saved without validation, because on a new environment 
 are approved only after the apply. Confirm access after the deployment with **Test connection** on the location in
 Catalog Explorer.
 
-Before creating anything, Terraform reads which metastore the workspace is assigned to and stops if it is not
-`existing_metastore_id`. On a new workspace that check runs during the apply, once the workspace exists.
+Terraform assigns the workspace to `existing_metastore_id` through the Databricks account. Before creating anything,
+it reads which metastore the workspace is assigned to and stops if it is not `existing_metastore_id`. On a new
+workspace that check runs during the apply, once the workspace exists and has been assigned.
 
 ### Operations
 
