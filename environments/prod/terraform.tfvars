@@ -214,8 +214,8 @@ dfs_private_endpoint_ip  = "10.40.178.5"
 # Prod adds the private endpoint rules to each NCC and approves the connections on its own storage account. Write access
 # is prevented by the read-only workspace binding of each prod catalog in Unity Catalog.
 cross_environment_storage_readers = {
-  dev  = "ncc-vkp-dbx-dev-cnc-002"
-  test = "ncc-vkp-dbx-test-cnc-002"
+  # dev  = "ncc-vkp-dbx-dev-cnc-002"
+  # test = "ncc-vkp-dbx-test-cnc-002"
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
