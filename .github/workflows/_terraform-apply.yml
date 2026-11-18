@@ -180,6 +180,57 @@ jobs:
           set -o pipefail
           terraform apply -lock-timeout=10m -auto-approve tfplan 2>&1 | tee apply.log
 
+      # Databricks refuses to delete a serverless network policy that is still attached to a running workspace, and
+      # destroying databricks_workspace_network_option does not detach it: it only drops the resource from the state.
+      # So before the destroy, when the approved plan deletes the environment's network policy, the environment's
+      # workspace is moved to the account's default-policy, which applies no restriction, and the policy can then be
+      # deleted.
+      #
+      # The workspace ID comes from the workspace the same plan deletes, not from the network option, because a destroy
+      # that failed part-way has usually removed the network option from the state already while the policy is still
+      # attached. The attachment is not held in Terraform state, so the saved plan remains valid. A plan that deletes no
+      # network policy, or no workspace, changes nothing here.
+      - name: Detach the serverless network policy from the workspace
+        if: inputs.operation == 'destroy'
+        env:
+          DEFAULT_POLICY: default-policy
+        run: |
+          set -euo pipefail
+          PLAN=$(terraform show -json tfplan)
+          DELETES_POLICY=$(echo "$PLAN" | jq '[
+            .resource_changes[]
+            | select(.type == "databricks_account_network_policy" and (.change.actions | index("delete")))
+          ] | length')
+          WORKSPACE_IDS=$(echo "$PLAN" | jq -r '
+            .resource_changes[]
+            | select(.type == "azurerm_databricks_workspace" and (.change.actions | index("delete")))
+            | .change.before.workspace_id')
+
+          if [ "$DELETES_POLICY" -eq 0 ] || [ -z "$WORKSPACE_IDS" ]; then
+            echo "The plan deletes no serverless network policy from a running workspace."
+            exit 0
+          fi
+
+          ACCOUNT_ID=$(echo "$PLAN" | jq -r '.variables.databricks_account_id.value')
+          # 2ff814a6-... is the Azure Databricks first-party application, the audience of a Databricks account token.
+          TOKEN=$(az account get-access-token --resource 2ff814a6-3304-4ab8-85cb-cd0e6f879c1d --query accessToken -o tsv)
+          echo "::add-mask::$TOKEN"
+          BASE="https://accounts.azuredatabricks.net/api/2.0/accounts/$ACCOUNT_ID/workspaces"
+
+          for WS in $WORKSPACE_IDS; do
+            CURRENT=$(curl -sS --fail-with-body -H "Authorization: Bearer $TOKEN" "$BASE/$WS/network" | jq -r '.network_policy_id // ""')
+            if [ "$CURRENT" = "$DEFAULT_POLICY" ]; then
+              echo "Workspace $WS is already on $DEFAULT_POLICY."
+              continue
+            fi
+            echo "Moving workspace $WS from ${CURRENT:-(none)} to $DEFAULT_POLICY."
+            curl -sS --fail-with-body -X PUT \
+              -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+              -d "{\"workspace_id\":$WS,\"network_policy_id\":\"$DEFAULT_POLICY\"}" \
+              "$BASE/$WS/network"
+            echo
+          done
+
       # A destroy needs more than one pass. Removing the NCC binding and removing the NCC itself are separate Databricks
       # API calls, and the unbind is not immediately visible - the delete then fails with "unable to be deleted because
       # it is attached to one or more workspaces". By the next attempt the unbind has landed.

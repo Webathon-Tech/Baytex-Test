@@ -196,6 +196,9 @@ Peerings Terraform created, in either direction, are destroyed with the environm
 Terraform shows as `Disconnected` once its spoke is destroyed; the hub owner deletes it, and after the next deploy peers
 the new VNet with the command in the `hub_side_peering_command` output.
 
+Before it deletes anything, the destroy moves the workspace to the account's `default-policy`, because Azure Databricks
+refuses to delete a serverless network policy that a running workspace still refers to.
+
 The Unity Catalog external location is not deleted while a catalog, schema or table still keeps its storage in it, so
 the destroy stops with an error at that point. Baytex BI drops those objects first.
 

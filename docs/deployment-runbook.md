@@ -167,8 +167,8 @@ dev or test, remove it from prod's `cross_environment_storage_readers` and deplo
 Before business adoption, an environment can be removed and rebuilt:
 
 1. Stop new workloads.
-2. Detach the serverless network policy: apply the environment once with `attach_serverless_network_policy = false`.
-   Azure Databricks refuses to delete a policy a running workspace still refers to.
+2. Nothing to do for the serverless network policy. Azure Databricks refuses to delete a policy a running workspace
+   still refers to, so the destroy moves the workspace to the account's `default-policy` before it deletes anything.
 3. Preserve the Terraform state and the evidence artefacts.
 4. Remove the Baytex-managed hub, firewall and DNS changes through the Baytex change process.
 5. Confirm that no Baytex data has been loaded, and that no catalog keeps its managed storage in the platform's

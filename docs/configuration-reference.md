@@ -341,8 +341,9 @@ Changing any of these after the first deploy replaces the resource that uses it,
 ### Removing the serverless network policy
 
 Azure Databricks refuses to delete a network policy that a running workspace still refers to, and Terraform does not
-reliably detach it before deleting it. Removing the policy, and destroying an environment that has one, therefore takes
-two applies:
+reliably detach it before deleting it. **Terraform Destroy Platform** handles this itself: before it deletes anything,
+it moves the workspace to the account's `default-policy`. Removing the policy from an environment that stays deployed
+takes two applies:
 
 1. `attach_serverless_network_policy = false` moves the workspace to the account's own `default-policy`.
 2. `create_serverless_network_policy = false` then removes this environment's policy.
