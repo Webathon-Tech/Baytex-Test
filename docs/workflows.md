@@ -113,7 +113,7 @@ Apply dev bootstrap storage account (state backend)   ← in dev-apply, pauses h
 | --- | --- |
 | `create` | Nothing exists yet. Normal for a first run. |
 | `import` | The storage account exists but is not in state. The apply adopts it rather than recreating it. |
-| `remote` | The backend exists and is tracked. Expect "No changes". |
+| `remote` | The backend exists and is tracked. Expect `0 to add, 0 to change, 0 to destroy`. |
 
 > **Read this plan before approving.** The storage account holds the Terraform state for the whole environment. If the
 > plan says `must be replaced` or `will be destroyed`, the summary's **Replaces or destroys** row says so, and approving
@@ -146,8 +146,9 @@ Plan prod platform    →  Apply prod platform     ← gate
 **Approving.** When a run reaches a gated apply job, GitHub shows *Review pending deployments* at the top of the run.
 Read the plan in the summary of the matching **Plan** job, then **Approve and deploy** or **Reject**.
 
-The plan summary gives the result line and a **Replacements** count. Anything other than `none` means a resource will be
-deleted and recreated; find out which one, and why, before approving.
+The plan summary gives the same rows for every environment: **Resources**, as `<n> to add, <n> to change, <n> to destroy`,
+**Outputs**, as `<n> changed`, and a **Replacements** count. Anything other than `none` in **Replacements** means a
+resource will be deleted and recreated; find out which one, and why, before approving.
 
 **Before the apply**, the job removes the private endpoint connections of any Private Link Service the approved plan
 deletes, in its **Clear connections from Private Link Services the plan removes** step. Deleting an NCC rule whose

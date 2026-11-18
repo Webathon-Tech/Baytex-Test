@@ -14,19 +14,21 @@
 # COMMAND ----------
 
 # DBTITLE 1,Settings
-# Environment of this workspace: "dev", "test" or "prod". The storage account and its private endpoint IPs are derived from it.
+# Environment of this workspace: "dev", "test" or "prod".
 ENVIRONMENT = "dev"
 
-# Instance number at the end of each environment's resource names.
-INSTANCE = {"dev": "001", "test": "002", "prod": "001"}.get(ENVIRONMENT)
+# Data storage account of each environment, and the first three octets of its private endpoint subnet.
+# The blob and dfs private endpoints use the .4 and .5 addresses of that subnet. Every environment's account is checked.
+STORAGE_ACCOUNTS = {
+    "dev":  ("stbtedbxdevcnc001",  "10.40.146"),
+    "test": ("stbtedbxtestcnc001", "10.40.162"),
+    "prod": ("stbtedbxprodcnc001", "10.40.178"),
+}
 
-STORAGE_ACCOUNT = f"stbtedbx{ENVIRONMENT}cnc{INSTANCE}"
-
-# The blob and dfs private endpoints use the .4 and .5 addresses of the environment's private endpoint subnet.
-PRIVATE_ENDPOINT_SUBNET = {"dev": "10.40.146", "test": "10.40.194", "prod": "10.40.178"}[ENVIRONMENT]
 STORAGE_ENDPOINTS = [
-    (f"{STORAGE_ACCOUNT}.blob.core.windows.net", f"{PRIVATE_ENDPOINT_SUBNET}.4", 443),
-    (f"{STORAGE_ACCOUNT}.dfs.core.windows.net",  f"{PRIVATE_ENDPOINT_SUBNET}.5", 443),
+    (f"{account}.{service}.core.windows.net", f"{subnet}.{octet}", 443)
+    for account, subnet in STORAGE_ACCOUNTS.values()
+    for service, octet in (("blob", 4), ("dfs", 5))
 ]
 
 # COMMAND ----------
@@ -154,7 +156,9 @@ display(pd.DataFrame(results))
 
 # DBTITLE 1,TCP connectivity checks (serverless compute)
 # For serverless compute — uses hostnames instead of IPs
-# so DNS resolution is also validated in the same check
+# so DNS resolution is also validated in the same check.
+# A storage account reached only over the public internet still accepts the TCP connection and then refuses the request,
+# so use connectivity_check_serverless.py to tell private from public access to the storage accounts.
 import socket
 
 # Target endpoints: (hostname, expected IP, port)

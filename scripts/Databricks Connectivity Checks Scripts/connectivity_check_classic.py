@@ -5,14 +5,16 @@
 # MAGIC **How to run:** attach this notebook to a **classic cluster** in the workspace, check the settings in the next cell, then click **Run all**.
 # MAGIC If the VNet DNS settings were changed recently, restart the cluster first. A cluster only picks up DNS settings when it starts.
 # MAGIC
-# MAGIC Classic clusters run inside the environment's own VNet. They use the VNet's DNS, reach on-premises databases through
-# MAGIC the firewall, reach the storage account through the private endpoints in the VNet, and reach the internet through the NAT Gateway.
+# MAGIC Classic clusters run inside the environment's own VNet. They use the VNet's DNS and reach on-premises databases
+# MAGIC through the firewall. They reach their own storage account through the private endpoints in the VNet, and another
+# MAGIC environment's storage account through the firewall to that environment's private endpoints. They reach the internet
+# MAGIC through the NAT Gateway.
 # MAGIC
 # MAGIC | # | Check | Expected result |
 # MAGIC |---|---|---|
-# MAGIC | 1 | DNS | Database and storage names resolve to **private** IP addresses |
+# MAGIC | 1 | DNS | Database names, and the storage names of every environment, resolve to **private** IP addresses |
 # MAGIC | 2 | On-premises databases | Every SQL Server and Oracle database **answers** |
-# MAGIC | 3 | Storage account | Blob and dfs are **reached privately** |
+# MAGIC | 3 | Storage accounts | Blob and dfs of **every** environment's account are **reached privately** |
 # MAGIC | 4 | Internet | Approved websites are **reachable**, and the outbound IP is the NAT Gateway's public IP |
 # MAGIC
 # MAGIC **Latency columns**
@@ -27,15 +29,12 @@
 # SETTINGS: change these for the environment you are testing
 # =====================================================================================================================
 
-# Environment of this workspace: "dev", "test" or "prod". The storage account is derived from it, and the run stops if
-# the cluster is not inside that environment's VNet.
+# Environment of this workspace: "dev", "test" or "prod". The run stops if the cluster is not inside that environment's VNet.
 ENVIRONMENT = "dev"
 
-# Instance number at the end of each environment's resource names.
-INSTANCE = {"dev": "001", "test": "002", "prod": "001"}.get(ENVIRONMENT)
-
-# Storage account of this environment (dev: stbtedbxdevcnc001, test: stbtedbxtestcnc002, prod: stbtedbxprodcnc001).
-STORAGE_ACCOUNT = f"stbtedbx{ENVIRONMENT}cnc{INSTANCE}"
+# Data storage account of each environment. Every one is checked from this workspace, and each passes only when it is
+# reached privately.
+STORAGE_ACCOUNTS = {"dev": "stbtedbxdevcnc001", "test": "stbtedbxtestcnc001", "prod": "stbtedbxprodcnc001"}
 
 # On-premises databases, as "hostname:port". Port 1433 is SQL Server, port 1521 is Oracle.
 DATABASES = [
@@ -170,7 +169,7 @@ def dns_servers():
 
 
 # Each environment's spoke VNet. A classic cluster always runs inside its own environment's VNet.
-VNETS = {"dev": "10.40.144.0/20", "test": "10.40.192.0/20", "prod": "10.40.176.0/20"}
+VNETS = {"dev": "10.40.144.0/20", "test": "10.40.160.0/20", "prod": "10.40.176.0/20"}
 
 
 def cluster_address():
@@ -247,17 +246,21 @@ def site_reachable(host, port):
 def storage_reachable(host):
     """Sends an anonymous request to the storage account. Returns (ok, detail, connect_ms, answer_ms).
 
-    Reached privately, the account answers with a sign-in error, which is expected.
-    Reached over the public internet, the storage firewall answers "AuthorizationFailure".
+    Reached privately, the name resolves to a private endpoint address and the account answers with a sign-in error,
+    which is expected. A public address means the request goes over the internet, where the storage firewall refuses data
+    requests. Blob shows this as "AuthorizationFailure"; dfs answers an anonymous request with a sign-in error before the
+    firewall check, so for dfs the address is what shows the path.
     """
     connection, connect_ms, error = open_connection(host, 443)
     if error:
         return False, error, None, None
+    address = connection.getpeername()[0]
+    path = "/?resource=account" if ".dfs." in host else "/?comp=list"
     start = time.perf_counter()
     try:
         request = http.client.HTTPSConnection(host, timeout=TIMEOUT)
         request.sock = TLS.wrap_socket(connection, server_hostname=host)
-        request.request("GET", "/?comp=list", headers={"x-ms-version": "2023-11-03"})
+        request.request("GET", path, headers={"x-ms-version": "2023-11-03"})
         response = request.getresponse()
         answer_ms = elapsed_ms(start)
         error_code = response.getheader("x-ms-error-code", "")
@@ -266,9 +269,18 @@ def storage_reachable(host):
         return False, reason(error), connect_ms, None
     finally:
         connection.close()
-    if error_code == "AuthorizationFailure":
-        return False, "refused by the storage firewall (the request went over the public internet)", connect_ms, answer_ms
-    return True, f"account reached privately (HTTP {response.status} {error_code}, a sign-in error is expected)", connect_ms, answer_ms
+    if error_code == "AuthorizationFailure" or not ipaddress.ip_address(address).is_private:
+        return False, f"refused by the storage firewall: {address} is a public address, so the request went over the internet", connect_ms, answer_ms
+    return True, f"account reached privately at {address} (HTTP {response.status} {error_code}, a sign-in error is expected)", connect_ms, answer_ms
+
+
+def storage_result(environment, reached, detail):
+    """Status of one storage check: PASS when the account is reached privately, FAIL when it is not."""
+    if reached:
+        return "PASS", detail
+    if environment == ENVIRONMENT:
+        return "FAIL", detail
+    return "FAIL", f"{detail}. The firewall must allow this VNet's Databricks subnets to the {environment} private endpoints on TCP 443, with source NAT"
 
 # COMMAND ----------
 
@@ -276,25 +288,30 @@ def storage_reachable(host):
 # RUN THE CHECKS
 # =====================================================================================================================
 
+if ENVIRONMENT not in VNETS:
+    raise ValueError('ENVIRONMENT must be "dev", "test" or "prod".')
+
 runtime = os.environ.get("DATABRICKS_RUNTIME_VERSION", "unknown")
 address = cluster_address()
 print("THIS COMPUTE")
 print(f"  Compute     : {'Serverless (use the serverless notebook instead)' if runtime.startswith('client') else 'Classic cluster'}")
 print(f"  Runtime     : {runtime}")
-print(f"  Environment : {ENVIRONMENT} (storage account {STORAGE_ACCOUNT})")
+print(f"  Environment : {ENVIRONMENT} (storage account {STORAGE_ACCOUNTS[ENVIRONMENT]})")
 print(f"  Address     : {address or 'not visible'}")
 print(f"  DNS servers : {dns_servers()}")
 
-if ENVIRONMENT not in VNETS:
-    raise ValueError('ENVIRONMENT must be "dev", "test" or "prod".')
 if address and not runtime.startswith("client") and ipaddress.ip_address(address) not in ipaddress.ip_network(VNETS[ENVIRONMENT]):
     raise ValueError(f"This cluster's address {address} is outside the {ENVIRONMENT} VNet {VNETS[ENVIRONMENT]}. Set ENVIRONMENT to this workspace's environment.")
 
-storage_names = [f"{STORAGE_ACCOUNT}.blob.core.windows.net", f"{STORAGE_ACCOUNT}.dfs.core.windows.net"]
+storage_names = {
+    f"{account}.{service}.core.windows.net": environment
+    for environment, account in STORAGE_ACCOUNTS.items()
+    for service in ("blob", "dfs")
+}
 
 # ---- 1. DNS ---------------------------------------------------------------------------------------------------------
-heading("1. DNS", "every name resolves to a private IP (databases to their on-premises IP, storage to its private endpoint)")
-for name in [split(target)[0] for target in DATABASES] + storage_names:
+heading("1. DNS", "every name resolves to a private IP (databases to their on-premises IP, every storage account to its private endpoint)")
+for name in [split(target)[0] for target in DATABASES] + list(storage_names):
     ips, error, lookup_ms = lookup(name)
     if error:
         report("DNS", name, "FAIL", error, None, lookup_ms)
@@ -309,11 +326,15 @@ for target in DATABASES:
     ok, detail, connect_ms, answer_ms = database_answers(*split(target))
     report("Database", target, "PASS" if ok else "FAIL", detail, connect_ms, answer_ms)
 
-# ---- 3. Storage account ---------------------------------------------------------------------------------------------
-heading("3. STORAGE ACCOUNT", "blob and dfs are reached privately (path: private endpoint in the VNet)")
-for name in storage_names:
-    ok, detail, connect_ms, answer_ms = storage_reachable(name)
-    report("Storage", name, "PASS" if ok else "FAIL", detail, connect_ms, answer_ms)
+# ---- 3. Storage accounts --------------------------------------------------------------------------------------------
+heading(
+    "3. STORAGE ACCOUNTS",
+    "every account is reached privately (own account: private endpoint in the VNet; another environment's: firewall > its private endpoint)",
+)
+for name, environment in storage_names.items():
+    reached, detail, connect_ms, answer_ms = storage_reachable(name)
+    status, detail = storage_result(environment, reached, detail)
+    report(f"Storage {environment}", name, status, detail, connect_ms, answer_ms)
 
 # ---- 4. Internet ----------------------------------------------------------------------------------------------------
 heading("4. INTERNET", "every approved site is reachable (path: NAT Gateway)")

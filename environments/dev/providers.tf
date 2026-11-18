@@ -38,8 +38,7 @@ provider "databricks" {
   azure_tenant_id = var.tenant_id
 
   # How long one account API request may take before the provider gives up; the default is 60 seconds.
-  # The NCC private endpoint rules are created in parallel and can take over a minute to be acknowledged. A create that
-  # times out is not retried, and the rule it created is left in Databricks without being recorded in state.
+  # The NCC private endpoint rules are created in parallel and can take over a minute to be acknowledged. A create that runs past the default fails the apply while the rule is still being created on the account.
   http_timeout_seconds = 120
 }
 

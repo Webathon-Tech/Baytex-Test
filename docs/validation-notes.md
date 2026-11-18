@@ -54,8 +54,10 @@ Two scripts support these checks in any environment:
 
 - `scripts/databricks_connectivity_check.py` is a Databricks notebook. Set its configuration block for the environment,
   then run it once on serverless compute and once on a classic cluster. It checks the on-premises destinations, private
-  access to the data storage account and the serverless egress policy, and marks any result that differs from what is
-  expected on that kind of compute.
+  access to each environment's data storage account and the serverless egress policy, and marks any result that differs
+  from what is expected on that kind of compute. A storage account passes only when it is reached privately. Under the
+  [security exception](architecture-and-boundaries.md#security-exception-access-to-prod-data-from-dev-and-test), dev and
+  test reach their own account and prod's; the checks of the other pairs fail until access between them is approved.
 - `scripts/Test-BaytexDevConnectivity.ps1` tests DNS resolution and TCP connectivity from each HAProxy VM to each
   destination through `az vm run-command`, and records the results as JSON.
 

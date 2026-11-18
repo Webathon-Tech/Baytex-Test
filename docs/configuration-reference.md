@@ -58,8 +58,7 @@ A failed rule stops the plan with `Invalid value for variable` and a message nam
 ## Naming convention
 
 Names are composed from `organization`, `workload`, `environment`, `region_short` and `instance`. The resource prefix is
-`<organization>-<workload>-<environment>-<region_short>-<instance>`, for example `bte-dbx-dev-cnc-001`. The instance
-is `001` in dev and prod and `002` in test, so test names end in `002`, for example `vnet-bte-dbx-test-cnc-002`.
+`<organization>-<workload>-<environment>-<region_short>-<instance>`, for example `bte-dbx-dev-cnc-001`.
 
 | Resource | Pattern | Example for dev |
 | --- | --- | --- |
@@ -214,7 +213,7 @@ every Allow rule.
 | `configure_haproxy` | `false` | Installs HAProxy on the proxy VMs and applies its configuration. The VMs install HAProxy from the Ubuntu package mirrors, so the proxy subnet needs outbound access to them through the firewall before this is enabled. While it is `false` the tier is deployed but serves no traffic, and the VMs stay out of the load balancer backend pool. Changing it replaces both VMs. |
 | `admin_ssh_source_cidrs` | `[]` | CIDRs allowed to SSH to the HAProxy VMs. An empty list creates no SSH rule, and the VMs remain reachable through `az vm run-command`. |
 | `ssh_public_key` | required | SSH public key for the `azureadmin` user on the HAProxy VMs. Password authentication is disabled. |
-| `proxy_vm_size` | `"Standard_D4s_v6"` | Azure VM size of every HAProxy VM. |
+| `proxy_vm_size` | `"Standard_D4s_v6"` | Azure VM size of every HAProxy VM. Dev and prod use `Standard_D4s_v6`; test uses `Standard_D4as_v7`, which is offered in zones 1 and 3 in its subscription. |
 | `proxy_vm_zones` | `["1", "2"]` | Availability zones of the two HAProxy VMs, first VM then second VM. The two zones must be different, each `"1"`, `"2"` or `"3"`, and each gets its own patch window (see HAProxy patching). Dev and prod set `["1", "2"]`. Test sets `["1", "3"]` because its VM size is offered only in zones 1 and 3 in that subscription. Changing a VM's zone replaces that VM. |
 | `proxy_vm_private_ips` | required | Static private IPs of the two HAProxy VMs, first VM then second VM, in the same order as the zones. Both must be inside `proxy_subnet_cidr`. |
 | `on_prem_endpoints` | required | On-premises destinations, keyed by a short name. Each gets a load balancer frontend on `frontend_ip`, a Private Link Service with its NAT IP on `pls_nat_ip`, and an HAProxy listener on `listen_port` that forwards to `target_fqdn:target_port`. `domain_name` is the name serverless compute uses to reach the destination. `load_balancer`, optional and 1 by default, is the number of the internal load balancer that holds the frontend and Private Link Service: Azure allows 8 Private Link Services per load balancer, and the plan fails if more than 8 destinations share a number. A change is applied to the HAProxy VMs in place during the apply. |

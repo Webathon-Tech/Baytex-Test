@@ -8,14 +8,13 @@ when they create catalogs.
 
 ## What the platform creates
 
-In each environment, the `ncc` module creates the objects below. `<instance>` is `001` in dev and prod and `002` in
-test, so the test location is `el_bte_dbx_test_data_cnc_002` on storage account `stbtedbxtestcnc002`.
+In each environment, the `ncc` module creates:
 
 | Object | Name | Details |
 | --- | --- | --- |
 | Container | `unity-catalog` | In the data storage account. It is always created, whatever `data_containers` holds; `unity_catalog_container_name` changes the name |
-| Storage credential | `sc_bte_dbx_<env>_data_cnc_<instance>` | Backed by the data Access Connector, which holds Storage Blob Data Contributor on the data storage account |
-| External location | `el_bte_dbx_<env>_data_cnc_<instance>` | Covers `abfss://unity-catalog@stbtedbx<env>cnc<instance>.dfs.core.windows.net/` |
+| Storage credential | `sc_bte_dbx_<env>_data_cnc_001` | Backed by the data Access Connector, which holds Storage Blob Data Contributor on the data storage account |
+| External location | `el_bte_dbx_<env>_data_cnc_001` | Covers `abfss://unity-catalog@stbtedbx<env>cnc001.dfs.core.windows.net/` |
 | Grants on the external location | From `unity_catalog_external_location_grants` | None by default |
 
 - **Isolated to the environment's workspace.** The three workspaces share one metastore, so the credential and the
@@ -62,7 +61,7 @@ The `unity_catalog_external_location` output repeats the location's name, URL an
 
    ```sql
    CREATE CATALOG IF NOT EXISTS <catalog>
-     MANAGED LOCATION 'abfss://unity-catalog@stbtedbx<env>cnc<instance>.dfs.core.windows.net/<catalog>';
+     MANAGED LOCATION 'abfss://unity-catalog@stbtedbx<env>cnc001.dfs.core.windows.net/<catalog>';
    ```
 
 3. **Create schemas and grants.** Grant privileges to account-level groups and service principals, not to individual
