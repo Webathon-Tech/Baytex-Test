@@ -212,8 +212,8 @@ dfs_private_endpoint_ip  = "10.40.146.5"
 # The sandbox lets prod and test read dev's data storage account, so every environment's serverless compute can reach
 # every other environment's storage.
 cross_environment_storage_readers = {
-  prod = "ncc-vkp-dbx-prod-cnc-002"
-  test = "ncc-vkp-dbx-test-cnc-002"
+#  prod = "ncc-vkp-dbx-prod-cnc-002"
+#  test = "ncc-vkp-dbx-test-cnc-002"
 }
 
 # ----------------------------------------------------------------------------------------------------------------------
